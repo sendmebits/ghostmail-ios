@@ -82,9 +82,14 @@ class CloudflareClient: ObservableObject {
             throw CloudflareError(message: "API request was not successful")
         }
         
+        // Print the raw response for debugging
+        print("Cloudflare Response: \(String(data: data, encoding: .utf8) ?? "Unable to decode response")")
+        
         // Collect all unique forwarding addresses
         let forwards = Set(cloudflareResponse.result.compactMap { rule -> String? in
-            rule.actions.first { $0.type == "forward" }?.value.first
+            let forwardTo = rule.actions.first { $0.type == "forward" }?.value.first
+            print("Found forwarding address: \(forwardTo ?? "nil") for email: \(rule.matchers.first?.value ?? "unknown")")
+            return forwardTo
         })
         
         await MainActor.run {
@@ -93,12 +98,16 @@ class CloudflareClient: ObservableObject {
         
         return cloudflareResponse.result.map { rule in
             let emailAddress = rule.matchers.first { $0.field == "to" }?.value ?? ""
-            // Get the forwarding address or use the default if none is found
-            let forwardTo = rule.actions.first { $0.type == "forward" }?.value.first ?? currentDefaultForwardingAddress
+            let forwardTo = rule.actions.first { $0.type == "forward" }?.value.first ?? ""
+            
+            print("Creating alias for \(emailAddress) with forward to: \(forwardTo)")
+            
             let alias = EmailAlias(emailAddress: emailAddress)
             alias.cloudflareTag = rule.tag
             alias.isEnabled = rule.enabled
-            alias.forwardTo = forwardTo  // This should never be empty now
+            alias.forwardTo = forwardTo
+            
+            print("Created alias with forward to: \(alias.forwardTo)")
             return alias
         }
     }

@@ -78,7 +78,7 @@ struct EmailCreateView: View {
             }
         }
         .task {
-            if forwardTo.isEmpty {
+            if forwardTo.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
                 forwardTo = cloudflareClient.currentDefaultForwardingAddress
             }
         }

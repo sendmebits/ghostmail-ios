@@ -62,7 +62,7 @@ struct EmailListView: View {
     private func refreshEmailRules() async {
         isLoading = true
         do {
-            let rules = try await cloudflareClient.getEmailRules()
+            let cloudflareRules = try await cloudflareClient.getEmailRules()
             
             // Create a dictionary of existing aliases by email address
             let existingAliases = Dictionary(
@@ -70,7 +70,7 @@ struct EmailListView: View {
             )
             
             // Get email addresses from Cloudflare rules
-            let cloudflareEmails = rules.map { $0.emailAddress }
+            let cloudflareEmails = cloudflareRules.map { $0.emailAddress }
             let newEmailAddresses = Set(cloudflareEmails)
             
             // Remove aliases that no longer exist in Cloudflare
@@ -81,23 +81,37 @@ struct EmailListView: View {
             }
             
             // Update or create aliases while preserving order
-            for (index, rule) in rules.enumerated() {
-                if let existingAlias = existingAliases[rule.emailAddress] {
+            for (index, cloudflareRule) in cloudflareRules.enumerated() {
+                let emailAddress = cloudflareRule.emailAddress
+                let forwardTo = cloudflareRule.forwardTo
+                print("Processing rule for \(emailAddress) with forward to: \(forwardTo)")
+                
+                if let existingAlias = existingAliases[emailAddress] {
                     // Update existing alias's Cloudflare properties
-                    existingAlias.cloudflareTag = rule.cloudflareTag
-                    existingAlias.isEnabled = rule.isEnabled
+                    existingAlias.cloudflareTag = cloudflareRule.cloudflareTag
+                    existingAlias.isEnabled = cloudflareRule.isEnabled
+                    existingAlias.forwardTo = cloudflareRule.forwardTo
                     existingAlias.sortIndex = index + 1
+                    print("Updated existing alias \(existingAlias.emailAddress) with forward to: \(existingAlias.forwardTo)")
                 } else {
                     // Create new alias
-                    let newAlias = EmailAlias(emailAddress: rule.emailAddress)
-                    newAlias.cloudflareTag = rule.cloudflareTag
-                    newAlias.isEnabled = rule.isEnabled
+                    let newAlias = EmailAlias(emailAddress: emailAddress)
+                    newAlias.cloudflareTag = cloudflareRule.cloudflareTag
+                    newAlias.isEnabled = cloudflareRule.isEnabled
+                    newAlias.forwardTo = cloudflareRule.forwardTo
                     newAlias.sortIndex = index + 1
                     modelContext.insert(newAlias)
+                    print("Created new alias \(newAlias.emailAddress) with forward to: \(newAlias.forwardTo)")
                 }
             }
             
+            // Save changes
             try modelContext.save()
+            
+            // Verify the data was saved
+            emailAliases.forEach { alias in
+                print("Verified after save - alias: \(alias.emailAddress) forwards to: \(alias.forwardTo)")
+            }
         } catch {
             self.error = error
             self.showError = true
