@@ -150,7 +150,6 @@ struct EmailDetailView: View {
                     }
                     withAnimation {
                         if !isEditing {
-                            print("Starting edit with notes: \(email.notes)")  // Debug print
                             // Reset temp values when starting to edit
                             tempWebsite = email.website
                             tempNotes = email.notes
@@ -160,9 +159,6 @@ struct EmailDetailView: View {
                     }
                 }
             }
-        }
-        .onAppear {
-            print("View appeared with notes: \(email.notes)")  // Debug print
         }
         .disabled(isLoading)
         .alert("Error Saving Changes", isPresented: $showError, presenting: error) { _ in
@@ -174,7 +170,6 @@ struct EmailDetailView: View {
     
     private func saveChanges() async {
         isLoading = true
-        print("Saving changes. Current notes: \(tempNotes)")  // Debug print
         
         do {
             // Update the model with temporary values
@@ -185,7 +180,6 @@ struct EmailDetailView: View {
             
             // Save to SwiftData
             try modelContext.save()
-            print("Saved to SwiftData")  // Debug print
             
             // Update Cloudflare with email-related changes and enabled state
             if let tag = email.cloudflareTag {
