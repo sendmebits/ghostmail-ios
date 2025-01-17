@@ -16,16 +16,18 @@ struct EmailDetailView: View {
     @State private var tempNotes: String
     @State private var tempIsEnabled: Bool
     @State private var tempForwardTo: String
+    @State private var tempUsername: String = ""
     
     @Environment(\.displayScale) private var displayScale
     
     init(email: EmailAlias) {
+        print("Initializing DetailView with email: \(email.emailAddress), forward to: \(email.forwardTo)")  // Debug print
         self.email = email
-        // Initialize temporary values with existing values
         _tempWebsite = State(initialValue: email.website)
         _tempNotes = State(initialValue: email.notes)
         _tempIsEnabled = State(initialValue: email.isEnabled)
         _tempForwardTo = State(initialValue: email.forwardTo)
+        _tempUsername = State(initialValue: "")
     }
     
     private var formattedCreatedDate: String {
@@ -44,18 +46,33 @@ struct EmailDetailView: View {
         // In a production app, you might want to show a brief toast/notification here
     }
     
+    private var fullEmailAddress: String {
+        "\(tempUsername)@\(cloudflareClient.emailDomain)"
+    }
+    
     var body: some View {
         Form {
             Section("Email Address") {
-                HStack {
-                    Text(email.emailAddress)
-                        .strikethrough(!email.isEnabled)
-                    Spacer()
-                    Button {
-                        copyToClipboard(email.emailAddress)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
+                if isEditing {
+                    HStack {
+                        TextField("username", text: $tempUsername)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.emailAddress)
+                        Text("@\(cloudflareClient.emailDomain)")
                             .foregroundStyle(.secondary)
+                    }
+                } else {
+                    HStack {
+                        Text(email.emailAddress)
+                            .strikethrough(!email.isEnabled)
+                        Spacer()
+                        Button {
+                            copyToClipboard(email.emailAddress)
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -73,12 +90,10 @@ struct EmailDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    if !email.forwardTo.isEmpty {
-                        Text(email.forwardTo)
-                    } else {
-                        Text("Not specified")
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(email.forwardTo)
+                        .onAppear {
+                            print("Displaying forward to: \(email.forwardTo)")
+                        }
                 }
             }
             
@@ -140,6 +155,11 @@ struct EmailDetailView: View {
         }
         .navigationTitle("Email Details")
         .opacity(email.isEnabled ? 1.0 : 0.8)
+        .onAppear {
+            print("View appeared with forward to: \(email.forwardTo)")  // Debug print
+            let parts = email.emailAddress.split(separator: "@")
+            tempUsername = String(parts[0])
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(isEditing ? "Save" : "Edit") {
@@ -150,10 +170,12 @@ struct EmailDetailView: View {
                     }
                     withAnimation {
                         if !isEditing {
-                            // Reset temp values when starting to edit
+                            let parts = email.emailAddress.split(separator: "@")
+                            tempUsername = String(parts[0])
                             tempWebsite = email.website
                             tempNotes = email.notes
                             tempIsEnabled = email.isEnabled
+                            tempForwardTo = email.forwardTo
                         }
                         isEditing.toggle()
                     }
@@ -173,6 +195,7 @@ struct EmailDetailView: View {
         
         do {
             // Update the model with temporary values
+            email.emailAddress = fullEmailAddress
             email.website = tempWebsite
             email.notes = tempNotes
             email.isEnabled = tempIsEnabled
@@ -185,7 +208,7 @@ struct EmailDetailView: View {
             if let tag = email.cloudflareTag {
                 try await cloudflareClient.updateEmailRule(
                     tag: tag,
-                    emailAddress: email.emailAddress,
+                    emailAddress: fullEmailAddress,
                     isEnabled: tempIsEnabled,
                     forwardTo: tempForwardTo
                 )
@@ -195,9 +218,12 @@ struct EmailDetailView: View {
             self.showError = true
             
             // Reset temp values on error
+            let parts = email.emailAddress.split(separator: "@")
+            tempUsername = String(parts[0])
             tempWebsite = email.website
             tempNotes = email.notes
             tempIsEnabled = email.isEnabled
+            tempForwardTo = email.forwardTo
         }
         
         isLoading = false
