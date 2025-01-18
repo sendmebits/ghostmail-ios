@@ -20,6 +20,7 @@ struct EmailDetailView: View {
     
     @State private var showToast = false
     @State private var toastMessage = ""
+    @State private var showDeleteConfirmation = false
     
     init(email: EmailAlias) {
         print("Initializing DetailView with email: \(email.emailAddress), forward to: \(email.forwardTo)")
@@ -144,6 +145,20 @@ struct EmailDetailView: View {
             Section("Created") {
                 Text(formattedCreatedDate)
             }
+            
+            if isEditing {
+                Section {
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Text("Delete Email Alias")
+                            Spacer()
+                        }
+                    }
+                }
+            }
         }
         .navigationTitle("Email Details")
         .opacity(email.isEnabled ? 1.0 : 0.8)
@@ -181,6 +196,34 @@ struct EmailDetailView: View {
             Text(error.localizedDescription)
         }
         .toast(isShowing: $showToast, message: toastMessage)
+        .alert("Delete Email Alias", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                Task {
+                    await deleteEmailAlias()
+                }
+            }
+        } message: {
+            Text("Are you sure you want to delete this email alias? This action cannot be undone.")
+        }
+    }
+    
+    private func deleteEmailAlias() async {
+        isLoading = true
+        
+        do {
+            if let tag = email.cloudflareTag {
+                try await cloudflareClient.deleteEmailRule(tag: tag)
+                modelContext.delete(email)
+                try modelContext.save()
+                dismiss()
+            }
+        } catch {
+            self.error = error
+            self.showError = true
+        }
+        
+        isLoading = false
     }
     
     private func saveChanges() async {

@@ -251,6 +251,22 @@ class CloudflareClient: ObservableObject {
         defaultForwardingAddress = address
     }
     
+    func deleteEmailRule(tag: String) async throws {
+        let url = URL(string: "\(baseURL)/zones/\(zoneId)/email/routing/rules/\(tag)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.allHTTPHeaderFields = headers
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
+                throw CloudflareError(message: errorResponse.errors.first?.message ?? "Unknown error")
+            }
+            throw CloudflareError(message: "Failed to delete email rule")
+        }
+    }
+    
     var shouldShowWebsitesInList: Bool {
         get { showWebsitesInList }
         set { showWebsitesInList = newValue }
