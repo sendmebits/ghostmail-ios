@@ -120,22 +120,24 @@ struct EmailDetailView: View {
                 }
             }
             
-            Section("Website") {
-                if isEditing {
-                    TextField("Website", text: $tempWebsite)
-                } else {
-                    Text(email.website.isEmpty ? "Not specified" : email.website)
-                        .foregroundStyle(email.website.isEmpty ? .secondary : .primary)
+            if isEditing || !email.website.isEmpty {
+                Section("Website") {
+                    if isEditing {
+                        TextField("Website", text: $tempWebsite)
+                    } else {
+                        Text(email.website)
+                    }
                 }
             }
             
-            Section("Notes") {
-                if isEditing {
-                    TextField("Notes", text: $tempNotes, axis: .vertical)
-                        .lineLimit(3...6)
-                } else {
-                    Text(email.notes.isEmpty ? "Not specified" : email.notes)
-                        .foregroundStyle(email.notes.isEmpty ? .secondary : .primary)
+            if isEditing || !email.notes.isEmpty {
+                Section("Notes") {
+                    if isEditing {
+                        TextField("Notes", text: $tempNotes, axis: .vertical)
+                            .lineLimit(3...6)
+                    } else {
+                        Text(email.notes)
+                    }
                 }
             }
             
