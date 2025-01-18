@@ -42,7 +42,7 @@ struct EmailDetailView: View {
     
     private var formattedCreatedDate: String {
         guard let created = email.created else {
-            return "N/A"
+            return "Created by Cloudflare"
         }
         
         let formatter = DateFormatter()

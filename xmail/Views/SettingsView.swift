@@ -8,6 +8,7 @@ struct SettingsView: View {
     @Query(sort: \EmailAlias.emailAddress) private var emailAliases: [EmailAlias]
     @State private var selectedDefaultAddress: String = ""
     @State private var showWebsites: Bool = true
+    @State private var showLogoutAlert: Bool = false
     
     var body: some View {
         NavigationStack {
@@ -50,13 +51,7 @@ struct SettingsView: View {
                 
                 Section {
                     Button(role: .destructive) {
-                        // Clear local data
-                        emailAliases.forEach { modelContext.delete($0) }
-                        try? modelContext.save()
-                        
-                        // Logout from CloudflareClient
-                        cloudflareClient.logout()
-                        dismiss()
+                        showLogoutAlert = true
                     } label: {
                         HStack {
                             Text("Logout")
@@ -74,6 +69,20 @@ struct SettingsView: View {
                         dismiss()
                     }
                 }
+            }
+            .alert("Are you sure you want to logout?", isPresented: $showLogoutAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Logout", role: .destructive) {
+                    // Clear local data
+                    emailAliases.forEach { modelContext.delete($0) }
+                    try? modelContext.save()
+                    
+                    // Logout from CloudflareClient
+                    cloudflareClient.logout()
+                    dismiss()
+                }
+            } message: {
+                Text("This will clear all local data and you'll need to sign in again.")
             }
         }
         .onAppear {
