@@ -18,16 +18,20 @@ struct EmailDetailView: View {
     @State private var tempForwardTo: String
     @State private var tempUsername: String = ""
     
-    @Environment(\.displayScale) private var displayScale
-    
     init(email: EmailAlias) {
-        print("Initializing DetailView with email: \(email.emailAddress), forward to: \(email.forwardTo)")  // Debug print
+        print("Initializing DetailView with email: \(email.emailAddress), forward to: \(email.forwardTo)")
         self.email = email
         _tempWebsite = State(initialValue: email.website)
         _tempNotes = State(initialValue: email.notes)
         _tempIsEnabled = State(initialValue: email.isEnabled)
         _tempForwardTo = State(initialValue: email.forwardTo)
-        _tempUsername = State(initialValue: "")
+        
+        // Extract username from email address
+        if let username = email.emailAddress.split(separator: "@").first {
+            _tempUsername = State(initialValue: String(username))
+        } else {
+            _tempUsername = State(initialValue: "")
+        }
     }
     
     private var formattedCreatedDate: String {
@@ -59,6 +63,7 @@ struct EmailDetailView: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.emailAddress)
+                            .textContentType(.username)
                         Text("@\(cloudflareClient.emailDomain)")
                             .foregroundStyle(.secondary)
                     }
@@ -90,10 +95,7 @@ struct EmailDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Text(email.forwardTo)
-                        .onAppear {
-                            print("Displaying forward to: \(email.forwardTo)")
-                        }
+                    Text(email.forwardTo.isEmpty ? "Not specified" : email.forwardTo)
                 }
             }
             
@@ -155,6 +157,20 @@ struct EmailDetailView: View {
         }
         .navigationTitle("Email Details")
         .opacity(email.isEnabled ? 1.0 : 0.8)
+        .task {
+            // Fetch the latest data when the view appears
+            if email.forwardTo.isEmpty {
+                do {
+                    let rules = try await cloudflareClient.getEmailRules()
+                    if let rule = rules.first(where: { $0.emailAddress == email.emailAddress }) {
+                        email.forwardTo = rule.forwardTo
+                        try modelContext.save()
+                    }
+                } catch {
+                    print("Error refreshing email data: \(error)")
+                }
+            }
+        }
         .onAppear {
             print("View appeared with forward to: \(email.forwardTo)")  // Debug print
             let parts = email.emailAddress.split(separator: "@")
