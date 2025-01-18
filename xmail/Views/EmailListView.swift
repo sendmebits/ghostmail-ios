@@ -73,9 +73,12 @@ struct EmailListView: View {
             let cloudflareEmails = cloudflareRules.map { $0.emailAddress }
             let newEmailAddresses = Set(cloudflareEmails)
             
+            print("Starting SwiftData updates...")
+            
             // Remove aliases that no longer exist in Cloudflare
             emailAliases.forEach { alias in
                 if !newEmailAddresses.contains(alias.emailAddress) {
+                    print("Deleting alias: \(alias.emailAddress)")
                     modelContext.delete(alias)
                 }
             }
@@ -84,35 +87,48 @@ struct EmailListView: View {
             for (index, cloudflareRule) in cloudflareRules.enumerated() {
                 let emailAddress = cloudflareRule.emailAddress
                 let forwardTo = cloudflareRule.forwardTo
-                print("Processing rule for \(emailAddress) with forward to: \(forwardTo)")
+                print("Processing rule \(index + 1)/\(cloudflareRules.count): \(emailAddress) -> \(forwardTo)")
                 
                 if let existingAlias = existingAliases[emailAddress] {
                     // Update existing alias's Cloudflare properties
+                    print("Updating existing alias: \(emailAddress)")
                     existingAlias.cloudflareTag = cloudflareRule.cloudflareTag
                     existingAlias.isEnabled = cloudflareRule.isEnabled
-                    existingAlias.forwardTo = cloudflareRule.forwardTo
+                    existingAlias.forwardTo = forwardTo
                     existingAlias.sortIndex = index + 1
-                    print("Updated existing alias \(existingAlias.emailAddress) with forward to: \(existingAlias.forwardTo)")
+                    
+                    // Verify update
+                    print("Updated alias properties - tag: \(existingAlias.cloudflareTag ?? "nil"), enabled: \(existingAlias.isEnabled), forward: \(existingAlias.forwardTo)")
                 } else {
                     // Create new alias
+                    print("Creating new alias: \(emailAddress)")
                     let newAlias = EmailAlias(emailAddress: emailAddress)
                     newAlias.cloudflareTag = cloudflareRule.cloudflareTag
                     newAlias.isEnabled = cloudflareRule.isEnabled
-                    newAlias.forwardTo = cloudflareRule.forwardTo
+                    newAlias.forwardTo = forwardTo
                     newAlias.sortIndex = index + 1
                     modelContext.insert(newAlias)
-                    print("Created new alias \(newAlias.emailAddress) with forward to: \(newAlias.forwardTo)")
+                    
+                    // Verify creation
+                    print("Created alias properties - tag: \(newAlias.cloudflareTag ?? "nil"), enabled: \(newAlias.isEnabled), forward: \(newAlias.forwardTo)")
                 }
+                
+                // Save after each update to ensure changes are persisted
+                try modelContext.save()
             }
             
-            // Save changes
+            print("Finished updates, verifying final state...")
+            
+            // Verify final state
+            emailAliases.forEach { alias in
+                print("Final state - alias: \(alias.emailAddress), forward to: \(alias.forwardTo)")
+            }
+            
+            // Force a refresh of the view context
             try modelContext.save()
             
-            // Verify the data was saved
-            emailAliases.forEach { alias in
-                print("Verified after save - alias: \(alias.emailAddress) forwards to: \(alias.forwardTo)")
-            }
         } catch {
+            print("Error during refresh: \(error)")
             self.error = error
             self.showError = true
         }
@@ -133,7 +149,9 @@ struct EmailListView: View {
                 } else {
                     List {
                         ForEach(sortedEmails, id: \.id) { email in
-                            NavigationLink(destination: EmailDetailView(email: email)) {
+                            NavigationLink {
+                                EmailDetailView(email: email)
+                            } label: {
                                 EmailRowView(email: email)
                             }
                         }
