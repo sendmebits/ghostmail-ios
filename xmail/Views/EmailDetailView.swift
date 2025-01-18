@@ -26,6 +26,8 @@ struct EmailDetailView: View {
         _tempIsEnabled = State(initialValue: email.isEnabled)
         _tempForwardTo = State(initialValue: email.forwardTo)
         
+        print("DetailView initialized with tempForwardTo: \(email.forwardTo)")
+        
         // Extract username from email address
         if let username = email.emailAddress.split(separator: "@").first {
             _tempUsername = State(initialValue: String(username))
@@ -116,18 +118,8 @@ struct EmailDetailView: View {
                 if isEditing {
                     TextField("Website", text: $tempWebsite)
                 } else {
-                    HStack {
-                        Text(email.website.isEmpty ? "Not specified" : email.website)
-                        if !email.website.isEmpty {
-                            Spacer()
-                            Button {
-                                copyToClipboard(email.website)
-                            } label: {
-                                Image(systemName: "doc.on.doc")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+                    Text(email.website.isEmpty ? "Not specified" : email.website)
+                        .foregroundStyle(email.website.isEmpty ? .secondary : .primary)
                 }
             }
             
@@ -136,18 +128,8 @@ struct EmailDetailView: View {
                     TextField("Notes", text: $tempNotes, axis: .vertical)
                         .lineLimit(3...6)
                 } else {
-                    HStack {
-                        Text(email.notes.isEmpty ? "No notes" : email.notes)
-                        if !email.notes.isEmpty {
-                            Spacer()
-                            Button {
-                                copyToClipboard(email.notes)
-                            } label: {
-                                Image(systemName: "doc.on.doc")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+                    Text(email.notes.isEmpty ? "Not specified" : email.notes)
+                        .foregroundStyle(email.notes.isEmpty ? .secondary : .primary)
                 }
             }
             
@@ -157,20 +139,6 @@ struct EmailDetailView: View {
         }
         .navigationTitle("Email Details")
         .opacity(email.isEnabled ? 1.0 : 0.8)
-        .task {
-            // Fetch the latest data when the view appears
-            if email.forwardTo.isEmpty {
-                do {
-                    let rules = try await cloudflareClient.getEmailRules()
-                    if let rule = rules.first(where: { $0.emailAddress == email.emailAddress }) {
-                        email.forwardTo = rule.forwardTo
-                        try modelContext.save()
-                    }
-                } catch {
-                    print("Error refreshing email data: \(error)")
-                }
-            }
-        }
         .onAppear {
             print("View appeared with forward to: \(email.forwardTo)")  // Debug print
             let parts = email.emailAddress.split(separator: "@")
