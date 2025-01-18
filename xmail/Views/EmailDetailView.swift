@@ -18,6 +18,9 @@ struct EmailDetailView: View {
     @State private var tempForwardTo: String
     @State private var tempUsername: String = ""
     
+    @State private var showToast = false
+    @State private var toastMessage = ""
+    
     init(email: EmailAlias) {
         print("Initializing DetailView with email: \(email.emailAddress), forward to: \(email.forwardTo)")
         self.email = email
@@ -49,7 +52,10 @@ struct EmailDetailView: View {
     
     private func copyToClipboard(_ text: String) {
         UIPasteboard.general.string = text
-        // In a production app, you might want to show a brief toast/notification here
+        toastMessage = "Copied to clipboard"
+        withAnimation {
+            showToast = true
+        }
     }
     
     private var fullEmailAddress: String {
@@ -172,6 +178,7 @@ struct EmailDetailView: View {
         } message: { error in
             Text(error.localizedDescription)
         }
+        .toast(isShowing: $showToast, message: toastMessage)
     }
     
     private func saveChanges() async {
