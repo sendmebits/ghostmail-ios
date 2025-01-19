@@ -62,40 +62,60 @@ class CloudflareClient: ObservableObject {
         // Fetch forwarding addresses first
         try await fetchForwardingAddresses()
         
-        let url = URL(string: "\(baseURL)/zones/\(zoneId)/email/routing/rules?page=1&per_page=50")!
-        var request = URLRequest(url: url)
-        request.allHTTPHeaderFields = headers
+        var allRules: [EmailRule] = []
+        var currentPage = 1
+        let perPage = 100  // Increased to 100 to reduce number of API calls
         
-        print("Requesting URL: \(url.absoluteString)")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw CloudflareError(message: "Invalid response from server")
-        }
-        
-        if httpResponse.statusCode != 200 {
-            if let errorString = String(data: data, encoding: .utf8) {
-                print("Error response: \(errorString)")
+        while true {
+            let url = URL(string: "\(baseURL)/zones/\(zoneId)/email/routing/rules?page=\(currentPage)&per_page=\(perPage)")!
+            var request = URLRequest(url: url)
+            request.allHTTPHeaderFields = headers
+            
+            print("Requesting URL: \(url.absoluteString)")
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw CloudflareError(message: "Invalid response from server")
             }
             
-            if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
-                throw CloudflareError(message: errorResponse.errors.first?.message ?? "Unknown error")
+            if httpResponse.statusCode != 200 {
+                if let errorString = String(data: data, encoding: .utf8) {
+                    print("Error response: \(errorString)")
+                }
+                
+                if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
+                    throw CloudflareError(message: errorResponse.errors.first?.message ?? "Unknown error")
+                }
+                throw CloudflareError(message: "Server returned status code \(httpResponse.statusCode)")
             }
-            throw CloudflareError(message: "Server returned status code \(httpResponse.statusCode)")
+            
+            let cloudflareResponse = try JSONDecoder().decode(CloudflareResponse<[EmailRule]>.self, from: data)
+            
+            guard cloudflareResponse.success else {
+                throw CloudflareError(message: "API request was not successful")
+            }
+            
+            allRules.append(contentsOf: cloudflareResponse.result)
+            
+            // Check if we've fetched all pages
+            if let resultInfo = cloudflareResponse.result_info {
+                let totalPages = (resultInfo.total_count + perPage - 1) / perPage
+                if currentPage >= totalPages {
+                    break
+                }
+                currentPage += 1
+            } else {
+                // If no result_info, assume we've got all results
+                break
+            }
         }
         
-        let cloudflareResponse = try JSONDecoder().decode(CloudflareResponse<[EmailRule]>.self, from: data)
-        
-        guard cloudflareResponse.success else {
-            throw CloudflareError(message: "API request was not successful")
-        }
-        
-        // Print the raw response for debugging
-        print("Cloudflare Response: \(String(data: data, encoding: .utf8) ?? "Unable to decode response")")
+        // Print the total number of rules fetched
+        print("Total email rules fetched: \(allRules.count)")
         
         // Collect all unique forwarding addresses
-        let forwards = Set(cloudflareResponse.result.compactMap { rule -> String? in
+        let forwards = Set(allRules.compactMap { rule -> String? in
             let forwardTo = rule.actions.first { $0.type == "forward" }?.value.first
             print("Found forwarding address: \(forwardTo ?? "nil") for email: \(rule.matchers.first?.value ?? "unknown")")
             return forwardTo
@@ -105,7 +125,7 @@ class CloudflareClient: ObservableObject {
             self.forwardingAddresses = forwards
         }
         
-        return cloudflareResponse.result.map { rule in
+        return allRules.map { rule in
             let emailAddress = rule.matchers.first { $0.field == "to" }?.value ?? ""
             let forwardTo = rule.actions.first { $0.type == "forward" }?.value.first ?? ""
             
