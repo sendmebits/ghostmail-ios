@@ -62,6 +62,7 @@ class CloudflareClient: ObservableObject {
         // Fetch forwarding addresses first
         try await fetchForwardingAddresses()
         
+        // Fetch all entries from Cloudflare in chunks of 100
         var allRules: [EmailRule] = []
         var currentPage = 1
         let perPage = 100  // Increased to 100 to reduce number of API calls
