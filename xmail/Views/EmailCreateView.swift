@@ -78,7 +78,7 @@ struct EmailCreateView: View {
             }
         }
         .task {
-            if forwardTo.isEmpty {
+            if forwardTo.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
                 forwardTo = cloudflareClient.currentDefaultForwardingAddress
             }
         }
@@ -98,7 +98,7 @@ struct EmailCreateView: View {
                 newAlias.notes = notes
                 newAlias.cloudflareTag = rule.tag
                 newAlias.forwardTo = forwardTo
-                newAlias.sortIndex = -1
+                newAlias.sortIndex = 0
                 modelContext.insert(newAlias)
                 try modelContext.save()
                 dismiss()
