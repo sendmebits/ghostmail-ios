@@ -15,6 +15,8 @@ class CloudflareClient: ObservableObject {
     @AppStorage("defaultForwardingAddress") private var defaultForwardingAddress: String = ""
     @AppStorage("showWebsitesInList") private var showWebsitesInList: Bool = true
     
+    @Published private(set) var domainName: String = ""
+    
     init(accountId: String = "", zoneId: String = "", apiToken: String = "") {
         // Load stored credentials
         let defaults = UserDefaults.standard
@@ -53,52 +55,91 @@ class CloudflareClient: ObservableObject {
     }
     
     func getEmailRules() async throws -> [EmailAlias] {
-        let url = URL(string: "\(baseURL)/zones/\(zoneId)/email/routing/rules?page=1&per_page=50")!
-        var request = URLRequest(url: url)
-        request.allHTTPHeaderFields = headers
-        
-        print("Requesting URL: \(url.absoluteString)")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw CloudflareError(message: "Invalid response from server")
+        if domainName.isEmpty {
+            try await fetchDomainName()
         }
         
-        if httpResponse.statusCode != 200 {
-            if let errorString = String(data: data, encoding: .utf8) {
-                print("Error response: \(errorString)")
+        // Fetch forwarding addresses first
+        try await fetchForwardingAddresses()
+        
+        // Fetch all entries from Cloudflare in chunks of 100
+        var allRules: [EmailRule] = []
+        var currentPage = 1
+        let perPage = 100  // Increased to 100 to reduce number of API calls
+        
+        while true {
+            let url = URL(string: "\(baseURL)/zones/\(zoneId)/email/routing/rules?page=\(currentPage)&per_page=\(perPage)")!
+            var request = URLRequest(url: url)
+            request.allHTTPHeaderFields = headers
+            
+            print("Requesting URL: \(url.absoluteString)")
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw CloudflareError(message: "Invalid response from server")
             }
             
-            if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
-                throw CloudflareError(message: errorResponse.errors.first?.message ?? "Unknown error")
+            if httpResponse.statusCode != 200 {
+                if let errorString = String(data: data, encoding: .utf8) {
+                    print("Error response: \(errorString)")
+                }
+                
+                if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
+                    throw CloudflareError(message: errorResponse.errors.first?.message ?? "Unknown error")
+                }
+                throw CloudflareError(message: "Server returned status code \(httpResponse.statusCode)")
             }
-            throw CloudflareError(message: "Server returned status code \(httpResponse.statusCode)")
+            
+            let cloudflareResponse = try JSONDecoder().decode(CloudflareResponse<[EmailRule]>.self, from: data)
+            
+            guard cloudflareResponse.success else {
+                throw CloudflareError(message: "API request was not successful")
+            }
+            
+            allRules.append(contentsOf: cloudflareResponse.result)
+            
+            // Check if we've fetched all pages
+            if let resultInfo = cloudflareResponse.result_info {
+                let totalPages = (resultInfo.total_count + perPage - 1) / perPage
+                if currentPage >= totalPages {
+                    break
+                }
+                currentPage += 1
+            } else {
+                // If no result_info, assume we've got all results
+                break
+            }
         }
         
-        let cloudflareResponse = try JSONDecoder().decode(CloudflareResponse<[EmailRule]>.self, from: data)
-        
-        guard cloudflareResponse.success else {
-            throw CloudflareError(message: "API request was not successful")
-        }
+        // Print the total number of rules fetched
+        print("Total email rules fetched: \(allRules.count)")
         
         // Collect all unique forwarding addresses
-        let forwards = Set(cloudflareResponse.result.compactMap { rule -> String? in
-            rule.actions.first { $0.type == "forward" }?.value.first
+        let forwards = Set(allRules.compactMap { rule -> String? in
+            let forwardTo = rule.actions.first { $0.type == "forward" }?.value.first
+            print("Found forwarding address: \(forwardTo ?? "nil") for email: \(rule.matchers.first?.value ?? "unknown")")
+            return forwardTo
         })
         
         await MainActor.run {
             self.forwardingAddresses = forwards
         }
         
-        return cloudflareResponse.result.map { rule in
+        return allRules.map { rule in
             let emailAddress = rule.matchers.first { $0.field == "to" }?.value ?? ""
-            // Get the forwarding address or use the default if none is found
-            let forwardTo = rule.actions.first { $0.type == "forward" }?.value.first ?? currentDefaultForwardingAddress
-            let alias = EmailAlias(emailAddress: emailAddress)
+            let forwardTo = rule.actions.first { $0.type == "forward" }?.value.first ?? ""
+            
+            print("Creating alias for \(emailAddress) with forward to: \(forwardTo)")
+            
+            let alias = EmailAlias(
+                emailAddress: emailAddress,
+                forwardTo: forwardTo
+            )
             alias.cloudflareTag = rule.tag
             alias.isEnabled = rule.enabled
-            alias.forwardTo = forwardTo  // This should never be empty now
+            
+            print("Created alias with forward to: \(alias.forwardTo)")
             return alias
         }
     }
@@ -144,6 +185,15 @@ class CloudflareClient: ObservableObject {
         defaults.set(accountId, forKey: "accountId")
         defaults.set(zoneId, forKey: "zoneId")
         defaults.set(apiToken, forKey: "apiToken")
+        
+        // Fetch the domain name when credentials are updated
+        Task {
+            do {
+                try await fetchDomainName()
+            } catch {
+                print("Error fetching domain name: \(error)")
+            }
+        }
     }
     
     @MainActor
@@ -197,9 +247,8 @@ class CloudflareClient: ObservableObject {
     }
     
     var emailDomain: String {
-        // Extract domain from zone ID, or use a default
-        // This should match your Cloudflare email routing domain
-        "sendmebits.com"
+        // Use the fetched domain name, or fall back to a placeholder
+        domainName.isEmpty ? "Loading..." : domainName
     }
     
     func createFullEmailAddress(username: String) -> String {
@@ -223,9 +272,87 @@ class CloudflareClient: ObservableObject {
         defaultForwardingAddress = address
     }
     
+    func deleteEmailRule(tag: String) async throws {
+        let url = URL(string: "\(baseURL)/zones/\(zoneId)/email/routing/rules/\(tag)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.allHTTPHeaderFields = headers
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
+                throw CloudflareError(message: errorResponse.errors.first?.message ?? "Unknown error")
+            }
+            throw CloudflareError(message: "Failed to delete email rule")
+        }
+    }
+    
     var shouldShowWebsitesInList: Bool {
         get { showWebsitesInList }
         set { showWebsitesInList = newValue }
+    }
+    
+    private func fetchDomainName() async throws {
+        let url = URL(string: "\(baseURL)/zones/\(zoneId)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.allHTTPHeaderFields = headers
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw CloudflareError(message: "Failed to fetch zone details")
+        }
+        
+        struct ZoneResponse: Codable {
+            struct Result: Codable {
+                let name: String
+            }
+            let result: Result
+            let success: Bool
+        }
+        
+        let zoneResponse = try JSONDecoder().decode(ZoneResponse.self, from: data)
+        
+        if zoneResponse.success {
+            await MainActor.run {
+                self.domainName = zoneResponse.result.name
+            }
+        } else {
+            throw CloudflareError(message: "Failed to get domain name from zone response")
+        }
+    }
+    
+    private func fetchForwardingAddresses() async throws {
+        let url = URL(string: "\(baseURL)/accounts/\(accountId)/email/routing/addresses")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.allHTTPHeaderFields = headers
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw CloudflareError(message: "Failed to fetch forwarding addresses")
+        }
+        
+        let addressResponse = try JSONDecoder().decode(AddressResponse.self, from: data)
+        
+        if addressResponse.success {
+            // Consider an address verified if it has a verified timestamp
+            let verifiedAddresses = Set(
+                addressResponse.result
+                    .filter { !$0.verified.isEmpty }
+                    .map { $0.email }
+            )
+            
+            await MainActor.run {
+                self.forwardingAddresses = verifiedAddresses
+            }
+        } else {
+            let errorMessage = addressResponse.errors.first?.message ?? "Failed to get forwarding addresses from response"
+            throw CloudflareError(message: errorMessage)
+        }
     }
 }
 
@@ -273,4 +400,20 @@ struct Matcher: Codable {
 struct Action: Codable {
     let type: String
     let value: [String]
+}
+
+struct AddressResponse: Codable {
+    struct EmailAddress: Codable {
+        let id: String
+        let tag: String
+        let email: String
+        let verified: String  // This is a timestamp string, not a boolean
+        let created: String
+        let modified: String
+    }
+    let result: [EmailAddress]
+    let success: Bool
+    let errors: [CloudflareErrorDetail]
+    let messages: [String]
+    let result_info: ResultInfo
 } 

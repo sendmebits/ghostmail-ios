@@ -62,43 +62,75 @@ struct EmailListView: View {
     private func refreshEmailRules() async {
         isLoading = true
         do {
-            let rules = try await cloudflareClient.getEmailRules()
+            let cloudflareRules = try await cloudflareClient.getEmailRules()
             
-            // Create a dictionary of existing aliases by email address
+            // Create dictionaries for lookup
+            let cloudflareRulesByEmail = Dictionary(
+                uniqueKeysWithValues: cloudflareRules.map { ($0.emailAddress, $0) }
+            )
+            
             let existingAliases = Dictionary(
                 uniqueKeysWithValues: emailAliases.map { ($0.emailAddress, $0) }
             )
             
-            // Get email addresses from Cloudflare rules
-            let cloudflareEmails = rules.map { $0.emailAddress }
-            let newEmailAddresses = Set(cloudflareEmails)
-            
-            // Remove aliases that no longer exist in Cloudflare
-            emailAliases.forEach { alias in
-                if !newEmailAddresses.contains(alias.emailAddress) {
+            // Remove deleted aliases
+            for alias in emailAliases {
+                if cloudflareRulesByEmail[alias.emailAddress] == nil {
+                    print("Deleting alias: \(alias.emailAddress)")
                     modelContext.delete(alias)
                 }
             }
             
-            // Update or create aliases while preserving order
-            for (index, rule) in rules.enumerated() {
-                if let existingAlias = existingAliases[rule.emailAddress] {
-                    // Update existing alias's Cloudflare properties
-                    existingAlias.cloudflareTag = rule.cloudflareTag
-                    existingAlias.isEnabled = rule.isEnabled
-                    existingAlias.sortIndex = index + 1
+            // Update or create aliases
+            for (index, rule) in cloudflareRules.enumerated() {
+                let emailAddress = rule.emailAddress
+                let forwardTo = rule.forwardTo
+                
+                print("\nProcessing: \(emailAddress)")
+                print("Cloudflare forward to: \(forwardTo)")
+                
+                if let existing = existingAliases[emailAddress] {
+                    print("Updating - Previous forward to: \(existing.forwardTo)")
+                    withAnimation {
+                        existing.cloudflareTag = rule.cloudflareTag
+                        existing.isEnabled = rule.isEnabled
+                        existing.forwardTo = forwardTo
+                        existing.sortIndex = index + 1
+                    }
+                    print("Updated - New forward to: \(existing.forwardTo)")
                 } else {
-                    // Create new alias
-                    let newAlias = EmailAlias(emailAddress: rule.emailAddress)
+                    print("Creating new alias")
+                    let newAlias = EmailAlias(
+                        emailAddress: emailAddress,
+                        forwardTo: forwardTo
+                    )
                     newAlias.cloudflareTag = rule.cloudflareTag
                     newAlias.isEnabled = rule.isEnabled
                     newAlias.sortIndex = index + 1
                     modelContext.insert(newAlias)
+                    print("Created - Forward to: \(newAlias.forwardTo)")
                 }
+                
+                // Save after each update
+                try modelContext.save()
             }
             
+            // Final verification
+            print("\nVerifying all aliases:")
+            for alias in emailAliases {
+                print("\(alias.emailAddress) -> \(alias.forwardTo)")
+                if let rule = cloudflareRulesByEmail[alias.emailAddress],
+                   alias.forwardTo != rule.forwardTo {
+                    print("⚠️ Mismatch found! Fixing...")
+                    withAnimation {
+                        alias.forwardTo = rule.forwardTo
+                    }
+                }
+            }
             try modelContext.save()
+            
         } catch {
+            print("Error during refresh: \(error)")
             self.error = error
             self.showError = true
         }
@@ -119,7 +151,9 @@ struct EmailListView: View {
                 } else {
                     List {
                         ForEach(sortedEmails, id: \.id) { email in
-                            NavigationLink(destination: EmailDetailView(email: email)) {
+                            NavigationLink {
+                                EmailDetailView(email: email)
+                            } label: {
                                 EmailRowView(email: email)
                             }
                         }

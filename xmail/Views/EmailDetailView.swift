@@ -16,21 +16,33 @@ struct EmailDetailView: View {
     @State private var tempNotes: String
     @State private var tempIsEnabled: Bool
     @State private var tempForwardTo: String
+    @State private var tempUsername: String = ""
     
-    @Environment(\.displayScale) private var displayScale
+    @State private var showToast = false
+    @State private var toastMessage = ""
+    @State private var showDeleteConfirmation = false
     
     init(email: EmailAlias) {
+        print("Initializing DetailView with email: \(email.emailAddress), forward to: \(email.forwardTo)")
         self.email = email
-        // Initialize temporary values with existing values
         _tempWebsite = State(initialValue: email.website)
         _tempNotes = State(initialValue: email.notes)
         _tempIsEnabled = State(initialValue: email.isEnabled)
         _tempForwardTo = State(initialValue: email.forwardTo)
+        
+        print("DetailView initialized with tempForwardTo: \(email.forwardTo)")
+        
+        // Extract username from email address
+        if let username = email.emailAddress.split(separator: "@").first {
+            _tempUsername = State(initialValue: String(username))
+        } else {
+            _tempUsername = State(initialValue: "")
+        }
     }
     
     private var formattedCreatedDate: String {
         guard let created = email.created else {
-            return "N/A"
+            return "Created by Cloudflare"
         }
         
         let formatter = DateFormatter()
@@ -41,21 +53,40 @@ struct EmailDetailView: View {
     
     private func copyToClipboard(_ text: String) {
         UIPasteboard.general.string = text
-        // In a production app, you might want to show a brief toast/notification here
+        toastMessage = "Copied to clipboard"
+        withAnimation {
+            showToast = true
+        }
+    }
+    
+    private var fullEmailAddress: String {
+        "\(tempUsername)@\(cloudflareClient.emailDomain)"
     }
     
     var body: some View {
         Form {
             Section("Email Address") {
-                HStack {
-                    Text(email.emailAddress)
-                        .strikethrough(!email.isEnabled)
-                    Spacer()
-                    Button {
-                        copyToClipboard(email.emailAddress)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
+                if isEditing {
+                    HStack {
+                        TextField("username", text: $tempUsername)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.emailAddress)
+                            .textContentType(.username)
+                        Text("@\(cloudflareClient.emailDomain)")
                             .foregroundStyle(.secondary)
+                    }
+                } else {
+                    HStack {
+                        Text(email.emailAddress)
+                            .strikethrough(!email.isEnabled)
+                        Spacer()
+                        Button {
+                            copyToClipboard(email.emailAddress)
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -73,12 +104,7 @@ struct EmailDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    if !email.forwardTo.isEmpty {
-                        Text(email.forwardTo)
-                    } else {
-                        Text("Not specified")
-                            .foregroundStyle(.secondary)
-                    }
+                    Text(email.forwardTo.isEmpty ? "Not specified" : email.forwardTo)
                 }
             }
             
@@ -95,41 +121,23 @@ struct EmailDetailView: View {
                 }
             }
             
-            Section("Website") {
-                if isEditing {
-                    TextField("Website", text: $tempWebsite)
-                } else {
-                    HStack {
-                        Text(email.website.isEmpty ? "Not specified" : email.website)
-                        if !email.website.isEmpty {
-                            Spacer()
-                            Button {
-                                copyToClipboard(email.website)
-                            } label: {
-                                Image(systemName: "doc.on.doc")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+            if isEditing || !email.website.isEmpty {
+                Section("Website") {
+                    if isEditing {
+                        TextField("Website", text: $tempWebsite)
+                    } else {
+                        Text(email.website)
                     }
                 }
             }
             
-            Section("Notes") {
-                if isEditing {
-                    TextField("Notes", text: $tempNotes, axis: .vertical)
-                        .lineLimit(3...6)
-                } else {
-                    HStack {
-                        Text(email.notes.isEmpty ? "No notes" : email.notes)
-                        if !email.notes.isEmpty {
-                            Spacer()
-                            Button {
-                                copyToClipboard(email.notes)
-                            } label: {
-                                Image(systemName: "doc.on.doc")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+            if isEditing || !email.notes.isEmpty {
+                Section("Notes") {
+                    if isEditing {
+                        TextField("Notes", text: $tempNotes, axis: .vertical)
+                            .lineLimit(3...6)
+                    } else {
+                        Text(email.notes)
                     }
                 }
             }
@@ -137,9 +145,28 @@ struct EmailDetailView: View {
             Section("Created") {
                 Text(formattedCreatedDate)
             }
+            
+            if isEditing {
+                Section {
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Text("Delete Email Alias")
+                            Spacer()
+                        }
+                    }
+                }
+            }
         }
         .navigationTitle("Email Details")
         .opacity(email.isEnabled ? 1.0 : 0.8)
+        .onAppear {
+            print("View appeared with forward to: \(email.forwardTo)")  // Debug print
+            let parts = email.emailAddress.split(separator: "@")
+            tempUsername = String(parts[0])
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(isEditing ? "Save" : "Edit") {
@@ -150,10 +177,12 @@ struct EmailDetailView: View {
                     }
                     withAnimation {
                         if !isEditing {
-                            // Reset temp values when starting to edit
+                            let parts = email.emailAddress.split(separator: "@")
+                            tempUsername = String(parts[0])
                             tempWebsite = email.website
                             tempNotes = email.notes
                             tempIsEnabled = email.isEnabled
+                            tempForwardTo = email.forwardTo
                         }
                         isEditing.toggle()
                     }
@@ -166,6 +195,35 @@ struct EmailDetailView: View {
         } message: { error in
             Text(error.localizedDescription)
         }
+        .toast(isShowing: $showToast, message: toastMessage)
+        .alert("Delete Email Alias", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                Task {
+                    await deleteEmailAlias()
+                }
+            }
+        } message: {
+            Text("Are you sure you want to delete this email alias? This action cannot be undone.")
+        }
+    }
+    
+    private func deleteEmailAlias() async {
+        isLoading = true
+        
+        do {
+            if let tag = email.cloudflareTag {
+                try await cloudflareClient.deleteEmailRule(tag: tag)
+                modelContext.delete(email)
+                try modelContext.save()
+                dismiss()
+            }
+        } catch {
+            self.error = error
+            self.showError = true
+        }
+        
+        isLoading = false
     }
     
     private func saveChanges() async {
@@ -173,6 +231,7 @@ struct EmailDetailView: View {
         
         do {
             // Update the model with temporary values
+            email.emailAddress = fullEmailAddress
             email.website = tempWebsite
             email.notes = tempNotes
             email.isEnabled = tempIsEnabled
@@ -185,7 +244,7 @@ struct EmailDetailView: View {
             if let tag = email.cloudflareTag {
                 try await cloudflareClient.updateEmailRule(
                     tag: tag,
-                    emailAddress: email.emailAddress,
+                    emailAddress: fullEmailAddress,
                     isEnabled: tempIsEnabled,
                     forwardTo: tempForwardTo
                 )
@@ -195,9 +254,12 @@ struct EmailDetailView: View {
             self.showError = true
             
             // Reset temp values on error
+            let parts = email.emailAddress.split(separator: "@")
+            tempUsername = String(parts[0])
             tempWebsite = email.website
             tempNotes = email.notes
             tempIsEnabled = email.isEnabled
+            tempForwardTo = email.forwardTo
         }
         
         isLoading = false

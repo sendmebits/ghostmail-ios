@@ -91,6 +91,7 @@ struct ContentView: View {
                     newAlias.cloudflareTag = rule.cloudflareTag
                     newAlias.isEnabled = rule.isEnabled
                     newAlias.sortIndex = index + 1  // Shift indices up by 1
+                    newAlias.created = nil  // Ensure no creation date for Cloudflare-fetched entries
                     modelContext.insert(newAlias)
                 }
             }
