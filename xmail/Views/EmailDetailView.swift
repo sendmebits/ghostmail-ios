@@ -98,7 +98,7 @@ struct EmailDetailView: View {
                 if isEditing {
                     if !cloudflareClient.forwardingAddresses.isEmpty {
                         Picker("Forward to", selection: $tempForwardTo) {
-                            ForEach(Array(cloudflareClient.forwardingAddresses), id: \.self) { address in
+                            ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
                                 Text(address).tag(address)
                             }
                         }

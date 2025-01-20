@@ -32,7 +32,7 @@ struct EmailCreateView: View {
                 Section("Destination") {
                     if !cloudflareClient.forwardingAddresses.isEmpty {
                         Picker("Forward to", selection: $forwardTo) {
-                            ForEach(Array(cloudflareClient.forwardingAddresses), id: \.self) { address in
+                            ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
                                 Text(address).tag(address)
                             }
                         }

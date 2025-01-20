@@ -28,6 +28,12 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Entries")
+                        Text("\(emailAliases.count) Addresses Created")
+                            .foregroundStyle(.secondary)
+                    }
                 } header: {
                     Text("Cloudflare Account")
                 }
@@ -35,7 +41,7 @@ struct SettingsView: View {
                 Section {
                     if !cloudflareClient.forwardingAddresses.isEmpty {
                         Picker("Default Destination", selection: $selectedDefaultAddress) {
-                            ForEach(Array(cloudflareClient.forwardingAddresses), id: \.self) { address in
+                            ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
                                 Text(address).tag(address)
                             }
                         }
