@@ -62,10 +62,10 @@ class CloudflareClient: ObservableObject {
         // Fetch forwarding addresses first
         try await fetchForwardingAddresses()
         
-        // Fetch all entries from Cloudflare in chunks of 100
+        // Fetch all entries from Cloudflare in chunks of 50
         var allRules: [EmailRule] = []
         var currentPage = 1
-        let perPage = 100  // Increased to 100 to reduce number of API calls
+        let perPage = 50  // Match the server's actual per_page value
         
         while true {
             let url = URL(string: "\(baseURL)/zones/\(zoneId)/email/routing/rules?page=\(currentPage)&per_page=\(perPage)")!
@@ -101,8 +101,7 @@ class CloudflareClient: ObservableObject {
             
             // Check if we've fetched all pages
             if let resultInfo = cloudflareResponse.result_info {
-                let totalPages = (resultInfo.total_count + perPage - 1) / perPage
-                if currentPage >= totalPages {
+                if allRules.count >= resultInfo.total_count {
                     break
                 }
                 currentPage += 1
@@ -117,18 +116,31 @@ class CloudflareClient: ObservableObject {
         
         // Collect all unique forwarding addresses
         let forwards = Set(allRules.compactMap { rule -> String? in
-            let forwardTo = rule.actions.first { $0.type == "forward" }?.value.first
-            print("Found forwarding address: \(forwardTo ?? "nil") for email: \(rule.matchers.first?.value ?? "unknown")")
-            return forwardTo
+            // Only consider forward actions
+            guard let forwardAction = rule.actions.first(where: { $0.type == "forward" }),
+                  let values = forwardAction.value,
+                  let firstValue = values.first else { return nil }
+            return firstValue
         })
         
         await MainActor.run {
             self.forwardingAddresses = forwards
         }
         
-        return allRules.map { rule in
-            let emailAddress = rule.matchers.first { $0.field == "to" }?.value ?? ""
-            let forwardTo = rule.actions.first { $0.type == "forward" }?.value.first ?? ""
+        return allRules.compactMap { rule in
+            // Skip rules that don't have email forwarding
+            guard let forwardAction = rule.actions.first(where: { $0.type == "forward" }),
+                  let forwardTo = forwardAction.value?.first else {
+                return nil
+            }
+            
+            // Skip catch-all rules or rules without a "to" matcher
+            guard let matcher = rule.matchers.first,
+                  matcher.type == "literal",
+                  matcher.field == "to",
+                  let emailAddress = matcher.value else {
+                return nil
+            }
             
             print("Creating alias for \(emailAddress) with forward to: \(forwardTo)")
             
@@ -139,7 +151,6 @@ class CloudflareClient: ObservableObject {
             alias.cloudflareTag = rule.tag
             alias.isEnabled = rule.enabled
             
-            print("Created alias with forward to: \(alias.forwardTo)")
             return alias
         }
     }
@@ -359,8 +370,8 @@ class CloudflareClient: ObservableObject {
 struct CloudflareResponse<T: Codable>: Codable {
     let result: T
     let success: Bool
-    let errors: [CloudflareErrorDetail]?
-    let messages: [String]?
+    let errors: [CloudflareErrorDetail]
+    let messages: [String]
     let result_info: ResultInfo?
 }
 
@@ -393,13 +404,13 @@ struct EmailRule: Codable {
 
 struct Matcher: Codable {
     let type: String
-    let field: String
-    let value: String
+    let field: String?
+    let value: String?
 }
 
 struct Action: Codable {
     let type: String
-    let value: [String]
+    let value: [String]?
 }
 
 struct AddressResponse: Codable {
