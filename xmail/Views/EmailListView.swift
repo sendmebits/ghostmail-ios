@@ -1,8 +1,5 @@
 import SwiftUI
 import SwiftData
-//#if canImport(UIKit)
-//import UIKit
-//#endif
 
 struct EmailListView: View {
     @Binding var searchText: String
@@ -168,13 +165,11 @@ struct EmailListView: View {
                             }
                             .buttonStyle(.plain)
                             .contentShape(Rectangle())
-                            .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-                                #if canImport(UIKit)
+                            .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in
                                 let generator = UIImpactFeedbackGenerator(style: .heavy)
                                 generator.prepare()
                                 generator.impactOccurred()
                                 UIPasteboard.general.string = email.emailAddress
-                                #endif
                                 toastMessage = "\(email.emailAddress) copied!"
                                 withAnimation {
                                     showToast = true
