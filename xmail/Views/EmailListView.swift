@@ -1,5 +1,8 @@
 import SwiftUI
 import SwiftData
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct EmailListView: View {
     @Binding var searchText: String
@@ -10,6 +13,8 @@ struct EmailListView: View {
     @State private var isLoading = false
     @State private var error: Error?
     @State private var showError = false
+    @State private var showToast = false
+    @State private var toastMessage = ""
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     
@@ -154,8 +159,14 @@ struct EmailListView: View {
                             NavigationLink {
                                 EmailDetailView(email: email)
                             } label: {
-                                EmailRowView(email: email)
+                                EmailRowView(email: email) {
+                                    toastMessage = "\(email.emailAddress) copied!"
+                                    withAnimation {
+                                        showToast = true
+                                    }
+                                }
                             }
+                            .buttonStyle(.plain)
                         }
                     }
                     .refreshable {
@@ -215,25 +226,46 @@ struct EmailListView: View {
         } message: { error in
             Text(error.localizedDescription)
         }
+        .toast(isShowing: $showToast, message: toastMessage)
     }
 }
 
 struct EmailRowView: View {
     let email: EmailAlias
     @EnvironmentObject private var cloudflareClient: CloudflareClient
+    let onCopy: () -> Void
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(email.emailAddress)
-                .font(.headline)
-                .strikethrough(!email.isEnabled)
-            if !email.website.isEmpty && cloudflareClient.shouldShowWebsitesInList {
-                Text(email.website)
-                    .font(.subheadline)
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(email.emailAddress)
+                    .font(.headline)
+                    .strikethrough(!email.isEnabled)
+                if !email.website.isEmpty && cloudflareClient.shouldShowWebsitesInList {
+                    Text(email.website)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 4)
+            .opacity(email.isEnabled ? 1.0 : 0.6)
+            
+            Spacer()
+            
+            Button {
+                copyToClipboard(email.emailAddress)
+                onCopy()
+            } label: {
+                Image(systemName: "doc.on.doc")
                     .foregroundStyle(.secondary)
             }
+            .buttonStyle(.plain)
         }
-        .padding(.vertical, 4)
-        .opacity(email.isEnabled ? 1.0 : 0.6)
+    }
+    
+    private func copyToClipboard(_ text: String) {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = text
+        #endif
     }
 } 
