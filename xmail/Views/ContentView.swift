@@ -80,20 +80,22 @@ struct ContentView: View {
             // Update or create aliases while preserving order
             // Start index at 1 to leave room for new items at index 0
             for (index, rule) in rules.enumerated() {
+                let alias: EmailAlias
+                
                 if let existingAlias = existingAliases[rule.emailAddress] {
-                    // Update existing alias's Cloudflare properties
-                    existingAlias.cloudflareTag = rule.cloudflareTag
-                    existingAlias.isEnabled = rule.isEnabled
-                    existingAlias.sortIndex = index + 1  // Shift indices up by 1
+                    // Use existing alias
+                    alias = existingAlias
                 } else {
                     // Create new alias
-                    let newAlias = EmailAlias(emailAddress: rule.emailAddress)
-                    newAlias.cloudflareTag = rule.cloudflareTag
-                    newAlias.isEnabled = rule.isEnabled
-                    newAlias.sortIndex = index + 1  // Shift indices up by 1
-                    newAlias.created = nil  // Ensure no creation date for Cloudflare-fetched entries
-                    modelContext.insert(newAlias)
+                    alias = EmailAlias(emailAddress: rule.emailAddress)
+                    alias.created = nil  // Ensure no creation date for Cloudflare-fetched entries
+                    modelContext.insert(alias)
                 }
+                
+                // Update alias properties
+                alias.cloudflareTag = rule.cloudflareTag
+                alias.isEnabled = rule.isEnabled
+                alias.sortIndex = index + 1  // Shift indices up by 1
             }
             
             try modelContext.save()
