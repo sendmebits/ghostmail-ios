@@ -52,7 +52,12 @@ struct EmailDetailView: View {
     }
     
     private func copyToClipboard(_ text: String) {
+        //#if canImport(UIKit)
+        let generator = UIImpactFeedbackGenerator(style: .heavy)
+        generator.prepare()
+        generator.impactOccurred()
         UIPasteboard.general.string = text
+        //#endif
         toastMessage = "Copied to clipboard"
         withAnimation {
             showToast = true
