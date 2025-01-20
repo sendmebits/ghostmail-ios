@@ -249,18 +249,11 @@ struct EmailRowView: View {
             }
             .padding(.vertical, 4)
             .opacity(email.isEnabled ? 1.0 : 0.6)
-            
-            Spacer()
-            
-            Button {
-                copyToClipboard(email.emailAddress)
-                onCopy()
-            } label: {
-                Image(systemName: "doc.on.doc")
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
         }
+        .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+            copyToClipboard(email.emailAddress)
+            onCopy()
+        })
     }
     
     private func copyToClipboard(_ text: String) {
