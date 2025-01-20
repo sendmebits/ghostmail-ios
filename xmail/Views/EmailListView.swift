@@ -1,8 +1,8 @@
 import SwiftUI
 import SwiftData
-#if canImport(UIKit)
-import UIKit
-#endif
+//#if canImport(UIKit)
+//import UIKit
+//#endif
 
 struct EmailListView: View {
     @Binding var searchText: String
@@ -167,6 +167,19 @@ struct EmailListView: View {
                                 }
                             }
                             .buttonStyle(.plain)
+                            .contentShape(Rectangle())
+                            .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                                #if canImport(UIKit)
+                                let generator = UIImpactFeedbackGenerator(style: .heavy)
+                                generator.prepare()
+                                generator.impactOccurred()
+                                UIPasteboard.general.string = email.emailAddress
+                                #endif
+                                toastMessage = "\(email.emailAddress) copied!"
+                                withAnimation {
+                                    showToast = true
+                                }
+                            })
                         }
                     }
                     .refreshable {
@@ -250,15 +263,5 @@ struct EmailRowView: View {
             .padding(.vertical, 4)
             .opacity(email.isEnabled ? 1.0 : 0.6)
         }
-        .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-            copyToClipboard(email.emailAddress)
-            onCopy()
-        })
-    }
-    
-    private func copyToClipboard(_ text: String) {
-        #if canImport(UIKit)
-        UIPasteboard.general.string = text
-        #endif
     }
 } 
