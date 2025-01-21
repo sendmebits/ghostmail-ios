@@ -8,12 +8,14 @@ struct EmailListView: View {
     @State private var showingCreateSheet = false
     @State private var showingSettings = false
     @State private var isLoading = false
+    @State private var isInitialLoad = true
     @State private var error: Error?
     @State private var showError = false
     @State private var showToast = false
     @State private var toastMessage = ""
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var cloudflareClient: CloudflareClient
+    @Binding var needsRefresh: Bool
     
     enum SortOrder {
         case alphabetical
@@ -34,8 +36,9 @@ struct EmailListView: View {
         }
     }
     
-    init(searchText: Binding<String>) {
+    init(searchText: Binding<String>, needsRefresh: Binding<Bool>) {
         self._searchText = searchText
+        self._needsRefresh = needsRefresh
         // Don't set a default sort for @Query to preserve Cloudflare order
         self._emailAliases = Query()
     }
@@ -137,12 +140,13 @@ struct EmailListView: View {
             self.showError = true
         }
         isLoading = false
+        isInitialLoad = false
     }
     
     var body: some View {
         ZStack {
             Group {
-                if isLoading && emailAliases.isEmpty {
+                if isLoading && isInitialLoad {
                     ProgressView()
                 } else if sortedEmails.isEmpty {
                     ContentUnavailableView(
@@ -153,9 +157,7 @@ struct EmailListView: View {
                 } else {
                     List {
                         ForEach(sortedEmails, id: \.id) { email in
-                            NavigationLink {
-                                EmailDetailView(email: email)
-                            } label: {
+                            NavigationLink(value: email) {
                                 EmailRowView(email: email) {
                                     toastMessage = "\(email.emailAddress) copied!"
                                     withAnimation {
@@ -176,6 +178,9 @@ struct EmailListView: View {
                                 }
                             })
                         }
+                    }
+                    .navigationDestination(for: EmailAlias.self) { email in
+                        EmailDetailView(email: email, needsRefresh: $needsRefresh)
                     }
                     .refreshable {
                         await refreshEmailRules()
@@ -235,6 +240,20 @@ struct EmailListView: View {
             Text(error.localizedDescription)
         }
         .toast(isShowing: $showToast, message: toastMessage)
+        .task {
+            // Only load if we haven't loaded yet
+            if isInitialLoad {
+                await refreshEmailRules()
+            }
+        }
+        .onChange(of: needsRefresh) { _, needsRefresh in
+            if needsRefresh {
+                Task {
+                    await refreshEmailRules()
+                    self.needsRefresh = false
+                }
+            }
+        }
     }
 }
 

@@ -10,6 +10,7 @@ struct EmailDetailView: View {
     @State private var error: Error?
     @State private var showError = false
     @Bindable private var email: EmailAlias
+    @Binding var needsRefresh: Bool
     
     // Use @State for temporary edits
     @State private var tempWebsite: String
@@ -22,9 +23,10 @@ struct EmailDetailView: View {
     @State private var toastMessage = ""
     @State private var showDeleteConfirmation = false
     
-    init(email: EmailAlias) {
+    init(email: EmailAlias, needsRefresh: Binding<Bool>) {
         print("Initializing DetailView with email: \(email.emailAddress), forward to: \(email.forwardTo)")
         self.email = email
+        self._needsRefresh = needsRefresh
         _tempWebsite = State(initialValue: email.website)
         _tempNotes = State(initialValue: email.notes)
         _tempIsEnabled = State(initialValue: email.isEnabled)
@@ -219,6 +221,7 @@ struct EmailDetailView: View {
                 try await cloudflareClient.deleteEmailRule(tag: tag)
                 modelContext.delete(email)
                 try modelContext.save()
+                needsRefresh = true
                 dismiss()
             }
         } catch {
@@ -252,6 +255,7 @@ struct EmailDetailView: View {
                     forwardTo: tempForwardTo
                 )
             }
+            needsRefresh = true
         } catch {
             self.error = error
             self.showError = true
