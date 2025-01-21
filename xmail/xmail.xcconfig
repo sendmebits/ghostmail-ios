@@ -1,0 +1,2 @@
+// Build settings for xmail
+CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES 
