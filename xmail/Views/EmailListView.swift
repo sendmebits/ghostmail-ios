@@ -91,20 +91,22 @@ struct EmailListView: View {
                 let emailAddress = rule.emailAddress
                 let forwardTo = rule.forwardTo
                 
-                print("\nProcessing: \(emailAddress)")
-                print("Cloudflare forward to: \(forwardTo)")
-                
                 if let existing = existingAliases[emailAddress] {
-                    print("Updating - Previous forward to: \(existing.forwardTo)")
-                    withAnimation {
-                        existing.cloudflareTag = rule.cloudflareTag
-                        existing.isEnabled = rule.isEnabled
-                        existing.forwardTo = forwardTo
-                        existing.sortIndex = index + 1
+                    // Only update if there are actual changes
+                    let needsUpdate = existing.cloudflareTag != rule.cloudflareTag ||
+                                    existing.isEnabled != rule.isEnabled ||
+                                    existing.forwardTo != forwardTo ||
+                                    existing.sortIndex != index + 1
+                    
+                    if needsUpdate {
+                        withAnimation {
+                            existing.cloudflareTag = rule.cloudflareTag
+                            existing.isEnabled = rule.isEnabled
+                            existing.forwardTo = forwardTo
+                            existing.sortIndex = index + 1
+                        }
                     }
-                    print("Updated - New forward to: \(existing.forwardTo)")
                 } else {
-                    print("Creating new alias")
                     let newAlias = EmailAlias(
                         emailAddress: emailAddress,
                         forwardTo: forwardTo
@@ -113,25 +115,10 @@ struct EmailListView: View {
                     newAlias.isEnabled = rule.isEnabled
                     newAlias.sortIndex = index + 1
                     modelContext.insert(newAlias)
-                    print("Created - Forward to: \(newAlias.forwardTo)")
                 }
-                
-                // Save after each update
-                try modelContext.save()
             }
             
-            // Final verification
-            print("\nVerifying all aliases:")
-            for alias in emailAliases {
-                print("\(alias.emailAddress) -> \(alias.forwardTo)")
-                if let rule = cloudflareRulesByEmail[alias.emailAddress],
-                   alias.forwardTo != rule.forwardTo {
-                    print("⚠️ Mismatch found! Fixing...")
-                    withAnimation {
-                        alias.forwardTo = rule.forwardTo
-                    }
-                }
-            }
+            // Save once after all updates
             try modelContext.save()
             
         } catch {
