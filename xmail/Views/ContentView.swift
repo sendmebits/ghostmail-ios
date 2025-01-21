@@ -16,14 +16,12 @@ struct ContentView: View {
     @State private var isLoading = false
     @State private var error: Error?
     @State private var showError = false
+    @State private var needsRefresh = false
     
     var body: some View {
         NavigationStack {
             if cloudflareClient.isAuthenticated {
-                EmailListView(searchText: $searchText)
-                    .task {
-                        await fetchEmailRules()
-                    }
+                EmailListView(searchText: $searchText, needsRefresh: $needsRefresh)
                     .overlay {
                         if isLoading {
                             ProgressView()
