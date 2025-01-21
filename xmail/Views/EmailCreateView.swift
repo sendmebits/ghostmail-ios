@@ -98,11 +98,10 @@ struct EmailCreateView: View {
                 let existingAliases = try modelContext.fetch(FetchDescriptor<EmailAlias>())
                 let minSortIndex = existingAliases.map { $0.sortIndex }.min() ?? 0
                 
-                let newAlias = EmailAlias(emailAddress: fullEmailAddress)
+                let newAlias = EmailAlias(emailAddress: fullEmailAddress, forwardTo: forwardTo, isManuallyCreated: true)
                 newAlias.website = website
                 newAlias.notes = notes
                 newAlias.cloudflareTag = rule.tag
-                newAlias.forwardTo = forwardTo
                 newAlias.sortIndex = minSortIndex - 1  // Set to less than the minimum
                 modelContext.insert(newAlias)
                 try modelContext.save()

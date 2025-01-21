@@ -13,12 +13,12 @@ final class EmailAlias {
     var sortIndex: Int
     var forwardTo: String
     
-    init(emailAddress: String, forwardTo: String = "") {
+    init(emailAddress: String, forwardTo: String = "", isManuallyCreated: Bool = false) {
         self.id = UUID().uuidString
         self.emailAddress = emailAddress
         self.website = ""
         self.notes = ""
-        self.created = Date()
+        self.created = isManuallyCreated ? Date() : nil
         self.isEnabled = true
         self.sortIndex = 0
         self.forwardTo = forwardTo
