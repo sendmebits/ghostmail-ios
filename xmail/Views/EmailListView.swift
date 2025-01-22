@@ -169,15 +169,13 @@ struct EmailListView: View {
                                 EmailRowView(email: email) {
                                     let generator = UIImpactFeedbackGenerator(style: .heavy)
                                     generator.impactOccurred()
-                                    #if os(iOS)
                                     UIPasteboard.general.string = email.emailAddress
-                                    #endif
                                     showToastWithTimer(email.emailAddress)
                                 }
                             }
                             .buttonStyle(.plain)
                             .contentShape(Rectangle())
-                            .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                            .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
                                 // Prepare the generator before the gesture is triggered
                                 let generator = UIImpactFeedbackGenerator(style: .heavy)
                                 generator.prepare()
@@ -185,9 +183,7 @@ struct EmailListView: View {
                                 generator.impactOccurred()
                                 
                                 // Then handle the clipboard and toast
-                                #if os(iOS)
                                 UIPasteboard.general.string = email.emailAddress
-                                #endif
                                 showToastWithTimer(email.emailAddress)
                             })
                         }
@@ -288,12 +284,23 @@ struct EmailRowView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     let onCopy: () -> Void
     
+    private var splitEmailParts: (String, String) {
+        let components = email.emailAddress.split(separator: "@", maxSplits: 1)
+        if components.count == 2 {
+            return (String(components[0]), "@" + String(components[1]))
+        }
+        return (email.emailAddress, "") // Fallback if no @ found
+    }
+    
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(email.emailAddress)
-                    .font(.headline)
-                    .strikethrough(!email.isEnabled)
+                HStack(spacing: 0) {
+                    Text(splitEmailParts.0)
+                        .fontWeight(.semibold)
+                    Text(splitEmailParts.1)
+                }
+                .strikethrough(!email.isEnabled)
                 if !email.website.isEmpty && cloudflareClient.shouldShowWebsitesInList {
                     Text(email.website)
                         .font(.subheadline)

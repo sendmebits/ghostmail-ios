@@ -77,9 +77,7 @@ struct EmailDetailView: View {
     private func copyToClipboard(_ text: String) {
         let generator = UIImpactFeedbackGenerator(style: .heavy)
         generator.impactOccurred()
-        #if os(iOS)
         UIPasteboard.general.string = text
-        #endif
         showToastWithTimer(text)
     }
     
