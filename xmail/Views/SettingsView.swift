@@ -117,6 +117,9 @@ struct SettingsView: View {
                         Text("Account ID")
                         Text(cloudflareClient.accountId)
                             .foregroundStyle(.secondary)
+                        Text(cloudflareClient.accountName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     
                     VStack(alignment: .leading, spacing: 4) {

@@ -9,6 +9,7 @@ class CloudflareClient: ObservableObject {
     @Published private(set) var zoneId: String
     @Published private(set) var apiToken: String
     @Published var isAuthenticated: Bool
+    @Published private(set) var accountName: String = ""
     
     @AppStorage("forwardingEmail") private var forwardingEmail: String = ""
     @Published private(set) var forwardingAddresses: Set<String> = []
@@ -317,8 +318,13 @@ class CloudflareClient: ObservableObject {
         }
         
         struct ZoneResponse: Codable {
+            struct Account: Codable {
+                let id: String
+                let name: String
+            }
             struct Result: Codable {
                 let name: String
+                let account: Account
             }
             let result: Result
             let success: Bool
@@ -329,6 +335,7 @@ class CloudflareClient: ObservableObject {
         if zoneResponse.success {
             await MainActor.run {
                 self.domainName = zoneResponse.result.name
+                self.accountName = zoneResponse.result.account.name
             }
         } else {
             throw CloudflareError(message: "Failed to get domain name from zone response")
