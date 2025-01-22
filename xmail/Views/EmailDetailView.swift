@@ -1,6 +1,5 @@
 import SwiftUI
 import SwiftData
-import UIKit
 
 struct EmailDetailView: View {
     @Environment(\.modelContext) private var modelContext

@@ -1,6 +1,5 @@
 import SwiftUI
 import SwiftData
-import UIKit
 
 struct EmailListView: View {
     @Binding var searchText: String
