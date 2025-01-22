@@ -130,6 +130,7 @@ struct EmailDetailView: View {
                 Section("Website") {
                     if isEditing {
                         TextField("Website", text: $tempWebsite)
+                            .keyboardType(.URL)
                     } else {
                         Text(email.website)
                     }
