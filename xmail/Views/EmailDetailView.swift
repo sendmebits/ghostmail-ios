@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct EmailDetailView: View {
     @Environment(\.modelContext) private var modelContext
@@ -9,6 +10,8 @@ struct EmailDetailView: View {
     @State private var isLoading = false
     @State private var error: Error?
     @State private var showError = false
+    @State private var showCopyToast = false
+    @State private var copiedText = ""
     @Bindable private var email: EmailAlias
     @Binding var needsRefresh: Bool
     
@@ -19,9 +22,8 @@ struct EmailDetailView: View {
     @State private var tempForwardTo: String
     @State private var tempUsername: String = ""
     
-    @State private var showToast = false
-    @State private var toastMessage = ""
     @State private var showDeleteConfirmation = false
+    @State private var toastWorkItem: DispatchWorkItem?
     
     init(email: EmailAlias, needsRefresh: Binding<Bool>) {
         print("Initializing DetailView with email: \(email.emailAddress), forward to: \(email.forwardTo)")
@@ -53,15 +55,33 @@ struct EmailDetailView: View {
         return formatter.string(from: created)
     }
     
+    private func showToastWithTimer(_ text: String) {
+        // Cancel any existing timer
+        toastWorkItem?.cancel()
+        
+        // Show the new toast
+        copiedText = text
+        showCopyToast = true
+        
+        // Create and save new timer
+        let workItem = DispatchWorkItem {
+            withAnimation {
+                showCopyToast = false
+            }
+        }
+        toastWorkItem = workItem
+        
+        // Schedule the new timer
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem)
+    }
+    
     private func copyToClipboard(_ text: String) {
         let generator = UIImpactFeedbackGenerator(style: .heavy)
-        generator.prepare()
         generator.impactOccurred()
+        #if os(iOS)
         UIPasteboard.general.string = text
-        toastMessage = "Copied to clipboard"
-        withAnimation {
-            showToast = true
-        }
+        #endif
+        showToastWithTimer(text)
     }
     
     private var fullEmailAddress: String {
@@ -69,139 +89,154 @@ struct EmailDetailView: View {
     }
     
     var body: some View {
-        Form {
-            Section("Email Address") {
-                if isEditing {
-                    HStack {
-                        TextField("username", text: $tempUsername)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .keyboardType(.emailAddress)
-                            .textContentType(.username)
-                        Text("@\(cloudflareClient.emailDomain)")
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    HStack {
-                        Text(email.emailAddress)
-                            .strikethrough(!email.isEnabled)
-                        Spacer()
-                        Button {
-                            copyToClipboard(email.emailAddress)
-                        } label: {
-                            Image(systemName: "doc.on.doc")
+        ZStack {
+            Form {
+                Section("Email Address") {
+                    if isEditing {
+                        HStack {
+                            TextField("username", text: $tempUsername)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .keyboardType(.emailAddress)
+                                .textContentType(.username)
+                            Text("@\(cloudflareClient.emailDomain)")
                                 .foregroundStyle(.secondary)
                         }
-                    }
-                }
-            }
-            
-            Section("Destination") {
-                if isEditing {
-                    if !cloudflareClient.forwardingAddresses.isEmpty {
-                        Picker("Forward to", selection: $tempForwardTo) {
-                            ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
-                                Text(address).tag(address)
+                    } else {
+                        HStack {
+                            Text(email.emailAddress)
+                                .strikethrough(!email.isEnabled)
+                            Spacer()
+                            Button {
+                                copyToClipboard(email.emailAddress)
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .foregroundStyle(.secondary)
                             }
                         }
-                    } else {
-                        Text("No forwarding addresses available")
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    Text(email.forwardTo.isEmpty ? "Not specified" : email.forwardTo)
-                }
-            }
-            
-            Section("Status") {
-                if isEditing {
-                    Toggle("Enabled", isOn: $tempIsEnabled)
-                } else {
-                    HStack {
-                        Text("Enabled")
-                        Spacer()
-                        Toggle("", isOn: .constant(email.isEnabled))
-                            .disabled(true)
                     }
                 }
-            }
-            
-            if isEditing || !email.website.isEmpty {
-                Section("Website") {
+                
+                Section("Destination") {
                     if isEditing {
-                        TextField("Website", text: $tempWebsite)
-                            .keyboardType(.URL)
+                        if !cloudflareClient.forwardingAddresses.isEmpty {
+                            Picker("Forward to", selection: $tempForwardTo) {
+                                ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
+                                    Text(address).tag(address)
+                                }
+                            }
+                        } else {
+                            Text("No forwarding addresses available")
+                                .foregroundStyle(.secondary)
+                        }
                     } else {
-                        Text(email.website)
+                        Text(email.forwardTo.isEmpty ? "Not specified" : email.forwardTo)
                     }
                 }
-            }
-            
-            if isEditing || !email.notes.isEmpty {
-                Section("Notes") {
+                
+                Section("Status") {
                     if isEditing {
-                        TextField("Notes", text: $tempNotes, axis: .vertical)
-                            .lineLimit(3...6)
+                        Toggle("Enabled", isOn: $tempIsEnabled)
                     } else {
-                        Text(email.notes)
-                    }
-                }
-            }
-            
-            Section("Created") {
-                Text(formattedCreatedDate)
-            }
-            
-            if isEditing {
-                Section {
-                    Button(role: .destructive) {
-                        showDeleteConfirmation = true
-                    } label: {
                         HStack {
+                            Text("Enabled")
                             Spacer()
-                            Text("Delete Email Alias")
-                            Spacer()
+                            Toggle("", isOn: .constant(email.isEnabled))
+                                .disabled(true)
+                        }
+                    }
+                }
+                
+                if isEditing || !email.website.isEmpty {
+                    Section("Website") {
+                        if isEditing {
+                            TextField("Website", text: $tempWebsite)
+                                .keyboardType(.URL)
+                        } else {
+                            Text(email.website)
+                        }
+                    }
+                }
+                
+                if isEditing || !email.notes.isEmpty {
+                    Section("Notes") {
+                        if isEditing {
+                            TextField("Notes", text: $tempNotes, axis: .vertical)
+                                .lineLimit(3...6)
+                        } else {
+                            Text(email.notes)
+                        }
+                    }
+                }
+                
+                Section("Created") {
+                    Text(formattedCreatedDate)
+                }
+                
+                if isEditing {
+                    Section {
+                        Button(role: .destructive) {
+                            showDeleteConfirmation = true
+                        } label: {
+                            HStack {
+                                Spacer()
+                                Text("Delete Email Alias")
+                                Spacer()
+                            }
                         }
                     }
                 }
             }
-        }
-        .navigationTitle("Email Details")
-        .opacity(email.isEnabled ? 1.0 : 0.8)
-        .onAppear {
-            print("View appeared with forward to: \(email.forwardTo)")  // Debug print
-            let parts = email.emailAddress.split(separator: "@")
-            tempUsername = String(parts[0])
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(isEditing ? "Save" : "Edit") {
-                    if isEditing {
-                        Task {
-                            await saveChanges()
+            .navigationTitle("Email Details")
+            .opacity(email.isEnabled ? 1.0 : 0.8)
+            .onAppear {
+                print("View appeared with forward to: \(email.forwardTo)")  // Debug print
+                let parts = email.emailAddress.split(separator: "@")
+                tempUsername = String(parts[0])
+            }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(isEditing ? "Save" : "Edit") {
+                        if isEditing {
+                            Task {
+                                await saveChanges()
+                            }
                         }
-                    }
-                    withAnimation {
-                        if !isEditing {
-                            let parts = email.emailAddress.split(separator: "@")
-                            tempUsername = String(parts[0])
-                            tempWebsite = email.website
-                            tempNotes = email.notes
-                            tempIsEnabled = email.isEnabled
-                            tempForwardTo = email.forwardTo
+                        withAnimation {
+                            if !isEditing {
+                                let parts = email.emailAddress.split(separator: "@")
+                                tempUsername = String(parts[0])
+                                tempWebsite = email.website
+                                tempNotes = email.notes
+                                tempIsEnabled = email.isEnabled
+                                tempForwardTo = email.forwardTo
+                            }
+                            isEditing.toggle()
                         }
-                        isEditing.toggle()
                     }
                 }
             }
+            .disabled(isLoading)
+            
+            // Toast overlay
+            if showCopyToast {
+                VStack {
+                    Spacer()
+                    Text("\(copiedText) copied!")
+                        .padding()
+                        .background(.black.opacity(0.7))
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .padding(.bottom, 32)
+                        .transition(.move(edge: .bottom))
+                }
+            }
         }
-        .disabled(isLoading)
         .alert("Error Saving Changes", isPresented: $showError, presenting: error) { _ in
             Button("OK", role: .cancel) { }
         } message: { error in
             Text(error.localizedDescription)
         }
-        .toast(isShowing: $showToast, message: toastMessage)
         .alert("Delete Email Alias", isPresented: $showDeleteConfirmation) {
             Button("Cancel", role: .cancel) { }
             Button("Delete", role: .destructive) {

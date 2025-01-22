@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct EmailListView: View {
     @Binding var searchText: String
@@ -11,11 +12,12 @@ struct EmailListView: View {
     @State private var isInitialLoad = true
     @State private var error: Error?
     @State private var showError = false
-    @State private var showToast = false
-    @State private var toastMessage = ""
+    @State private var showCopyToast = false
+    @State private var copiedEmail = ""
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Binding var needsRefresh: Bool
+    @State private var toastWorkItem: DispatchWorkItem?
     
     enum SortOrder {
         case alphabetical
@@ -130,6 +132,26 @@ struct EmailListView: View {
         isInitialLoad = false
     }
     
+    private func showToastWithTimer(_ email: String) {
+        // Cancel any existing timer
+        toastWorkItem?.cancel()
+        
+        // Show the new toast
+        copiedEmail = email
+        showCopyToast = true
+        
+        // Create and save new timer
+        let workItem = DispatchWorkItem {
+            withAnimation {
+                showCopyToast = false
+            }
+        }
+        toastWorkItem = workItem
+        
+        // Schedule the new timer
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem)
+    }
+    
     var body: some View {
         ZStack {
             Group {
@@ -146,23 +168,28 @@ struct EmailListView: View {
                         ForEach(sortedEmails, id: \.id) { email in
                             NavigationLink(value: email) {
                                 EmailRowView(email: email) {
-                                    toastMessage = "\(email.emailAddress) copied!"
-                                    withAnimation {
-                                        showToast = true
-                                    }
+                                    let generator = UIImpactFeedbackGenerator(style: .heavy)
+                                    generator.impactOccurred()
+                                    #if os(iOS)
+                                    UIPasteboard.general.string = email.emailAddress
+                                    #endif
+                                    showToastWithTimer(email.emailAddress)
                                 }
                             }
                             .buttonStyle(.plain)
                             .contentShape(Rectangle())
                             .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                                // Prepare the generator before the gesture is triggered
                                 let generator = UIImpactFeedbackGenerator(style: .heavy)
                                 generator.prepare()
+                                // Trigger haptic immediately when gesture threshold is met
                                 generator.impactOccurred()
+                                
+                                // Then handle the clipboard and toast
+                                #if os(iOS)
                                 UIPasteboard.general.string = email.emailAddress
-                                toastMessage = "\(email.emailAddress) copied!"
-                                withAnimation {
-                                    showToast = true
-                                }
+                                #endif
+                                showToastWithTimer(email.emailAddress)
                             })
                         }
                     }
@@ -189,6 +216,20 @@ struct EmailListView: View {
                             .shadow(radius: 4, y: 2)
                     }
                     .padding()
+                }
+            }
+            
+            // Toast overlay
+            if showCopyToast {
+                VStack {
+                    Spacer()
+                    Text("\(copiedEmail) copied!")
+                        .padding()
+                        .background(.black.opacity(0.7))
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .padding(.bottom, 32)
+                        .transition(.move(edge: .bottom))
                 }
             }
         }
@@ -226,7 +267,6 @@ struct EmailListView: View {
         } message: { error in
             Text(error.localizedDescription)
         }
-        .toast(isShowing: $showToast, message: toastMessage)
         .task {
             // Only load if we haven't loaded yet
             if isInitialLoad {
