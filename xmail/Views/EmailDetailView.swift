@@ -242,7 +242,7 @@ struct EmailDetailView: View {
                 }
             }
         } message: {
-            Text("Are you sure you want to delete this email alias? This action cannot be undone.")
+            Text("Are you sure?")
         }
     }
     

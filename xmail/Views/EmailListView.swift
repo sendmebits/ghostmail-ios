@@ -183,9 +183,7 @@ struct EmailListView: View {
                                 generator.impactOccurred()
                                 
                                 // Then handle the clipboard and toast
-                                #if os(iOS)
                                 UIPasteboard.general.string = email.emailAddress
-                                #endif
                                 showToastWithTimer(email.emailAddress)
                             })
                         }
