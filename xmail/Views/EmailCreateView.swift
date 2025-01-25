@@ -14,6 +14,7 @@ struct EmailCreateView: View {
     @State private var error: Error?
     @State private var showError = false
     @State private var forwardTo = ""
+    @FocusState private var isUsernameFocused: Bool
     
     var body: some View {
         NavigationStack {
@@ -24,6 +25,7 @@ struct EmailCreateView: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.emailAddress)
+                            .focused($isUsernameFocused)
                         Text("@\(cloudflareClient.emailDomain)")
                             .foregroundStyle(.secondary)
                     }
@@ -78,6 +80,7 @@ struct EmailCreateView: View {
             }
         }
         .task {
+            isUsernameFocused = true
             if forwardTo.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
                 forwardTo = cloudflareClient.currentDefaultForwardingAddress
             }

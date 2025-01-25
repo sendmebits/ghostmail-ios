@@ -183,7 +183,9 @@ struct EmailListView: View {
                                 generator.impactOccurred()
                                 
                                 // Then handle the clipboard and toast
+                                #if os(iOS)
                                 UIPasteboard.general.string = email.emailAddress
+                                #endif
                                 showToastWithTimer(email.emailAddress)
                             })
                         }
@@ -203,12 +205,13 @@ struct EmailListView: View {
                 HStack {
                     Spacer()
                     Button(action: { showingCreateSheet = true }) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 50))
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(.tint)
-                            .background(Color.white.clipShape(Circle()))
-                            .shadow(radius: 4, y: 2)
+                        Image(systemName: "plus")
+                            .font(.system(size: 32, weight: .medium))
+                            .foregroundColor(.white)
+                            .frame(width: 60, height: 60)
+                            .background(Color.accentColor)
+                            .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
                     }
                     .padding()
                 }
@@ -284,23 +287,12 @@ struct EmailRowView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     let onCopy: () -> Void
     
-    private var splitEmailParts: (String, String) {
-        let components = email.emailAddress.split(separator: "@", maxSplits: 1)
-        if components.count == 2 {
-            return (String(components[0]), "@" + String(components[1]))
-        }
-        return (email.emailAddress, "") // Fallback if no @ found
-    }
-    
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 0) {
-                    Text(splitEmailParts.0)
-                        .fontWeight(.semibold)
-                    Text(splitEmailParts.1)
-                }
-                .strikethrough(!email.isEnabled)
+                Text(email.emailAddress)
+                    .font(.headline)
+                    .strikethrough(!email.isEnabled)
                 if !email.website.isEmpty && cloudflareClient.shouldShowWebsitesInList {
                     Text(email.website)
                         .font(.subheadline)
