@@ -286,19 +286,50 @@ struct EmailRowView: View {
     let onCopy: () -> Void
     
     var body: some View {
-        HStack {
+        HStack(spacing: 16) {
+            // Email icon with status indicator
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.1))
+                    .frame(width: 40, height: 40)
+                
+                Image(systemName: "envelope.fill")
+                    .foregroundStyle(Color.accentColor)
+                
+                // Status indicator
+                if !email.isEnabled {
+                    Circle()
+                        .fill(.gray)
+                        .frame(width: 12, height: 12)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.background, lineWidth: 2)
+                        )
+                        .offset(x: 14, y: 14)
+                }
+            }
+            
             VStack(alignment: .leading, spacing: 4) {
                 Text(email.emailAddress)
-                    .font(.headline)
+                    .font(.system(.body, design: .rounded, weight: .medium))
                     .strikethrough(!email.isEnabled)
+                
                 if !email.website.isEmpty && cloudflareClient.shouldShowWebsitesInList {
                     Text(email.website)
-                        .font(.subheadline)
+                        .font(.system(.subheadline, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
             }
-            .padding(.vertical, 4)
-            .opacity(email.isEnabled ? 1.0 : 0.6)
+            .padding(.vertical, 8)
+            
+            Spacer()
         }
+        .contentShape(Rectangle())
+        .opacity(email.isEnabled ? 1.0 : 0.6)
     }
+}
+
+// Add this extension to get the background color
+extension Color {
+    static let background = Color(uiColor: .systemBackground)
 } 
