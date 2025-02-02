@@ -152,6 +152,7 @@ struct SettingsView: View {
                                 Text(address).tag(address)
                             }
                         }
+                        .pickerStyle(.menu)
                     } else {
                         Text("No forwarding addresses available")
                             .font(.system(.subheadline, design: .rounded))
@@ -192,7 +193,12 @@ struct SettingsView: View {
                     Button(role: .destructive) {
                         showLogoutAlert = true
                     } label: {
-                        Label("Logout", systemImage: "rectangle.portrait.and.arrow.right")
+                        Label {
+                            Text("Logout")
+                        } icon: {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .foregroundStyle(.red)
+                        }
                     }
                 }
             }

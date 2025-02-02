@@ -38,6 +38,7 @@ struct EmailCreateView: View {
                                 Text(address).tag(address)
                             }
                         }
+                        .pickerStyle(.menu)
                     } else {
                         Text("No forwarding addresses available")
                             .foregroundStyle(.secondary)
