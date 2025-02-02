@@ -111,94 +111,90 @@ struct SettingsView: View {
     
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
-                    // Account section
-                    DetailSection(title: "Cloudflare Account") {
-                        VStack(alignment: .leading, spacing: 16) {
-                            InfoRow(title: "Account ID") {
-                                Text(cloudflareClient.accountId)
-                                    .font(.system(.subheadline, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                                Text(cloudflareClient.accountName)
-                                    .font(.system(.caption, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                            }
-                            
-                            InfoRow(title: "Zone ID") {
-                                Text(cloudflareClient.zoneId)
-                                    .font(.system(.subheadline, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                                Text("@\(cloudflareClient.emailDomain)")
-                                    .font(.system(.caption, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                            }
-                            
-                            InfoRow(title: "Entries") {
-                                Text("\(emailAliases.count) Addresses Created")
-                                    .font(.system(.subheadline, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+            List {
+                // Account section
+                Section {
+                    InfoRow(title: "Account ID") {
+                        Text(cloudflareClient.accountId)
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                        Text(cloudflareClient.accountName)
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(.secondary)
                     }
                     
-                    // Settings section
-                    DetailSection(title: "Settings") {
-                        VStack(alignment: .leading, spacing: 16) {
-                            if !cloudflareClient.forwardingAddresses.isEmpty {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("Default Destination")
-                                        .font(.system(.subheadline, design: .rounded))
-                                    Picker("", selection: $selectedDefaultAddress) {
-                                        ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
-                                            Text(address).tag(address)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                }
-                            } else {
-                                Text("No forwarding addresses available")
-                                    .font(.system(.subheadline, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                            }
-                            
-                            Toggle("Show Websites in List", isOn: $showWebsites)
-                                .tint(.accentColor)
-                        }
+                    InfoRow(title: "Zone ID") {
+                        Text(cloudflareClient.zoneId)
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                        Text("@\(cloudflareClient.emailDomain)")
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(.secondary)
                     }
                     
-                    // Backup/Restore section
-                    DetailSection(title: "Backup/Restore") {
-                        VStack(spacing: 12) {
-                            Button {
-                                exportToCSV()
-                            } label: {
-                                Label("Export to CSV", systemImage: "square.and.arrow.up")
-                                    .frame(maxWidth: .infinity)
+                    InfoRow(title: "Entries") {
+                        Text("\(emailAliases.count) Addresses Created")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Cloudflare Account")
+                        .textCase(.uppercase)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                
+                // Settings section
+                Section {
+                    if !cloudflareClient.forwardingAddresses.isEmpty {
+                        Picker("Default Destination", selection: $selectedDefaultAddress) {
+                            ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
+                                Text(address).tag(address)
                             }
-                            .buttonStyle(.bordered)
-                            
-                            Button {
-                                showFileImporter = true
-                            } label: {
-                                Label("Import from CSV", systemImage: "square.and.arrow.down")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
                         }
+                    } else {
+                        Text("No forwarding addresses available")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
                     }
                     
-                    // Logout section
+                    Toggle("Show Websites in List", isOn: $showWebsites)
+                        .tint(.accentColor)
+                } header: {
+                    Text("Settings")
+                        .textCase(.uppercase)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                
+                // Backup/Restore section
+                Section {
+                    Button {
+                        exportToCSV()
+                    } label: {
+                        Label("Export to CSV", systemImage: "square.and.arrow.up")
+                    }
+                    
+                    Button {
+                        showFileImporter = true
+                    } label: {
+                        Label("Import from CSV", systemImage: "square.and.arrow.down")
+                    }
+                } header: {
+                    Text("Backup/Restore")
+                        .textCase(.uppercase)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                
+                // Logout section
+                Section {
                     Button(role: .destructive) {
                         showLogoutAlert = true
                     } label: {
                         Label("Logout", systemImage: "rectangle.portrait.and.arrow.right")
-                            .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
-                    .padding(.top, 10)
                 }
-                .padding()
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
