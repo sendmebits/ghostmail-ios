@@ -1,6 +1,6 @@
 //
 //  ContentView.swift
-//  xmail
+//  ghostmail
 //
 //  Created by Chris Greco on 2025-01-16.
 //

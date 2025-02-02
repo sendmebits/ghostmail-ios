@@ -1,6 +1,6 @@
 //
-//  xmailApp.swift
-//  xmail
+//  ghostmailApp.swift
+//  ghostmail
 //
 //  Created by Chris Greco on 2025-01-16.
 //
@@ -9,7 +9,7 @@ import SwiftUI
 import SwiftData
 
 @main
-struct xmailApp: App {
+struct ghostmailApp: App {
     let modelContainer: ModelContainer
     @StateObject private var cloudflareClient = CloudflareClient(accountId: "", zoneId: "", apiToken: "")
     

@@ -143,7 +143,7 @@ struct SettingsView: View {
                     }
                     
                     // Settings section
-                    DetailSection(title: "Xmail Settings") {
+                    DetailSection(title: "Settings") {
                         VStack(alignment: .leading, spacing: 16) {
                             if !cloudflareClient.forwardingAddresses.isEmpty {
                                 VStack(alignment: .leading, spacing: 8) {

@@ -28,7 +28,7 @@ struct AuthenticationView: View {
                         .foregroundStyle(Color.accentColor)
                 }
                 
-                Text("Welcome to Xmail")
+                Text("Welcome to Ghost Mail")
                     .font(.system(.title, design: .rounded, weight: .bold))
                 
                 Text("Please sign in with your Cloudflare credentials")
