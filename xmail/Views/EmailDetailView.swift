@@ -87,107 +87,154 @@ struct EmailDetailView: View {
     
     var body: some View {
         ZStack {
-            Form {
-                Section("Email Address") {
-                    if isEditing {
-                        HStack {
-                            TextField("username", text: $tempUsername)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .keyboardType(.emailAddress)
-                                .textContentType(.username)
-                            Text("@\(cloudflareClient.emailDomain)")
-                                .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Header with email icon
+                    VStack(spacing: 16) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.accentColor.opacity(0.1))
+                                .frame(width: 80, height: 80)
+                            
+                            Image(systemName: "envelope.fill")
+                                .font(.system(size: 32))
+                                .foregroundStyle(Color.accentColor)
                         }
-                    } else {
-                        HStack {
-                            Text(email.emailAddress)
-                                .strikethrough(!email.isEnabled)
-                            Spacer()
+                        .padding(.top, 20)
+                        
+                        VStack(spacing: 8) {
+                            if isEditing {
+                                VStack(spacing: 4) {
+                                    TextField("username", text: $tempUsername)
+                                        .textInputAutocapitalization(.never)
+                                        .autocorrectionDisabled()
+                                        .keyboardType(.emailAddress)
+                                        .textContentType(.username)
+                                        .multilineTextAlignment(.center)
+                                        .font(.system(.title2, design: .rounded, weight: .medium))
+                                        .padding(8)
+                                        .background(Color(.systemGray6))
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                        .padding(.horizontal)
+                                    
+                                    Text("@\(cloudflareClient.emailDomain)")
+                                        .foregroundStyle(.primary)
+                                        .font(.system(.title2, design: .rounded, weight: .medium))
+                                        .frame(maxWidth: .infinity, alignment: .center)
+                                }
+                            } else {
+                                Text(email.emailAddress)
+                                    .font(.system(.title2, design: .rounded, weight: .medium))
+                                    .multilineTextAlignment(.center)
+                                    .strikethrough(!email.isEnabled)
+                            }
+                            
                             Button {
                                 copyToClipboard(email.emailAddress)
                             } label: {
-                                Image(systemName: "doc.on.doc")
+                                Label("Copy Address", systemImage: "doc.on.doc")
+                                    .font(.system(.subheadline, design: .rounded))
+                            }
+                            .buttonStyle(.bordered)
+                            .buttonBorderShape(.capsule)
+                            .tint(.accentColor)
+                            .opacity(isEditing ? 0 : 1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 10)
+                    
+                    // Content sections
+                    VStack(spacing: 16) {
+                        // Destination section
+                        DetailSection(title: "Destination") {
+                            if isEditing {
+                                if !cloudflareClient.forwardingAddresses.isEmpty {
+                                    Picker("Forward to", selection: $tempForwardTo) {
+                                        ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
+                                            Text(address).tag(address)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                } else {
+                                    Text("No forwarding addresses available")
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else {
+                                Text(email.forwardTo.isEmpty ? "Not specified" : email.forwardTo)
                                     .foregroundStyle(.secondary)
                             }
                         }
-                    }
-                }
-                
-                Section("Destination") {
-                    if isEditing {
-                        if !cloudflareClient.forwardingAddresses.isEmpty {
-                            Picker("Forward to", selection: $tempForwardTo) {
-                                ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
-                                    Text(address).tag(address)
+                        
+                        // Status section
+                        DetailSection(title: "Status") {
+                            if isEditing {
+                                Toggle("Enabled", isOn: $tempIsEnabled)
+                                    .tint(.accentColor)
+                            } else {
+                                HStack {
+                                    Text("Enabled")
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Toggle("", isOn: .constant(email.isEnabled))
+                                        .disabled(true)
+                                        .tint(.accentColor)
                                 }
                             }
-                        } else {
-                            Text("No forwarding addresses available")
-                                .foregroundStyle(.secondary)
                         }
-                    } else {
-                        Text(email.forwardTo.isEmpty ? "Not specified" : email.forwardTo)
-                    }
-                }
-                
-                Section("Status") {
-                    if isEditing {
-                        Toggle("Enabled", isOn: $tempIsEnabled)
-                    } else {
-                        HStack {
-                            Text("Enabled")
-                            Spacer()
-                            Toggle("", isOn: .constant(email.isEnabled))
-                                .disabled(true)
-                        }
-                    }
-                }
-                
-                if isEditing || !email.website.isEmpty {
-                    Section("Website") {
-                        if isEditing {
-                            TextField("Website", text: $tempWebsite)
-                                .keyboardType(.URL)
-                        } else {
-                            Text(email.website)
-                        }
-                    }
-                }
-                
-                if isEditing || !email.notes.isEmpty {
-                    Section("Notes") {
-                        if isEditing {
-                            TextField("Notes", text: $tempNotes, axis: .vertical)
-                                .lineLimit(3...6)
-                        } else {
-                            Text(email.notes)
-                        }
-                    }
-                }
-                
-                Section("Created") {
-                    Text(formattedCreatedDate)
-                }
-                
-                if isEditing {
-                    Section {
-                        Button(role: .destructive) {
-                            showDeleteConfirmation = true
-                        } label: {
-                            HStack {
-                                Spacer()
-                                Text("Delete Email Alias")
-                                Spacer()
+                        
+                        // Website section
+                        if isEditing || !email.website.isEmpty {
+                            DetailSection(title: "Website") {
+                                if isEditing {
+                                    TextField("Website", text: $tempWebsite)
+                                        .textInputAutocapitalization(.never)
+                                        .keyboardType(.URL)
+                                } else {
+                                    Text(email.website)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
+                        
+                        // Notes section
+                        if isEditing || !email.notes.isEmpty {
+                            DetailSection(title: "Notes") {
+                                if isEditing {
+                                    TextField("Notes", text: $tempNotes, axis: .vertical)
+                                        .lineLimit(3...6)
+                                } else {
+                                    Text(email.notes)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        
+                        // Created section
+                        DetailSection(title: "Created") {
+                            Text(formattedCreatedDate)
+                                .foregroundStyle(.secondary)
+                        }
+                        
+                        // Delete button
+                        if isEditing {
+                            Button(role: .destructive) {
+                                showDeleteConfirmation = true
+                            } label: {
+                                Text("Delete Email Alias")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .padding(.top, 20)
+                        }
                     }
+                    .padding(.horizontal)
                 }
             }
             .navigationTitle("Email Details")
+            .navigationBarTitleDisplayMode(.inline)
             .opacity(email.isEnabled ? 1.0 : 0.8)
             .onAppear {
-                print("View appeared with forward to: \(email.forwardTo)")  // Debug print
                 let parts = email.emailAddress.split(separator: "@")
                 tempUsername = String(parts[0])
             }
@@ -220,10 +267,12 @@ struct EmailDetailView: View {
                 VStack {
                     Spacer()
                     Text("\(copiedText) copied!")
-                        .padding()
-                        .background(.black.opacity(0.7))
-                        .foregroundColor(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .font(.system(.subheadline, design: .rounded, weight: .medium))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Capsule())
+                        .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
                         .padding(.bottom, 32)
                         .transition(.move(edge: .bottom))
                 }
@@ -242,7 +291,7 @@ struct EmailDetailView: View {
                 }
             }
         } message: {
-            Text("Are you sure?")
+            Text("Are you sure you want to delete this email alias? This action cannot be undone.")
         }
     }
     
@@ -303,5 +352,35 @@ struct EmailDetailView: View {
         }
         
         isLoading = false
+    }
+}
+
+// Helper view for consistent section styling
+struct DetailSection<Content: View>: View {
+    let title: String
+    let content: Content
+    
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(.primary)
+            
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(.quaternary, lineWidth: 0.5)
+        )
     }
 } 

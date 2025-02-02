@@ -8,11 +8,12 @@
 import SwiftUI
 import SwiftData
 
+@MainActor
 struct ContentView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Environment(\.modelContext) private var modelContext
     @State private var searchText = ""
-    @Query private var emailAliases: [EmailAlias]
+    @Query(sort: \EmailAlias.emailAddress) private var emailAliases: [EmailAlias]
     @State private var isLoading = false
     @State private var error: Error?
     @State private var showError = false
@@ -103,91 +104,6 @@ struct ContentView: View {
         }
         
         isLoading = false
-    }
-}
-
-struct AuthenticationView: View {
-    @EnvironmentObject private var cloudflareClient: CloudflareClient
-    @AppStorage("accountId") private var accountId = ""
-    @AppStorage("zoneId") private var zoneId = ""
-    @AppStorage("apiToken") private var apiToken = ""
-    @State private var useQuickAuth = false
-    @State private var quickAuthString = ""
-    @State private var isLoading = false
-    @State private var showError = false
-    
-    var body: some View {
-        VStack(spacing: 20) {
-            Text("Cloudflare Authentication")
-                .font(.title)
-                .padding()
-            
-            Toggle("Quick Auth", isOn: $useQuickAuth)
-                .padding()
-            
-            if useQuickAuth {
-                TextField("Account ID:Zone ID:Token", text: $quickAuthString)
-                    .textFieldStyle(.roundedBorder)
-                    .padding()
-            } else {
-                TextField("Account ID", text: $accountId)
-                    .textFieldStyle(.roundedBorder)
-                TextField("Zone ID", text: $zoneId)
-                    .textFieldStyle(.roundedBorder)
-                TextField("API Token", text: $apiToken)
-                    .textFieldStyle(.roundedBorder)
-            }
-            
-            Button(action: authenticate) {
-                if isLoading {
-                    ProgressView()
-                } else {
-                    Text("Login")
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isLoading)
-            
-            Spacer()
-        }
-        .padding()
-        .alert("Authentication Failed", isPresented: $showError) {
-            Button("OK", role: .cancel) { }
-        }
-    }
-    
-    private func authenticate() {
-        if useQuickAuth {
-            let components = quickAuthString.split(separator: ":")
-            guard components.count == 3 else {
-                showError = true
-                return
-            }
-            accountId = String(components[0])
-            zoneId = String(components[1])
-            apiToken = String(components[2])
-        }
-        
-        // Update the shared client first
-        cloudflareClient.updateCredentials(accountId: accountId, zoneId: zoneId, apiToken: apiToken)
-        
-        Task {
-            isLoading = true
-            do {
-                let verified = try await cloudflareClient.verifyToken()
-                if verified {
-                    cloudflareClient.isAuthenticated = true
-                    UserDefaults.standard.set(true, forKey: "isAuthenticated")
-                } else {
-                    showError = true
-                }
-            } catch {
-                print("Authentication error: \(error)")
-                showError = true
-            }
-            isLoading = false
-        }
     }
 }
 

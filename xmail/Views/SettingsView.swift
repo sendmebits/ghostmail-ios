@@ -111,87 +111,94 @@ struct SettingsView: View {
     
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Account ID")
-                        Text(cloudflareClient.accountId)
-                            .foregroundStyle(.secondary)
-                        Text(cloudflareClient.accountName)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Zone ID")
-                        Text(cloudflareClient.zoneId)
-                            .foregroundStyle(.secondary)
-                        Text("@\(cloudflareClient.emailDomain)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Entries")
-                        Text("\(emailAliases.count) Addresses Created")
-                            .foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text("Cloudflare Account")
-                }
-                
-                Section {
-                    if !cloudflareClient.forwardingAddresses.isEmpty {
-                        Picker("Default Destination", selection: $selectedDefaultAddress) {
-                            ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
-                                Text(address).tag(address)
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Account section
+                    DetailSection(title: "Cloudflare Account") {
+                        VStack(alignment: .leading, spacing: 16) {
+                            InfoRow(title: "Account ID") {
+                                Text(cloudflareClient.accountId)
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                                Text(cloudflareClient.accountName)
+                                    .font(.system(.caption, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                            }
+                            
+                            InfoRow(title: "Zone ID") {
+                                Text(cloudflareClient.zoneId)
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                                Text("@\(cloudflareClient.emailDomain)")
+                                    .font(.system(.caption, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                            }
+                            
+                            InfoRow(title: "Entries") {
+                                Text("\(emailAliases.count) Addresses Created")
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.secondary)
                             }
                         }
-                    } else {
-                        Text("No forwarding addresses available")
-                            .foregroundStyle(.secondary)
                     }
                     
-                    Toggle("Show Websites in List", isOn: $showWebsites)
-                } header: {
-                    Text("Xmail Settings")
-                }
-                
-                Section {
-                    Button {
-                        exportToCSV()
-                    } label: {
-                        HStack {
-                            Text("Export to CSV")
-                            Spacer()
-                            Image(systemName: "square.and.arrow.up")
+                    // Settings section
+                    DetailSection(title: "Xmail Settings") {
+                        VStack(alignment: .leading, spacing: 16) {
+                            if !cloudflareClient.forwardingAddresses.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Default Destination")
+                                        .font(.system(.subheadline, design: .rounded))
+                                    Picker("", selection: $selectedDefaultAddress) {
+                                        ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
+                                            Text(address).tag(address)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                }
+                            } else {
+                                Text("No forwarding addresses available")
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                            }
+                            
+                            Toggle("Show Websites in List", isOn: $showWebsites)
+                                .tint(.accentColor)
                         }
                     }
                     
-                    Button {
-                        showFileImporter = true
-                    } label: {
-                        HStack {
-                            Text("Import from CSV")
-                            Spacer()
-                            Image(systemName: "square.and.arrow.down")
+                    // Backup/Restore section
+                    DetailSection(title: "Backup/Restore") {
+                        VStack(spacing: 12) {
+                            Button {
+                                exportToCSV()
+                            } label: {
+                                Label("Export to CSV", systemImage: "square.and.arrow.up")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            
+                            Button {
+                                showFileImporter = true
+                            } label: {
+                                Label("Import from CSV", systemImage: "square.and.arrow.down")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
                         }
                     }
-                } header: {
-                    Text("Backup/Restore")
-                }
-                
-                Section {
+                    
+                    // Logout section
                     Button(role: .destructive) {
                         showLogoutAlert = true
                     } label: {
-                        HStack {
-                            Text("Logout")
-                            Spacer()
-                            Image(systemName: "rectangle.portrait.and.arrow.right")
-                        }
+                        Label("Logout", systemImage: "rectangle.portrait.and.arrow.right")
+                            .frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(.bordered)
+                    .padding(.top, 10)
                 }
+                .padding()
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -254,6 +261,25 @@ struct SettingsView: View {
         }
         .onChange(of: showWebsites) {
             cloudflareClient.shouldShowWebsitesInList = showWebsites
+        }
+    }
+}
+
+// Helper view for info rows
+struct InfoRow<Content: View>: View {
+    let title: String
+    let content: Content
+    
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(.body, design: .rounded))
+            content
         }
     }
 }
