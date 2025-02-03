@@ -91,16 +91,16 @@ struct EmailDetailView: View {
                 VStack(spacing: 20) {
                     // Header with email icon
                     VStack(spacing: 16) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.accentColor.opacity(0.1))
-                                .frame(width: 80, height: 80)
-                            
-                            Image(systemName: "envelope.fill")
-                                .font(.system(size: 32))
-                                .foregroundStyle(Color.accentColor)
-                        }
-                        .padding(.top, 20)
+                        Image(systemName: "envelope.fill")
+                            .font(.system(size: 48, weight: .medium))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .padding(.top, 20)
                         
                         VStack(spacing: 8) {
                             if isEditing {
