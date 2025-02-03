@@ -20,12 +20,31 @@ struct AuthenticationView: View {
             VStack(spacing: 16) {
                 ZStack {
                     Circle()
-                        .fill(Color.accentColor.opacity(0.1))
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.accentColor.opacity(0.2),
+                                    Color.accentColor.opacity(0.15)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            Circle()
+                                .stroke(Color.accentColor.opacity(0.2), lineWidth: 1)
+                        )
                         .frame(width: 100, height: 100)
                     
                     Image(systemName: "envelope.fill")
-                        .font(.system(size: 40))
-                        .foregroundStyle(Color.accentColor)
+                        .font(.system(size: 40, weight: .medium))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
                 }
                 
                 Text("Welcome to Ghost Mail")

@@ -11,7 +11,7 @@
             shouldBeEnabled = "Yes"
             ignoreCount = "0"
             continueAfterRunningActions = "No"
-            filePath = "xmail/Services/CloudflareClient.swift"
+            filePath = "ghostmail/Services/CloudflareClient.swift"
             startingColumnNumber = "10"
             endingColumnNumber = "23"
             startingLineNumber = "45"

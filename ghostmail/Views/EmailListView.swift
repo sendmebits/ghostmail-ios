@@ -290,11 +290,31 @@ struct EmailRowView: View {
             // Email icon with status indicator
             ZStack {
                 Circle()
-                    .fill(Color.accentColor.opacity(0.1))
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.accentColor.opacity(0.2),
+                                Color.accentColor.opacity(0.15)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay(
+                        Circle()
+                            .stroke(Color.accentColor.opacity(0.2), lineWidth: 1)
+                    )
                     .frame(width: 40, height: 40)
                 
                 Image(systemName: "envelope.fill")
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .font(.system(size: 16, weight: .medium))
                 
                 // Status indicator
                 if !email.isEnabled {
