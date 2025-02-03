@@ -18,15 +18,16 @@ struct AuthenticationView: View {
         VStack(spacing: 32) {
             // Header
             VStack(spacing: 16) {
-                ZStack {
-                    Circle()
-                        .fill(Color.accentColor.opacity(0.1))
-                        .frame(width: 100, height: 100)
-                    
-                    Image(systemName: "envelope.fill")
-                        .font(.system(size: 40))
-                        .foregroundStyle(Color.accentColor)
-                }
+                Image(systemName: "envelope.fill")
+                    .font(.system(size: 60, weight: .medium))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .padding(.bottom, 8)
                 
                 Text("Welcome to Ghost Mail")
                     .font(.system(.title, design: .rounded, weight: .bold))

@@ -79,7 +79,7 @@
 			name = ghostmail;
 			packageProductDependencies = (
 			);
-			productName = xmail;
+			productName = ghostmail;
 			productReference = B8B5D1782D39D0B70023E57F /* ghostmail.app */;
 			productType = "com.apple.product-type.application";
 		};
