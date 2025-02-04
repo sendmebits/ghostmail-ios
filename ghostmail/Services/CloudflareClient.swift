@@ -342,7 +342,15 @@ class CloudflareClient: ObservableObject {
         }
     }
     
-    private func fetchForwardingAddresses() async throws {
+    func refreshForwardingAddresses() async {
+        do {
+            try await fetchForwardingAddresses()
+        } catch {
+            print("Error refreshing forwarding addresses: \(error)")
+        }
+    }
+    
+    func fetchForwardingAddresses() async throws {
         let url = URL(string: "\(baseURL)/accounts/\(accountId)/email/routing/addresses")!
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
