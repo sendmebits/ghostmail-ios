@@ -238,6 +238,9 @@ struct EmailDetailView: View {
                 let parts = email.emailAddress.split(separator: "@")
                 tempUsername = String(parts[0])
             }
+            .task {
+                await cloudflareClient.refreshForwardingAddresses()
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button(isEditing ? "Save" : "Edit") {

@@ -21,7 +21,7 @@ struct SettingsView: View {
             return "\(alias.emailAddress),\(alias.website),\(alias.notes),\(createdStr),\(alias.isEnabled),\(alias.forwardTo)"
         }.joined(separator: "\n")
         
-        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("email_aliases.csv")
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("ghostmail_backup.csv")
         do {
             try csvString.write(to: tempURL, atomically: true, encoding: .utf8)
             showExportDialog = true
@@ -248,10 +248,10 @@ struct SettingsView: View {
             .fileExporter(
                 isPresented: $showExportDialog,
                 document: CSVDocument(
-                    url: FileManager.default.temporaryDirectory.appendingPathComponent("email_aliases.csv")
+                    url: FileManager.default.temporaryDirectory.appendingPathComponent("ghostmail_backup.csv")
                 ),
                 contentType: UTType.commaSeparatedText,
-                defaultFilename: "email_aliases.csv"
+                defaultFilename: "ghostmail_backup.csv"
             ) { _ in }
         }
         .onAppear {
@@ -296,7 +296,7 @@ struct CSVDocument: FileDocument {
     }
     
     init(configuration: ReadConfiguration) throws {
-        url = FileManager.default.temporaryDirectory.appendingPathComponent("email_aliases.csv")
+        url = FileManager.default.temporaryDirectory.appendingPathComponent("ghostmail_backup.csv")
     }
     
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
