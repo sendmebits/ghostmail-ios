@@ -193,11 +193,12 @@ struct SettingsView: View {
                     Button(role: .destructive) {
                         showLogoutAlert = true
                     } label: {
-                        Label {
-                            Text("Logout")
-                        } icon: {
+                        HStack {
+                            Spacer()
                             Image(systemName: "rectangle.portrait.and.arrow.right")
                                 .foregroundStyle(.red)
+                            Text("Logout")
+                            Spacer()
                         }
                     }
                 }
