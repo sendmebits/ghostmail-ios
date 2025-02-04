@@ -56,19 +56,39 @@ struct AuthenticationView: View {
                         AuthTextField(
                             text: $accountId,
                             placeholder: "Account ID",
-                            systemImage: "person.fill"
+                            systemImage: "person.fill",
+                            helpTitle: "Account ID",
+                            helpMessage: """
+                            Log in to your Cloudflare dashboard, choose a zone/domain, on the bottom right of the screen in the API section: copy "Account ID" and "Zone ID"
+                            """,
+                            helpURL: "https://dash.cloudflare.com/"
                         )
                         
                         AuthTextField(
                             text: $zoneId,
                             placeholder: "Zone ID",
-                            systemImage: "globe"
+                            systemImage: "globe",
+                            helpTitle: "Zone ID",
+                            helpMessage: """
+                            Log in to your Cloudflare dashboard, choose a zone/domain, on the bottom right of the screen in the API section: copy "Account ID" and "Zone ID"
+                            """,
+                            helpURL: "https://dash.cloudflare.com/"
                         )
                         
                         AuthTextField(
                             text: $apiToken,
                             placeholder: "API Token",
-                            systemImage: "key.fill"
+                            systemImage: "key.fill",
+                            helpTitle: "API Token",
+                            helpMessage: """
+                            In Cloudflare, create new token (choose Custom token)
+                            
+                            Permissions:
+                            1) Account > Email Routing Addresses > Read
+                            2) Zone > Email Routing Rules > Edit
+                            3) Zone > Zone Settings > Read
+                            """,
+                            helpURL: "https://dash.cloudflare.com/profile/api-tokens"
                         )
                     }
                 }
@@ -155,11 +175,54 @@ struct AuthenticationView: View {
     }
 }
 
+struct HelpPopup: View {
+    let title: String
+    let message: String
+    let url: String
+    @Binding var isPresented: Bool
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text(title)
+                    .font(.headline)
+                Spacer()
+                Button {
+                    isPresented = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            
+            Text(message)
+                .font(.subheadline)
+            
+            Link(destination: URL(string: url)!) {
+                HStack {
+                    Text("Open Cloudflare Dashboard")
+                    Image(systemName: "arrow.up.right")
+                }
+                .font(.subheadline.weight(.medium))
+            }
+        }
+        .padding()
+        .frame(maxWidth: 300)
+        .background(.background)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
+    }
+}
+
 // Helper view for consistent text field styling
 struct AuthTextField: View {
     @Binding var text: String
     let placeholder: String
     let systemImage: String
+    var helpTitle: String = ""
+    var helpMessage: String = ""
+    var helpURL: String = ""
+    @State private var showingHelp = false
     
     var body: some View {
         HStack(spacing: 12) {
@@ -171,6 +234,24 @@ struct AuthTextField: View {
             TextField(placeholder, text: $text)
                 .submitLabel(.next)
                 .autocorrectionDisabled()
+            
+            if !helpMessage.isEmpty {
+                Button {
+                    showingHelp = true
+                } label: {
+                    Image(systemName: "questionmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 20))
+                }
+                .popover(isPresented: $showingHelp) {
+                    HelpPopup(
+                        title: helpTitle,
+                        message: helpMessage,
+                        url: helpURL,
+                        isPresented: $showingHelp
+                    )
+                }
+            }
         }
         .padding()
         .background(.gray.opacity(0.1))
