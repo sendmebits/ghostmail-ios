@@ -265,6 +265,10 @@ struct SettingsView: View {
         .onChange(of: showWebsites) {
             cloudflareClient.shouldShowWebsitesInList = showWebsites
         }
+        .task {
+            // Fetch forwarding addresses when view appears
+            await cloudflareClient.refreshForwardingAddresses()
+        }
     }
 }
 
