@@ -14,6 +14,8 @@ struct SettingsView: View {
     @State private var showExportDialog = false
     @State private var importError: Error?
     @State private var showImportError = false
+    @State private var showImportConfirmation = false
+    @State private var pendingImportURL: URL?
     
     private func exportToCSV() {
         let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To\n" + emailAliases.map { alias in
@@ -239,12 +241,26 @@ struct SettingsView: View {
                 switch result {
                 case .success(let urls):
                     guard let url = urls.first else { return }
-                    importFromCSV(url: url)
+                    pendingImportURL = url
+                    showImportConfirmation = true
                 case .failure(let error):
                     print("File import error: \(error)")
                     importError = error
                     showImportError = true
                 }
+            }
+            .alert("Are you sure you want to overwrite with \(pendingImportURL?.lastPathComponent ?? "")?", isPresented: $showImportConfirmation) {
+                Button("Cancel", role: .cancel) { 
+                    pendingImportURL = nil
+                }
+                Button("Import", role: .destructive) {
+                    if let url = pendingImportURL {
+                        importFromCSV(url: url)
+                    }
+                    pendingImportURL = nil
+                }
+            } message: {
+                Text("This will update or create email aliases based on the CSV contents.")
             }
             .fileExporter(
                 isPresented: $showExportDialog,
