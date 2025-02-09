@@ -3,15 +3,15 @@ import SwiftData
 
 @Model
 final class EmailAlias {
-    @Attribute(.unique) var id: String
-    var emailAddress: String
-    var website: String
-    var notes: String
+    var id: String = UUID().uuidString
+    var emailAddress: String = ""
+    var website: String = ""
+    var notes: String = ""
     var created: Date?
     var cloudflareTag: String?
-    var isEnabled: Bool
-    var sortIndex: Int
-    var forwardTo: String
+    var isEnabled: Bool = true
+    var sortIndex: Int = 0
+    var forwardTo: String = ""
     
     init(emailAddress: String, forwardTo: String = "", isManuallyCreated: Bool = false) {
         self.id = UUID().uuidString
@@ -24,5 +24,21 @@ final class EmailAlias {
         self.forwardTo = forwardTo
         
         print("EmailAlias initialized - address: \(emailAddress), forward to: \(self.forwardTo)")
+    }
+    
+    static func isEmailAddressUnique(_ emailAddress: String, context: ModelContext) -> Bool {
+        let descriptor = FetchDescriptor<EmailAlias>(
+            predicate: #Predicate<EmailAlias> { alias in
+                alias.emailAddress == emailAddress
+            }
+        )
+        
+        do {
+            let matches = try context.fetch(descriptor)
+            return matches.isEmpty
+        } catch {
+            print("Error checking email uniqueness: \(error)")
+            return false
+        }
     }
 } 

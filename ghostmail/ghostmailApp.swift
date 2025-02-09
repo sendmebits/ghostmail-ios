@@ -15,7 +15,9 @@ struct ghostmailApp: App {
     
     init() {
         do {
-            modelContainer = try ModelContainer(for: EmailAlias.self)
+            let schema = Schema([EmailAlias.self])
+            let modelConfiguration = ModelConfiguration(schema: schema, cloudKitDatabase: .automatic)
+            modelContainer = try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
             fatalError("Could not initialize ModelContainer: \(error)")
         }
