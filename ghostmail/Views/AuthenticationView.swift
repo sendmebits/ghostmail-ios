@@ -1,10 +1,10 @@
 import SwiftUI
 import SwiftData
 
-// Import CloudflareClient from the Services directory
 @MainActor
 struct AuthenticationView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
+    @Environment(\.modelContext) private var modelContext
     @AppStorage("accountId") private var accountId = ""
     @AppStorage("zoneId") private var zoneId = ""
     @AppStorage("apiToken") private var apiToken = ""
@@ -156,6 +156,36 @@ struct AuthenticationView: View {
                         // Set authenticated state
                         UserDefaults.standard.set(true, forKey: "isAuthenticated")
                         cloudflareClient.isAuthenticated = true
+                        
+                        // Fetch data from Cloudflare and merge with existing data
+                        Task {
+                            do {
+                                // Fetch from Cloudflare
+                                let cloudflareAliases = try await cloudflareClient.getEmailRules()
+                                
+                                // Get existing aliases from SwiftData
+                                let descriptor = FetchDescriptor<EmailAlias>()
+                                let existingAliases = (try? modelContext.fetch(descriptor)) ?? []
+                                let existingAliasDict = Dictionary(uniqueKeysWithValues: existingAliases.map { ($0.emailAddress, $0) })
+                                
+                                // Process each Cloudflare alias
+                                for cloudflareAlias in cloudflareAliases {
+                                    if let existingAlias = existingAliasDict[cloudflareAlias.emailAddress] {
+                                        // Update existing alias with Cloudflare data while preserving metadata
+                                        existingAlias.isEnabled = cloudflareAlias.isEnabled
+                                        existingAlias.cloudflareTag = cloudflareAlias.cloudflareTag
+                                        existingAlias.forwardTo = cloudflareAlias.forwardTo
+                                    } else {
+                                        // Insert new alias
+                                        modelContext.insert(cloudflareAlias)
+                                    }
+                                }
+                                
+                                try modelContext.save()
+                            } catch {
+                                print("Error syncing data: \(error)")
+                            }
+                        }
                     } else {
                         errorMessage = "Invalid credentials. Please check and try again."
                         showError = true

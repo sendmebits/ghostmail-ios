@@ -8,6 +8,9 @@
 import SwiftUI
 import SwiftData
 
+// Import our app's models and services
+import CloudKit
+
 @main
 struct ghostmailApp: App {
     let modelContainer: ModelContainer
@@ -16,8 +19,17 @@ struct ghostmailApp: App {
     init() {
         do {
             let schema = Schema([EmailAlias.self])
-            let modelConfiguration = ModelConfiguration(schema: schema)
-            modelContainer = try ModelContainer(for: schema, configurations: [modelConfiguration])
+            let modelConfiguration = ModelConfiguration(
+                schema: schema,
+                isStoredInMemoryOnly: false,
+                cloudKitDatabase: .automatic
+            )
+            
+            // Enable sync with iCloud
+            modelContainer = try ModelContainer(
+                for: schema,
+                configurations: [modelConfiguration]
+            )
         } catch {
             fatalError("Could not initialize ModelContainer: \(error)")
         }

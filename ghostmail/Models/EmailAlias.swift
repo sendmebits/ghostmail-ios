@@ -23,7 +23,7 @@ final class EmailAlias {
         self.sortIndex = 0
         self.forwardTo = forwardTo
         
-        print("EmailAlias initialized - address: \(emailAddress), forward to: \(self.forwardTo)")
+        print("EmailAlias initialized - address: \(emailAddress), forward to: \(forwardTo)")
     }
     
     static func isEmailAddressUnique(_ emailAddress: String, context: ModelContext) -> Bool {

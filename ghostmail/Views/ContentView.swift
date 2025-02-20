@@ -10,14 +10,20 @@ import SwiftData
 
 @MainActor
 struct ContentView: View {
+    enum SortOrder {
+        case alphabetical
+        case cloudflareOrder
+    }
+    
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Environment(\.modelContext) private var modelContext
     @State private var searchText = ""
-    @Query(sort: \EmailAlias.emailAddress) private var emailAliases: [EmailAlias]
+    @Query private var emailAliases: [EmailAlias]
     @State private var isLoading = false
     @State private var error: Error?
     @State private var showError = false
     @State private var needsRefresh = false
+    @State private var sortOrder = SortOrder.cloudflareOrder
     
     var body: some View {
         NavigationStack {
@@ -61,7 +67,7 @@ struct ContentView: View {
             let rules = try await cloudflareClient.getEmailRules()
             
             // Create a dictionary of existing aliases by email address
-            let existingAliases = Dictionary(
+            let existingAliases: [String: EmailAlias] = Dictionary(
                 uniqueKeysWithValues: emailAliases.map { ($0.emailAddress, $0) }
             )
             
@@ -79,14 +85,15 @@ struct ContentView: View {
             // Update or create aliases while preserving order
             // Start index at 1 to leave room for new items at index 0
             for (index, rule) in rules.enumerated() {
+                let emailAddress = rule.emailAddress
                 let alias: EmailAlias
                 
-                if let existingAlias = existingAliases[rule.emailAddress] {
+                if let existingAlias = existingAliases[emailAddress] {
                     // Use existing alias
                     alias = existingAlias
                 } else {
                     // Create new alias
-                    alias = EmailAlias(emailAddress: rule.emailAddress)
+                    alias = EmailAlias(emailAddress: emailAddress)
                     alias.created = nil  // Ensure no creation date for Cloudflare-fetched entries
                     modelContext.insert(alias)
                 }
@@ -104,6 +111,27 @@ struct ContentView: View {
         }
         
         isLoading = false
+    }
+    
+    var sortedEmails: [EmailAlias] {
+        let filtered = filteredEmails
+        switch sortOrder {
+        case .alphabetical:
+            return filtered.sorted { $0.emailAddress < $1.emailAddress }
+        case .cloudflareOrder:
+            // Use the sortIndex to preserve Cloudflare's order
+            return filtered.sorted { $0.sortIndex < $1.sortIndex }
+        }
+    }
+    
+    var filteredEmails: [EmailAlias] {
+        if searchText.isEmpty {
+            return emailAliases
+        }
+        return emailAliases.filter { email in
+            email.emailAddress.localizedCaseInsensitiveContains(searchText) ||
+            email.website.localizedCaseInsensitiveContains(searchText)
+        }
     }
 }
 
