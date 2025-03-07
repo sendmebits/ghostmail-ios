@@ -237,9 +237,16 @@ struct EmailDetailView: View {
             .onAppear {
                 let parts = email.emailAddress.split(separator: "@")
                 tempUsername = String(parts[0])
-            }
-            .task {
-                await cloudflareClient.refreshForwardingAddresses()
+                
+                // Load forwarding addresses immediately on appear
+                Task {
+                    do {
+                        try await cloudflareClient.refreshForwardingAddresses()
+                    } catch {
+                        self.error = error
+                        self.showError = true
+                    }
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -248,17 +255,27 @@ struct EmailDetailView: View {
                             Task {
                                 await saveChanges()
                             }
-                        }
-                        withAnimation {
-                            if !isEditing {
-                                let parts = email.emailAddress.split(separator: "@")
-                                tempUsername = String(parts[0])
-                                tempWebsite = email.website
-                                tempNotes = email.notes
-                                tempIsEnabled = email.isEnabled
-                                tempForwardTo = email.forwardTo
+                        } else {
+                            // Before entering edit mode, make sure we have forwarding addresses
+                            if cloudflareClient.forwardingAddresses.isEmpty {
+                                Task {
+                                    isLoading = true
+                                    do {
+                                        try await cloudflareClient.refreshForwardingAddresses()
+                                        withAnimation {
+                                            enterEditMode()
+                                        }
+                                    } catch {
+                                        self.error = error
+                                        self.showError = true
+                                    }
+                                    isLoading = false
+                                }
+                            } else {
+                                withAnimation {
+                                    enterEditMode()
+                                }
                             }
-                            isEditing.toggle()
                         }
                     }
                 }
@@ -355,6 +372,16 @@ struct EmailDetailView: View {
         }
         
         isLoading = false
+    }
+    
+    private func enterEditMode() {
+        let parts = email.emailAddress.split(separator: "@")
+        tempUsername = String(parts[0])
+        tempWebsite = email.website
+        tempNotes = email.notes
+        tempIsEnabled = email.isEnabled
+        tempForwardTo = email.forwardTo
+        isEditing = true
     }
 }
 

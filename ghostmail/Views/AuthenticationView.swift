@@ -157,14 +157,42 @@ struct AuthenticationView: View {
                         UserDefaults.standard.set(true, forKey: "isAuthenticated")
                         cloudflareClient.isAuthenticated = true
                         
+                        // Loading forwarding addresses needs to be done in a separate Task
+                        print("Setting up task to load forwarding addresses")
+                        
+                        // Then restore any data that was previously logged out
+                        let loggedOutDescriptor = FetchDescriptor<EmailAlias>(
+                            predicate: #Predicate<EmailAlias> { alias in
+                                alias.isLoggedOut == true
+                            }
+                        )
+                        let loggedOutAliases = (try? modelContext.fetch(loggedOutDescriptor)) ?? []
+                        
+                        // Restore logged out aliases
+                        if !loggedOutAliases.isEmpty {
+                            print("Restoring \(loggedOutAliases.count) previously logged out aliases")
+                            for alias in loggedOutAliases {
+                                alias.isLoggedOut = false
+                            }
+                            try? modelContext.save()
+                        }
+                        
                         // Fetch data from Cloudflare and merge with existing data
                         Task {
                             do {
-                                // Fetch from Cloudflare
+                                // First load the forwarding addresses
+                                print("Loading forwarding addresses immediately after login")
+                                try await cloudflareClient.refreshForwardingAddresses()
+                                
+                                // Then fetch email rules
                                 let cloudflareAliases = try await cloudflareClient.getEmailRules()
                                 
                                 // Get existing aliases from SwiftData
-                                let descriptor = FetchDescriptor<EmailAlias>()
+                                let descriptor = FetchDescriptor<EmailAlias>(
+                                    predicate: #Predicate<EmailAlias> { alias in
+                                        alias.isLoggedOut == false
+                                    }
+                                )
                                 let existingAliases = (try? modelContext.fetch(descriptor)) ?? []
                                 let existingAliasDict = Dictionary(uniqueKeysWithValues: existingAliases.map { ($0.emailAddress, $0) })
                                 

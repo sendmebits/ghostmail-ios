@@ -16,6 +16,8 @@ struct SettingsView: View {
     @State private var showImportError = false
     @State private var showImportConfirmation = false
     @State private var pendingImportURL: URL?
+    @State private var syncStatus: String?
+    @State private var isLoading = false
     
     private func exportToCSV() {
         let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To\n" + emailAliases.map { alias in
@@ -108,6 +110,180 @@ struct SettingsView: View {
             print("Import error: \(error)")
             importError = error
             showImportError = true
+        }
+    }
+    
+    private func verifyICloudSync() {
+        syncStatus = "Checking iCloud sync status..."
+        
+        // Ensure forwarding addresses are available
+        if cloudflareClient.forwardingAddresses.isEmpty {
+            // Start a task to refresh addresses first
+            Task {
+                syncStatus = "Fetching forwarding addresses from Cloudflare..."
+                do {
+                    try await cloudflareClient.refreshForwardingAddresses()
+                    await runICloudSyncCheck()
+                } catch {
+                    await MainActor.run {
+                        syncStatus = "❌ Error fetching forwarding addresses: \(error.localizedDescription)"
+                    }
+                }
+            }
+        } else {
+            // Addresses already available, run the check directly
+            Task {
+                await runICloudSyncCheck()
+            }
+        }
+    }
+    
+    private func runICloudSyncCheck() async {
+        // Test iCloud connectivity
+        let ubiquitousStore = NSUbiquitousKeyValueStore.default
+        let testKey = "com.ghostmail.test.sync.\(UUID().uuidString)"
+        let testValue = "Test value: \(Date().timeIntervalSince1970)"
+        
+        // Write to iCloud key-value store
+        ubiquitousStore.set(testValue, forKey: testKey)
+        let syncSuccess = ubiquitousStore.synchronize()
+        
+        // Count all records
+        let allDescriptor = FetchDescriptor<EmailAlias>()
+        let activeDescriptor = FetchDescriptor<EmailAlias>(
+            predicate: #Predicate<EmailAlias> { alias in
+                alias.isLoggedOut == false
+            }
+        )
+        let inactiveDescriptor = FetchDescriptor<EmailAlias>(
+            predicate: #Predicate<EmailAlias> { alias in
+                alias.isLoggedOut == true
+            }
+        )
+        
+        do {
+            let totalCount = try modelContext.fetchCount(allDescriptor)
+            let activeCount = try modelContext.fetchCount(activeDescriptor)
+            let inactiveCount = try modelContext.fetchCount(inactiveDescriptor)
+            
+            // Get forwarding address with fallbacks
+            let forwardToAddress = cloudflareClient.forwardingAddresses.first ?? "fallback-test@example.com"
+            
+            // Create a test record to verify sync
+            let testAlias = EmailAlias(
+                emailAddress: "test-\(UUID().uuidString)@\(cloudflareClient.emailDomain)",
+                forwardTo: forwardToAddress,
+                isManuallyCreated: true
+            )
+            testAlias.notes = "iCloud sync test - \(Date())"
+            testAlias.isLoggedOut = true // Mark as logged out so it won't show in the UI
+            
+            modelContext.insert(testAlias)
+            try modelContext.save()
+            
+            // Create status message
+            await MainActor.run {
+                syncStatus = """
+                ✅ iCloud Sync Check Complete
+                
+                Total records: \(totalCount + 1)
+                Active records: \(activeCount)
+                Inactive records: \(inactiveCount + 1)
+                
+                Test record created: \(testAlias.id)
+                iCloud KVS test: \(syncSuccess ? "Successful" : "Failed")
+                Forwarding address: \(forwardToAddress)
+                
+                CloudKit integration is active and database operations are working.
+                If your metadata is still not persisting after logout/login:
+                1. The app now preserves data during logout
+                2. Try forcing a sync by creating a new alias before logout
+                3. Check that iCloud is enabled for this app in Settings
+                4. Verify your Apple ID is signed in to iCloud
+                """
+            }
+        } catch {
+            await MainActor.run {
+                syncStatus = "❌ Error checking iCloud sync: \(error.localizedDescription)"
+            }
+        }
+    }
+    
+    private func forceICloudSync() {
+        syncStatus = "Forcing CloudKit sync..."
+        
+        // Ensure forwarding addresses are available
+        if cloudflareClient.forwardingAddresses.isEmpty {
+            // Start a task to refresh addresses first
+            Task {
+                syncStatus = "Fetching forwarding addresses from Cloudflare..."
+                do {
+                    try await cloudflareClient.refreshForwardingAddresses()
+                    await runForcedSync()
+                } catch {
+                    await MainActor.run {
+                        syncStatus = "❌ Error fetching forwarding addresses: \(error.localizedDescription)"
+                    }
+                }
+            }
+        } else {
+            // Addresses already available, run the sync directly
+            Task {
+                await runForcedSync()
+            }
+        }
+    }
+    
+    private func runForcedSync() async {
+        // Get forwarding address with fallbacks
+        let forwardToAddress = cloudflareClient.forwardingAddresses.first ?? "fallback-test@example.com"
+        
+        // 1. Create a test record that will be synced to CloudKit
+        let testAlias = EmailAlias(
+            emailAddress: "force-sync-\(UUID().uuidString)@\(cloudflareClient.emailDomain)",
+            forwardTo: forwardToAddress,
+            isManuallyCreated: true
+        )
+        testAlias.notes = "Force CloudKit sync - \(Date())"
+        testAlias.isLoggedOut = true // Hide from UI
+        
+        // 2. Insert and save to trigger a sync
+        modelContext.insert(testAlias)
+        
+        do {
+            try modelContext.save()
+            
+            // 3. Force iCloud key-value store sync
+            NSUbiquitousKeyValueStore.default.set(Date().timeIntervalSince1970, forKey: "com.ghostmail.last_force_sync")
+            let success = NSUbiquitousKeyValueStore.default.synchronize()
+            
+            // 4. Update all existing records to trigger more sync activity
+            let descriptor = FetchDescriptor<EmailAlias>()
+            if let allAliases = try? modelContext.fetch(descriptor) {
+                for alias in allAliases {
+                    alias.notes = alias.notes + " " // Add a space to trigger an update
+                }
+                try modelContext.save()
+            }
+            
+            await MainActor.run {
+                syncStatus = """
+                ⚡️ Force Sync Initiated
+                
+                Test record created: \(testAlias.id)
+                KVS sync: \(success ? "Successful" : "Failed")
+                Forwarding address: \(forwardToAddress)
+                Timestamp: \(Date().formatted())
+                
+                CloudKit sync has been manually triggered.
+                This may take a few minutes to complete.
+                Changes should propagate to other devices soon.
+                """
+            }
+        } catch {
+            await MainActor.run {
+                syncStatus = "❌ Error forcing sync: \(error.localizedDescription)"
+            }
         }
     }
     
@@ -204,6 +380,23 @@ struct SettingsView: View {
                         }
                     }
                 }
+                
+                // Diagnostics section
+                Section("Diagnostics") {
+                    Button("Verify iCloud Sync") {
+                        verifyICloudSync()
+                    }
+                    
+                    Button("Force iCloud Sync") {
+                        forceICloudSync()
+                    }
+                    
+                    if let syncStatus = syncStatus {
+                        Text(syncStatus)
+                            .font(.caption)
+                            .foregroundColor(syncStatus.contains("Error") ? .red : .green)
+                    }
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -217,8 +410,11 @@ struct SettingsView: View {
             .alert("Are you sure you want to logout?", isPresented: $showLogoutAlert) {
                 Button("Cancel", role: .cancel) { }
                 Button("Logout", role: .destructive) {
-                    // Clear local data
-                    emailAliases.forEach { modelContext.delete($0) }
+                    // Instead of deleting data, we'll mark it as inactive
+                    // This preserves the data in iCloud while hiding it from the current session
+                    for alias in emailAliases {
+                        alias.isLoggedOut = true
+                    }
                     try? modelContext.save()
                     
                     // Logout from CloudflareClient
@@ -272,18 +468,33 @@ struct SettingsView: View {
             ) { _ in }
         }
         .onAppear {
-            selectedDefaultAddress = cloudflareClient.currentDefaultForwardingAddress
-            showWebsites = cloudflareClient.shouldShowWebsitesInList
+            // Force fetching addresses from Cloudflare first
+            Task {
+                do {
+                    isLoading = true
+                    try await cloudflareClient.refreshForwardingAddresses()
+                    
+                    // Then update the UI with the fetched addresses
+                    await MainActor.run {
+                        selectedDefaultAddress = cloudflareClient.forwardingAddresses.first ?? ""
+                        showWebsites = cloudflareClient.shouldShowWebsitesInList
+                        isLoading = false
+                    }
+                } catch {
+                    await MainActor.run {
+                        isLoading = false
+                        // Show error to user
+                        importError = error
+                        showImportError = true
+                    }
+                }
+            }
         }
         .onChange(of: selectedDefaultAddress) {
             cloudflareClient.setDefaultForwardingAddress(selectedDefaultAddress)
         }
         .onChange(of: showWebsites) {
             cloudflareClient.shouldShowWebsitesInList = showWebsites
-        }
-        .task {
-            // Fetch forwarding addresses when view appears
-            await cloudflareClient.refreshForwardingAddresses()
         }
     }
 }

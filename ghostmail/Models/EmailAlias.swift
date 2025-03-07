@@ -12,6 +12,7 @@ final class EmailAlias {
     var isEnabled: Bool = true
     var sortIndex: Int = 0
     var forwardTo: String = ""
+    var isLoggedOut: Bool = false
     
     init(emailAddress: String, forwardTo: String = "", isManuallyCreated: Bool = false) {
         self.id = UUID().uuidString
@@ -22,6 +23,7 @@ final class EmailAlias {
         self.isEnabled = true
         self.sortIndex = 0
         self.forwardTo = forwardTo
+        self.isLoggedOut = false
         
         print("EmailAlias initialized - address: \(emailAddress), forward to: \(forwardTo)")
     }

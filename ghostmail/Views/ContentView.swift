@@ -51,8 +51,10 @@ struct ContentView: View {
     }
     
     private func logout() {
-        // Clear local data
-        emailAliases.forEach { modelContext.delete($0) }
+        // Mark aliases as logged out instead of deleting them
+        for alias in emailAliases {
+            alias.isLoggedOut = true
+        }
         try? modelContext.save()
         
         // Logout from CloudflareClient

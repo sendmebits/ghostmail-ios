@@ -342,11 +342,13 @@ class CloudflareClient: ObservableObject {
         }
     }
     
-    func refreshForwardingAddresses() async {
+    func refreshForwardingAddresses() async throws {
         do {
             try await fetchForwardingAddresses()
         } catch {
-            print("Error refreshing forwarding addresses: \(error)")
+            print("Error during refresh: \(error)")
+            // Re-throw the error so callers can handle it
+            throw error
         }
     }
     

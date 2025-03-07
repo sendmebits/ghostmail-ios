@@ -83,9 +83,24 @@ struct EmailCreateView: View {
         .task {
             isUsernameFocused = true
             if forwardTo.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
-                forwardTo = cloudflareClient.currentDefaultForwardingAddress
+                forwardTo = cloudflareClient.forwardingAddresses.first ?? ""
             }
-            await cloudflareClient.refreshForwardingAddresses()
+            
+            // Load forwarding addresses
+            do {
+                isLoading = true
+                try await cloudflareClient.refreshForwardingAddresses()
+                
+                // Update default forwarding address if needed
+                if forwardTo.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
+                    forwardTo = cloudflareClient.forwardingAddresses.first ?? ""
+                }
+                isLoading = false
+            } catch {
+                self.error = error
+                self.showError = true
+                isLoading = false
+            }
         }
     }
     
