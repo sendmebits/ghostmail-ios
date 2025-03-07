@@ -40,8 +40,10 @@ struct EmailListView: View {
     init(searchText: Binding<String>, needsRefresh: Binding<Bool>) {
         self._searchText = searchText
         self._needsRefresh = needsRefresh
-        // Don't set a default sort for @Query to preserve Cloudflare order
-        self._emailAliases = Query()
+        // Filter out logged out aliases
+        self._emailAliases = Query(filter: #Predicate<EmailAlias> { alias in
+            alias.isLoggedOut == false
+        })
     }
     
     var sortedEmails: [EmailAlias] {
