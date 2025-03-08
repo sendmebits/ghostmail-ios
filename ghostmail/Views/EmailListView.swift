@@ -72,6 +72,9 @@ struct EmailListView: View {
         do {
             let cloudflareRules = try await cloudflareClient.getEmailRules()
             
+            // Get the current iCloud sync setting
+            let iCloudSyncEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
+            
             // Create dictionaries for lookup
             let cloudflareRulesByEmail = Dictionary(
                 uniqueKeysWithValues: cloudflareRules.map { ($0.emailAddress, $0) }
@@ -110,6 +113,7 @@ struct EmailListView: View {
                         }
                     }
                 } else {
+                    // Create new alias with proper properties
                     let newAlias = EmailAlias(
                         emailAddress: emailAddress,
                         forwardTo: forwardTo
@@ -117,6 +121,10 @@ struct EmailListView: View {
                     newAlias.cloudflareTag = rule.cloudflareTag
                     newAlias.isEnabled = rule.isEnabled
                     newAlias.sortIndex = index + 1
+                    
+                    // Set iCloud sync status based on user preference
+                    newAlias.iCloudSyncDisabled = !iCloudSyncEnabled
+                    
                     modelContext.insert(newAlias)
                 }
             }

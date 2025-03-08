@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var showError = false
     @State private var needsRefresh = false
     @State private var sortOrder = SortOrder.cloudflareOrder
+    @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
     
     var body: some View {
         NavigationStack {
@@ -95,8 +96,12 @@ struct ContentView: View {
                     alias = existingAlias
                 } else {
                     // Create new alias
-                    alias = EmailAlias(emailAddress: emailAddress)
+                    alias = EmailAlias(emailAddress: emailAddress, forwardTo: rule.forwardTo)
                     alias.created = nil  // Ensure no creation date for Cloudflare-fetched entries
+                    
+                    // Set iCloud sync status based on user preference
+                    alias.iCloudSyncDisabled = !iCloudSyncEnabled
+                    
                     modelContext.insert(alias)
                 }
                 

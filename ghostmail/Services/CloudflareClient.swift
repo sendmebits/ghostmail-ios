@@ -55,13 +55,14 @@ class CloudflareClient: ObservableObject {
         return true
     }
     
-    func getEmailRules() async throws -> [EmailAlias] {
+    // Get email rules from Cloudflare (returns custom type to avoid circular dependencies)
+    func getEmailRules() async throws -> [CloudflareEmailRule] {
         if domainName.isEmpty {
             try await fetchDomainName()
         }
         
         // Fetch forwarding addresses first
-        try await fetchForwardingAddresses()
+        try await refreshForwardingAddresses()
         
         // Fetch all entries from Cloudflare in chunks of 50
         var allRules: [EmailRule] = []
@@ -145,12 +146,12 @@ class CloudflareClient: ObservableObject {
             
             print("Creating alias for \(emailAddress) with forward to: \(forwardTo)")
             
-            let alias = EmailAlias(
+            let alias = CloudflareEmailRule(
                 emailAddress: emailAddress,
+                cloudflareTag: rule.tag,
+                isEnabled: rule.enabled,
                 forwardTo: forwardTo
             )
-            alias.cloudflareTag = rule.tag
-            alias.isEnabled = rule.enabled
             
             return alias
         }
@@ -271,6 +272,45 @@ class CloudflareClient: ObservableObject {
         email.components(separatedBy: "@").first ?? email
     }
     
+    // Ensure we have the current forwarding addresses available
+    func ensureForwardingAddressesLoaded() async throws {
+        if forwardingAddresses.isEmpty {
+            print("Forwarding addresses not loaded, fetching now...")
+            
+            do {
+                try await refreshForwardingAddresses()
+                
+                // Add fallback logic if we couldn't get any verified addresses
+                if forwardingAddresses.isEmpty {
+                    print("Warning: No verified forwarding addresses found. Using default email as fallback.")
+                    
+                    // Check if we at least have a default forwarding email stored
+                    if !forwardingEmail.isEmpty {
+                        print("Using stored default email as fallback: \(forwardingEmail)")
+                        await MainActor.run {
+                            self.forwardingAddresses = [forwardingEmail]
+                        }
+                    } else if !accountId.isEmpty {
+                        // As a last resort, create a dummy fallback to prevent UI issues
+                        let fallbackEmail = "default@\(emailDomain)"
+                        print("No stored email available. Using generated fallback: \(fallbackEmail)")
+                        await MainActor.run {
+                            self.forwardingAddresses = [fallbackEmail]
+                        }
+                    } else {
+                        print("Cannot generate fallback address - missing domain information.")
+                        throw CloudflareError(message: "No forwarding addresses available and unable to create fallback.")
+                    }
+                }
+            } catch {
+                print("Error in ensureForwardingAddressesLoaded: \(error.localizedDescription)")
+                throw error
+            }
+        } else {
+            print("Using \(forwardingAddresses.count) cached forwarding addresses")
+        }
+    }
+    
     var currentDefaultForwardingAddress: String {
         // If the stored default is in the available addresses, use it
         if forwardingAddresses.contains(defaultForwardingAddress) {
@@ -281,7 +321,14 @@ class CloudflareClient: ObservableObject {
     }
     
     func setDefaultForwardingAddress(_ address: String) {
-        defaultForwardingAddress = address
+        print("Setting default forwarding address to: \(address)")
+        // Only set if it's a valid forwarding address
+        if forwardingAddresses.contains(address) || address.isEmpty {
+            defaultForwardingAddress = address
+            print("Default forwarding address set successfully")
+        } else {
+            print("Warning: Attempted to set invalid forwarding address: \(address)")
+        }
     }
     
     func deleteEmailRule(tag: String) async throws {
@@ -343,43 +390,139 @@ class CloudflareClient: ObservableObject {
     }
     
     func refreshForwardingAddresses() async throws {
+        print("Refreshing forwarding addresses...")
+        
+        // Check credentials are valid
+        if accountId.isEmpty || zoneId.isEmpty || apiToken.isEmpty {
+            print("Error: Missing Cloudflare credentials")
+            throw CloudflareError(message: "Missing Cloudflare credentials. Please check your account ID, zone ID, and API token.")
+        }
+        
         do {
+            // Always fetch fresh from the Cloudflare API, never from cache or iCloud
+            print("Calling fetchForwardingAddresses() directly")
             try await fetchForwardingAddresses()
+            print("Successfully refreshed forwarding addresses. Count: \(self.forwardingAddresses.count)")
+            
+            // Print the first few addresses for debugging (limited for privacy)
+            if !self.forwardingAddresses.isEmpty {
+                let previewCount = min(2, self.forwardingAddresses.count)
+                let preview = Array(self.forwardingAddresses).prefix(previewCount)
+                
+                // Redact parts of the email addresses for privacy in logs
+                let redactedAddresses = preview.map { email -> String in
+                    let components = email.split(separator: "@")
+                    if components.count == 2 {
+                        let username = String(components[0])
+                        let domain = String(components[1])
+                        let redactedUsername = username.count > 3 ? 
+                            "\(username.prefix(1))...\(username.suffix(1))" : "..."
+                        return "\(redactedUsername)@\(domain)"
+                    }
+                    return "redacted@example.com"
+                }
+                print("Available addresses (sample): \(redactedAddresses.joined(separator: ", "))")
+            } else {
+                print("Warning: No forwarding addresses found!")
+            }
         } catch {
-            print("Error during refresh: \(error)")
+            print("Error refreshing forwarding addresses: \(error.localizedDescription)")
+            if let cfError = error as? CloudflareError {
+                print("Cloudflare API error: \(cfError.message)")
+            }
             // Re-throw the error so callers can handle it
             throw error
         }
     }
     
     func fetchForwardingAddresses() async throws {
-        let url = URL(string: "\(baseURL)/accounts/\(accountId)/email/routing/addresses")!
+        print("Fetching forwarding addresses directly from Cloudflare API")
+        // Get the full API URL with account ID
+        let addressEndpoint = "\(baseURL)/accounts/\(accountId)/email/routing/addresses"
+        print("API Endpoint: \(addressEndpoint)")
+        
+        let url = URL(string: addressEndpoint)!
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.allHTTPHeaderFields = headers
         
+        // Add logging of headers (without the actual API token for security)
+        var logHeaders = headers
+        if logHeaders["Authorization"] != nil {
+            logHeaders["Authorization"] = "Bearer [REDACTED]"
+        }
+        print("Request headers: \(logHeaders)")
+        
         let (data, response) = try await URLSession.shared.data(for: request)
         
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw CloudflareError(message: "Failed to fetch forwarding addresses")
+        guard let httpResponse = response as? HTTPURLResponse else {
+            let error = CloudflareError(message: "Invalid HTTP response")
+            print("Error: Invalid HTTP response")
+            throw error
         }
         
-        let addressResponse = try JSONDecoder().decode(AddressResponse.self, from: data)
+        print("Response status code: \(httpResponse.statusCode)")
         
-        if addressResponse.success {
-            // Consider an address verified if it has a verified timestamp
-            let verifiedAddresses = Set(
-                addressResponse.result
-                    .filter { !$0.verified.isEmpty }
-                    .map { $0.email }
-            )
-            
-            await MainActor.run {
-                self.forwardingAddresses = verifiedAddresses
+        if httpResponse.statusCode != 200 {
+            // Log the response body to help diagnose issues
+            if let errorText = String(data: data, encoding: .utf8) {
+                print("Error response: \(errorText)")
             }
-        } else {
-            let errorMessage = addressResponse.errors.first?.message ?? "Failed to get forwarding addresses from response"
-            throw CloudflareError(message: errorMessage)
+            
+            let error = CloudflareError(message: "Failed to fetch forwarding addresses (HTTP \(httpResponse.statusCode))")
+            print("Error: \(error.message)")
+            throw error
+        }
+        
+        do {
+            let addressResponse = try JSONDecoder().decode(AddressResponse.self, from: data)
+            
+            if addressResponse.success {
+                // Log the raw result for debugging
+                print("API returned \(addressResponse.result.count) total addresses")
+                
+                // Consider an address verified if it has a non-nil, non-empty verified timestamp
+                let verifiedAddresses = Set(
+                    addressResponse.result
+                        .filter { emailAddress in 
+                            // Log verification status
+                            let isVerified = emailAddress.verified != nil && !emailAddress.verified!.isEmpty
+                            if !isVerified {
+                                print("Skipping unverified address: \(emailAddress.email)")
+                            }
+                            return isVerified
+                        }
+                        .map { $0.email }
+                )
+                
+                print("Fetched \(verifiedAddresses.count) verified forwarding addresses out of \(addressResponse.result.count) total")
+                
+                if verifiedAddresses.isEmpty && !addressResponse.result.isEmpty {
+                    print("Warning: Found addresses but none are verified. This may indicate a verification issue.")
+                    // Show verification status of all addresses for debugging
+                    for (index, address) in addressResponse.result.enumerated() {
+                        print("Address \(index+1): \(address.email), Verified: \(address.verified ?? "null")")
+                    }
+                }
+                
+                await MainActor.run {
+                    self.forwardingAddresses = verifiedAddresses
+                }
+            } else {
+                let errorMessage = addressResponse.errors.first?.message ?? "Failed to get forwarding addresses from response"
+                print("API returned success=false: \(errorMessage)")
+                throw CloudflareError(message: errorMessage)
+            }
+        } catch let decodingError as DecodingError {
+            // Better error handling for JSON decoding issues
+            print("Decoding error: \(decodingError)")
+            if let responseText = String(data: data, encoding: .utf8) {
+                print("Response data: \(responseText)")
+            }
+            throw CloudflareError(message: "Failed to decode API response: \(decodingError.localizedDescription)")
+        } catch {
+            print("Other error: \(error)")
+            throw error
         }
     }
 }
@@ -435,7 +578,7 @@ struct AddressResponse: Codable {
         let id: String
         let tag: String
         let email: String
-        let verified: String  // This is a timestamp string, not a boolean
+        let verified: String?  // Made optional to handle null values
         let created: String
         let modified: String
     }
@@ -444,4 +587,14 @@ struct AddressResponse: Codable {
     let errors: [CloudflareErrorDetail]
     let messages: [String]
     let result_info: ResultInfo
+}
+
+// Define a custom type for the return value to avoid circular dependencies
+struct CloudflareEmailRule {
+    let emailAddress: String
+    let cloudflareTag: String
+    let isEnabled: Bool
+    let forwardTo: String
+    
+    // Add any other properties needed for email rules
 } 

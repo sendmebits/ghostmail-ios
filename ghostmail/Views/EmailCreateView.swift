@@ -32,7 +32,14 @@ struct EmailCreateView: View {
                 }
                 
                 Section("Destination") {
-                    if !cloudflareClient.forwardingAddresses.isEmpty {
+                    if isLoading {
+                        HStack {
+                            ProgressView()
+                                .padding(.trailing, 8)
+                            Text("Loading forwarding addresses...")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if !cloudflareClient.forwardingAddresses.isEmpty {
                         Picker("Forward to", selection: $forwardTo) {
                             ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
                                 Text(address).tag(address)
@@ -82,21 +89,33 @@ struct EmailCreateView: View {
         }
         .task {
             isUsernameFocused = true
-            if forwardTo.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
-                forwardTo = cloudflareClient.forwardingAddresses.first ?? ""
-            }
             
-            // Load forwarding addresses
+            // Load forwarding addresses from the Cloudflare API
             do {
                 isLoading = true
+                print("Email Create View: Loading forwarding addresses...")
+                
+                // Force a fresh load from the API
                 try await cloudflareClient.refreshForwardingAddresses()
                 
-                // Update default forwarding address if needed
-                if forwardTo.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
-                    forwardTo = cloudflareClient.forwardingAddresses.first ?? ""
+                // Set default forwarding address to the one selected in settings
+                if forwardTo.isEmpty {
+                    let defaultAddress = cloudflareClient.currentDefaultForwardingAddress
+                    if !defaultAddress.isEmpty {
+                        print("Setting forwarding address to default from settings: \(defaultAddress)")
+                        forwardTo = defaultAddress
+                    } else if !cloudflareClient.forwardingAddresses.isEmpty {
+                        // Fall back to first address if no default is set
+                        let firstAddress = cloudflareClient.forwardingAddresses.first ?? ""
+                        print("No default address in settings, using first available: \(firstAddress)")
+                        forwardTo = firstAddress
+                    }
                 }
+                
                 isLoading = false
+                print("Forwarding addresses loaded successfully")
             } catch {
+                print("Error loading forwarding addresses: \(error.localizedDescription)")
                 self.error = error
                 self.showError = true
                 isLoading = false
@@ -108,6 +127,9 @@ struct EmailCreateView: View {
         Task {
             isLoading = true
             do {
+                // Get the current iCloud sync setting
+                let iCloudSyncEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
+                
                 let fullEmailAddress = cloudflareClient.createFullEmailAddress(username: username)
                 let rule = try await cloudflareClient.createEmailRule(
                     emailAddress: fullEmailAddress,
@@ -123,6 +145,10 @@ struct EmailCreateView: View {
                 newAlias.notes = notes
                 newAlias.cloudflareTag = rule.tag
                 newAlias.sortIndex = minSortIndex - 1  // Set to less than the minimum
+                
+                // Set the iCloud sync disabled flag based on the user's preference
+                newAlias.iCloudSyncDisabled = !iCloudSyncEnabled
+                
                 modelContext.insert(newAlias)
                 try modelContext.save()
                 dismiss()
