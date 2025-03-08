@@ -354,52 +354,63 @@ struct SettingsView: View {
             EmailAlias.disableSyncForAll(in: modelContext)
             
             // Delete CloudKit data for the current Zone ID
-            // 3. Delete the records from CloudKit
             let container = CKContainer.default()
             let database = container.privateCloudDatabase
             
-            // Fetch record IDs in the private database
-            let query = CKQuery(recordType: "CD_EmailAlias", predicate: NSPredicate(value: true))
-            let operation = CKQueryOperation(query: query)
-            
-            var recordIDs: [CKRecord.ID] = []
-            
-            operation.recordMatchedBlock = { recordID, _ in
-                recordIDs.append(recordID)
-            }
-            
-            operation.queryResultBlock = { result in
-                switch result {
-                case .success:
-                    if !recordIDs.isEmpty {
-                        // Delete all the records
-                        let deleteOperation = CKModifyRecordsOperation(recordsToSave: nil, recordIDsToDelete: recordIDs)
-                        deleteOperation.modifyRecordsResultBlock = { result in
-                            switch result {
-                            case .success:
-                                Task { @MainActor in
-                                    self.syncStatus = "✅ iCloud sync disabled. Your data has been removed from iCloud."
-                                }
-                            case .failure(let error):
-                                Task { @MainActor in
-                                    self.syncStatus = "Error deleting iCloud data: \(error.localizedDescription)"
-                                }
-                            }
+            do {
+                // First, mark all local data as not syncing to prevent re-upload
+                try modelContext.save()
+                
+                // Use a zone ID based fetch operation instead of querying by recordName
+                // This avoids the "recordName not queryable" error
+                let zoneIDs = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[CKRecordZone.ID], Error>) in
+                    container.privateCloudDatabase.fetchAllRecordZones { zones, error in
+                        if let error = error {
+                            continuation.resume(throwing: error)
+                        } else if let zones = zones {
+                            // Extract just the zone IDs from the zones
+                            let zoneIDs = zones.map { $0.zoneID }
+                            continuation.resume(returning: zoneIDs)
+                        } else {
+                            continuation.resume(throwing: NSError(domain: "CloudKit", code: 0, userInfo: [NSLocalizedDescriptionKey: "No zones returned and no error"]))
                         }
-                        database.add(deleteOperation)
-                    } else {
-                        Task { @MainActor in
-                            self.syncStatus = "✅ iCloud sync disabled. No data found in iCloud to remove."
-                        }
-                    }
-                case .failure(let error):
-                    Task { @MainActor in
-                        self.syncStatus = "Error querying iCloud data: \(error.localizedDescription)"
                     }
                 }
+                
+                // For each zone, delete all EmailAlias records
+                for zoneID in zoneIDs {
+                    // Skip the default zone as it's not used by SwiftData/CloudKit integration
+                    if zoneID.zoneName == "_defaultZone" {
+                        continue
+                    }
+                    
+                    // Instead of using a query, we'll delete the zone itself
+                    // This is more efficient and avoids the "recordName not queryable" error
+                    do {
+                        // Delete the entire zone and all its records
+                        try await database.deleteRecordZone(withID: zoneID)
+                        
+                        // Update status
+                        await MainActor.run {
+                            self.syncStatus = "✅ iCloud sync disabled. Your data has been removed from iCloud."
+                        }
+                    } catch let zoneError as NSError {
+                        // If zone doesn't exist or another specific error, just log it
+                        if zoneError.code == CKError.unknownItem.rawValue {
+                            await MainActor.run {
+                                self.syncStatus = "✅ iCloud sync disabled. No data found in iCloud to remove."
+                            }
+                        } else {
+                            // For other errors, propagate them
+                            throw zoneError
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.syncStatus = "Error managing iCloud data: \(error.localizedDescription)"
+                }
             }
-            
-            database.add(operation)
         }
     }
     
@@ -602,7 +613,7 @@ struct SettingsView: View {
                     disableICloudSync()
                 }
             } message: {
-                Text("This will stop syncing data to iCloud and remove all existing Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId). This cannot be undone.")
+                Text("This will stop syncing data to iCloud and remove all existing Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId).")
             }
         }
         .onAppear {
