@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
+import CloudKit
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -18,6 +19,8 @@ struct SettingsView: View {
     @State private var pendingImportURL: URL?
     @State private var syncStatus: String?
     @State private var isLoading = false
+    @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
+    @State private var showDisableSyncConfirmation = false
     
     private func exportToCSV() {
         let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To\n" + emailAliases.map { alias in
@@ -287,6 +290,119 @@ struct SettingsView: View {
         }
     }
     
+    private func toggleICloudSync(_ isEnabled: Bool) {
+        if isEnabled {
+            // Enable iCloud sync
+            enableICloudSync()
+        } else {
+            // Show confirmation before disabling
+            showDisableSyncConfirmation = true
+        }
+    }
+    
+    private func enableICloudSync() {
+        // Update app storage setting
+        iCloudSyncEnabled = true
+        
+        // Enable sync for all aliases
+        EmailAlias.enableSyncForAll(in: modelContext)
+        
+        // Force a sync of all current data
+        Task {
+            syncStatus = "Syncing data to iCloud..."
+            await runForcedSync()
+            
+            // Update the CloudKit sync schema properties
+            let container = CKContainer.default()
+            
+            do {
+                // Properly wrap the completion handler in an async pattern
+                let zones = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[CKRecordZone], Error>) in
+                    container.privateCloudDatabase.fetchAllRecordZones { zones, error in
+                        if let error = error {
+                            continuation.resume(throwing: error)
+                        } else if let zones = zones {
+                            continuation.resume(returning: zones)
+                        } else {
+                            continuation.resume(throwing: NSError(domain: "CloudKit", code: 0, userInfo: [NSLocalizedDescriptionKey: "No zones returned and no error"]))
+                        }
+                    }
+                }
+                
+                // Just log the number of zones to show success
+                print("Successfully fetched \(zones.count) CloudKit record zones")
+                
+                await MainActor.run {
+                    self.syncStatus = "✅ iCloud sync enabled. Your data will now be synced across devices."
+                }
+            } catch {
+                await MainActor.run {
+                    self.syncStatus = "Error fetching CloudKit zones: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+    
+    private func disableICloudSync() {
+        // Update app storage setting
+        iCloudSyncEnabled = false
+        
+        Task {
+            syncStatus = "Disabling iCloud sync..."
+            
+            // Mark all aliases as not syncing to iCloud
+            EmailAlias.disableSyncForAll(in: modelContext)
+            
+            // Delete CloudKit data for the current Zone ID
+            // 3. Delete the records from CloudKit
+            let container = CKContainer.default()
+            let database = container.privateCloudDatabase
+            
+            // Fetch record IDs in the private database
+            let query = CKQuery(recordType: "CD_EmailAlias", predicate: NSPredicate(value: true))
+            let operation = CKQueryOperation(query: query)
+            
+            var recordIDs: [CKRecord.ID] = []
+            
+            operation.recordMatchedBlock = { recordID, _ in
+                recordIDs.append(recordID)
+            }
+            
+            operation.queryResultBlock = { result in
+                switch result {
+                case .success:
+                    if !recordIDs.isEmpty {
+                        // Delete all the records
+                        let deleteOperation = CKModifyRecordsOperation(recordsToSave: nil, recordIDsToDelete: recordIDs)
+                        deleteOperation.modifyRecordsResultBlock = { result in
+                            switch result {
+                            case .success:
+                                Task { @MainActor in
+                                    self.syncStatus = "✅ iCloud sync disabled. Your data has been removed from iCloud."
+                                }
+                            case .failure(let error):
+                                Task { @MainActor in
+                                    self.syncStatus = "Error deleting iCloud data: \(error.localizedDescription)"
+                                }
+                            }
+                        }
+                        database.add(deleteOperation)
+                    } else {
+                        Task { @MainActor in
+                            self.syncStatus = "✅ iCloud sync disabled. No data found in iCloud to remove."
+                        }
+                    }
+                case .failure(let error):
+                    Task { @MainActor in
+                        self.syncStatus = "Error querying iCloud data: \(error.localizedDescription)"
+                    }
+                }
+            }
+            
+            database.add(operation)
+        }
+    }
+    
     var body: some View {
         NavigationStack {
             List {
@@ -339,6 +455,23 @@ struct SettingsView: View {
                     
                     Toggle("Show Websites in List", isOn: $showWebsites)
                         .tint(.accentColor)
+                    
+                    Toggle("Sync metadata to iCloud", isOn: $iCloudSyncEnabled)
+                        .tint(.accentColor)
+                        .onChange(of: iCloudSyncEnabled) { oldValue, newValue in
+                            if oldValue != newValue {
+                                toggleICloudSync(newValue)
+                            }
+                        }
+                        
+                    if let syncStatus = syncStatus {
+                        Text(syncStatus)
+                            .font(.caption)
+                            .foregroundStyle(
+                                syncStatus.contains("❌") ? .red : 
+                                (syncStatus.contains("✅") ? .green : .secondary)
+                            )
+                    }
                 } header: {
                     Text("Settings")
                         .textCase(.uppercase)
@@ -389,12 +522,6 @@ struct SettingsView: View {
                     
                     Button("Force iCloud Sync") {
                         forceICloudSync()
-                    }
-                    
-                    if let syncStatus = syncStatus {
-                        Text(syncStatus)
-                            .font(.caption)
-                            .foregroundColor(syncStatus.contains("Error") ? .red : .green)
                     }
                 }
             }
@@ -466,23 +593,45 @@ struct SettingsView: View {
                 contentType: UTType.commaSeparatedText,
                 defaultFilename: "ghostmail_backup.csv"
             ) { _ in }
+            .alert("Disable iCloud Sync?", isPresented: $showDisableSyncConfirmation) {
+                Button("Cancel", role: .cancel) {
+                    // Revert the toggle since user canceled
+                    iCloudSyncEnabled = true
+                }
+                Button("Disable", role: .destructive) {
+                    disableICloudSync()
+                }
+            } message: {
+                Text("This will stop syncing data to iCloud and remove all existing Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId). This cannot be undone.")
+            }
         }
         .onAppear {
             // Force fetching addresses from Cloudflare first
             Task {
                 do {
                     isLoading = true
+                    print("Settings View: Fetching forwarding addresses...")
+                    
+                    // Always fetch addresses directly from Cloudflare API
                     try await cloudflareClient.refreshForwardingAddresses()
                     
                     // Then update the UI with the fetched addresses
                     await MainActor.run {
-                        selectedDefaultAddress = cloudflareClient.forwardingAddresses.first ?? ""
+                        if !cloudflareClient.forwardingAddresses.isEmpty {
+                            selectedDefaultAddress = cloudflareClient.currentDefaultForwardingAddress
+                            print("Selected default address: \(selectedDefaultAddress)")
+                        } else {
+                            print("Warning: No forwarding addresses available")
+                        }
+                        
                         showWebsites = cloudflareClient.shouldShowWebsitesInList
                         isLoading = false
+                        print("Settings loaded successfully")
                     }
                 } catch {
                     await MainActor.run {
                         isLoading = false
+                        print("Error fetching forwarding addresses: \(error.localizedDescription)")
                         // Show error to user
                         importError = error
                         showImportError = true

@@ -13,10 +13,29 @@ import CloudKit
 struct ghostmailApp: App {
     let modelContainer: ModelContainer
     @StateObject private var cloudflareClient = CloudflareClient(accountId: "", zoneId: "", apiToken: "")
+    @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
     
     init() {
+        // First, read the iCloud sync preference from UserDefaults directly
+        // instead of accessing self.iCloudSyncEnabled
+        let syncEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
+        
         do {
-            let schema = Schema([EmailAlias.self])
+            // Create a model configuration based on iCloud sync preference
+            let config: ModelConfiguration
+            
+            if syncEnabled {
+                // CloudKit-enabled configuration
+                config = ModelConfiguration(cloudKitDatabase: .automatic)
+            } else {
+                // Local-only configuration
+                config = ModelConfiguration(isStoredInMemoryOnly: false)
+            }
+            
+            // Initialize the ModelContainer with the correct class and configuration
+            modelContainer = try ModelContainer(for: EmailAlias.self, configurations: config)
+            
+            // After initializing modelContainer, we can now use self safely
             
             // Enable CloudKit logging
             let cloudKitLogger = NSUbiquitousKeyValueStore.default
@@ -25,21 +44,6 @@ struct ghostmailApp: App {
             
             // Log CloudKit container setup
             print("Setting up CloudKit with container: iCloud.com.sendmebits.ghostmail")
-            
-            let modelConfiguration = ModelConfiguration(
-                schema: schema,
-                isStoredInMemoryOnly: false,
-                cloudKitDatabase: .private("iCloud.com.sendmebits.ghostmail")
-            )
-            
-            // Enable sync with iCloud
-            modelContainer = try ModelContainer(
-                for: schema,
-                configurations: [modelConfiguration]
-            )
-            
-            // Verify container setup
-            print("ModelContainer initialized successfully with CloudKit integration")
             
             // Setup notification for iCloud account changes
             NotificationCenter.default.addObserver(

@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Foundation
 
 @MainActor
 struct AuthenticationView: View {
@@ -204,8 +205,16 @@ struct AuthenticationView: View {
                                         existingAlias.cloudflareTag = cloudflareAlias.cloudflareTag
                                         existingAlias.forwardTo = cloudflareAlias.forwardTo
                                     } else {
-                                        // Insert new alias
-                                        modelContext.insert(cloudflareAlias)
+                                        // Create a new EmailAlias instead of trying to insert the CloudflareEmailRule
+                                        let newAlias = EmailAlias(
+                                            emailAddress: cloudflareAlias.emailAddress,
+                                            forwardTo: cloudflareAlias.forwardTo
+                                        )
+                                        newAlias.cloudflareTag = cloudflareAlias.cloudflareTag
+                                        newAlias.isEnabled = cloudflareAlias.isEnabled
+                                        
+                                        // Now insert the EmailAlias
+                                        modelContext.insert(newAlias)
                                     }
                                 }
                                 

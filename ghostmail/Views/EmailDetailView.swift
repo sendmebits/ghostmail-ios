@@ -358,6 +358,9 @@ struct EmailDetailView: View {
                 )
             }
             needsRefresh = true
+            
+            // Dismiss the view after successful save
+            dismiss()
         } catch {
             self.error = error
             self.showError = true
