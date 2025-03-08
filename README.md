@@ -9,9 +9,9 @@ Ghost Mail open-source email alias manager for Cloudflare hosted domains. It let
 - 🛠️ Verifiable 100% open-source software with no paywalls  
 - 📋 View all of your email aliases while offline  
 
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/46511a00-3bf7-49d3-b26d-5fa96e008513" alt="Alias List" width="300">&nbsp;&nbsp;
-  <img src="https://github.com/user-attachments/assets/6ade2e1b-b9a3-4731-8c99-f8a6b469723f" alt="Create Alias" width="300">&nbsp;&nbsp;
+<p>
+  <img src="https://github.com/user-attachments/assets/46511a00-3bf7-49d3-b26d-5fa96e008513" alt="Alias List" width="300">
+  <img src="https://github.com/user-attachments/assets/6ade2e1b-b9a3-4731-8c99-f8a6b469723f" alt="Create Alias" width="300">
   <img src="https://github.com/user-attachments/assets/c27d7216-84e2-4ab7-b2b3-076b25a412e0" alt="Email Alias" width="300">
 </p>
 
