@@ -129,11 +129,15 @@ class CloudflareClient: ObservableObject {
             self.forwardingAddresses = forwards
         }
         
-        return allRules.compactMap { rule in
+        // Convert to CloudflareEmailRule and ensure there are no duplicates by email address
+        var uniqueRules: [CloudflareEmailRule] = []
+        var seenEmailAddresses = Set<String>()
+        
+        for rule in allRules {
             // Skip rules that don't have email forwarding
             guard let forwardAction = rule.actions.first(where: { $0.type == "forward" }),
                   let forwardTo = forwardAction.value?.first else {
-                return nil
+                continue
             }
             
             // Skip catch-all rules or rules without a "to" matcher
@@ -141,9 +145,16 @@ class CloudflareClient: ObservableObject {
                   matcher.type == "literal",
                   matcher.field == "to",
                   let emailAddress = matcher.value else {
-                return nil
+                continue
             }
             
+            // Skip if we've already seen this email address
+            if seenEmailAddresses.contains(emailAddress) {
+                print("⚠️ Skipping duplicate Cloudflare rule for: \(emailAddress)")
+                continue
+            }
+            
+            seenEmailAddresses.insert(emailAddress)
             print("Creating alias for \(emailAddress) with forward to: \(forwardTo)")
             
             let alias = CloudflareEmailRule(
@@ -153,8 +164,10 @@ class CloudflareClient: ObservableObject {
                 forwardTo: forwardTo
             )
             
-            return alias
+            uniqueRules.append(alias)
         }
+        
+        return uniqueRules
     }
     
     func createEmailRule(emailAddress: String, forwardTo: String) async throws -> EmailRule {

@@ -21,6 +21,7 @@ struct SettingsView: View {
     @State private var isLoading = false
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
     @State private var showDisableSyncConfirmation = false
+    @State private var showResetUserIdConfirmation = false
     
     private func exportToCSV() {
         let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To\n" + emailAliases.map { alias in
@@ -414,6 +415,66 @@ struct SettingsView: View {
         }
     }
     
+    private func resetUserIdentifier() {
+        syncStatus = "Resetting user identifier..."
+        
+        // Generate a new user identifier
+        let newUserId = UUID().uuidString
+        UserDefaults.standard.set(newUserId, forKey: "userIdentifier")
+        
+        Task {
+            do {
+                let descriptor = FetchDescriptor<EmailAlias>()
+                let allAliases = try modelContext.fetch(descriptor)
+                
+                // Apply new user ID to all aliases
+                for alias in allAliases {
+                    alias.userIdentifier = newUserId
+                }
+                
+                try modelContext.save()
+                
+                // Force a sync after changing identifiers
+                await runForcedSync()
+                
+                await MainActor.run {
+                    syncStatus = "✅ User identifier reset to: \(newUserId.prefix(8))...\nSync initiated. This should help repair device-to-iCloud connections."
+                }
+            } catch {
+                await MainActor.run {
+                    syncStatus = "❌ Error resetting user identifier: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+    
+    private func rebuildCloudSync() {
+        syncStatus = "Rebuilding iCloud sync connection..."
+        
+        Task {
+            do {
+                // Temporarily disable iCloud sync
+                iCloudSyncEnabled = false
+                try await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second
+                
+                // Re-enable iCloud sync
+                iCloudSyncEnabled = true
+                try await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second
+                
+                // Force a sync with the existing user identifier
+                await runForcedSync()
+                
+                await MainActor.run {
+                    syncStatus = "✅ iCloud sync connection rebuilt. This should help synchronize your data between devices and after reinstallation."
+                }
+            } catch {
+                await MainActor.run {
+                    syncStatus = "❌ Error rebuilding iCloud connection: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+    
     var body: some View {
         NavigationStack {
             List {
@@ -534,6 +595,14 @@ struct SettingsView: View {
                     Button("Force iCloud Sync") {
                         forceICloudSync()
                     }
+                    
+                    Button("Rebuild Device-to-iCloud Link") {
+                        rebuildCloudSync()
+                    }
+                    
+                    Button("Reset User Identifier", role: .destructive) {
+                        showResetUserIdConfirmation = true
+                    }
                 }
             }
             .navigationTitle("Settings")
@@ -614,6 +683,14 @@ struct SettingsView: View {
                 }
             } message: {
                 Text("This will stop syncing data to iCloud and remove all existing Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId).")
+            }
+            .alert("Reset User Identifier?", isPresented: $showResetUserIdConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Reset", role: .destructive) {
+                    resetUserIdentifier()
+                }
+            } message: {
+                Text("This assigns a new user identifier to all your aliases. Use this if you're having trouble with iCloud sync between devices or after reinstall. This may create duplicate entries temporarily until sync completes.")
             }
         }
         .onAppear {

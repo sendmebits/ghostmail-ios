@@ -15,6 +15,7 @@ final class EmailAlias {
     var forwardTo: String = ""
     var isLoggedOut: Bool = false
     var iCloudSyncDisabled: Bool = false
+    var userIdentifier: String = ""
     
     init(emailAddress: String, forwardTo: String = "", isManuallyCreated: Bool = false) {
         self.id = UUID().uuidString
@@ -27,6 +28,7 @@ final class EmailAlias {
         self.forwardTo = forwardTo
         self.isLoggedOut = false
         self.iCloudSyncDisabled = false
+        self.userIdentifier = ""
         
         print("EmailAlias initialized - address: \(emailAddress), forward to: \(forwardTo)")
     }
@@ -81,6 +83,24 @@ final class EmailAlias {
             try context.save()
         } catch {
             print("Error enabling sync for aliases: \(error)")
+        }
+    }
+    
+    // Helper method to set user identifier for all aliases
+    static func setUserIdentifier(_ identifier: String, in context: ModelContext) {
+        do {
+            let descriptor = FetchDescriptor<EmailAlias>()
+            let allAliases = try context.fetch(descriptor)
+            
+            for alias in allAliases {
+                if alias.userIdentifier.isEmpty {
+                    alias.userIdentifier = identifier
+                }
+            }
+            
+            try context.save()
+        } catch {
+            print("Error setting user identifier for aliases: \(error)")
         }
     }
 } 
