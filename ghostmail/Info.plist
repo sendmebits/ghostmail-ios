@@ -20,6 +20,10 @@
 			<string>CSVDocument</string>
 		</dict>
 	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
@@ -47,7 +51,5 @@
 			</dict>
 		</dict>
 	</array>
-	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<true/>
 </dict>
 </plist>

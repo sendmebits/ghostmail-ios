@@ -604,6 +604,22 @@ struct SettingsView: View {
                         showResetUserIdConfirmation = true
                     }
                 }
+                
+                // App Version section
+                Section {
+                    InfoRow(title: "App Version") {
+                        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
+                        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown"
+                        Text("\(appVersion) (\(buildNumber))")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("About")
+                        .textCase(.uppercase)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
