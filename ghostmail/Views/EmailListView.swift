@@ -70,19 +70,43 @@ struct EmailListView: View {
     private func refreshEmailRules() async {
         isLoading = true
         do {
-            let cloudflareRules = try await cloudflareClient.getEmailRules()
+            var cloudflareRules = try await cloudflareClient.getEmailRules()
             
             // Get the current iCloud sync setting
             let iCloudSyncEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
             
-            // Create dictionaries for lookup
+            // Handle potential duplicates in Cloudflare rules
+            // Keep track of seen email addresses and only include the first occurrence
+            var seenEmails = Set<String>()
+            cloudflareRules = cloudflareRules.filter { rule in
+                guard !seenEmails.contains(rule.emailAddress) else {
+                    print("⚠️ Skipping duplicate email rule for: \(rule.emailAddress)")
+                    return false
+                }
+                seenEmails.insert(rule.emailAddress)
+                return true
+            }
+            
+            // Create dictionaries for lookup (now safe because we've removed duplicates)
             let cloudflareRulesByEmail = Dictionary(
                 uniqueKeysWithValues: cloudflareRules.map { ($0.emailAddress, $0) }
             )
             
-            let existingAliases = Dictionary(
-                uniqueKeysWithValues: emailAliases.map { ($0.emailAddress, $0) }
-            )
+            // Create dictionary for existing aliases, handling potential duplicates
+            var existingAliasesMap: [String: EmailAlias] = [:]
+            for alias in emailAliases {
+                if existingAliasesMap[alias.emailAddress] == nil {
+                    existingAliasesMap[alias.emailAddress] = alias
+                } else {
+                    // Handle duplicate in local database - keep the one with the most recent created date
+                    print("⚠️ Found duplicate local alias for: \(alias.emailAddress)")
+                    let existing = existingAliasesMap[alias.emailAddress]!
+                    if (alias.created ?? Date.distantPast) > (existing.created ?? Date.distantPast) {
+                        existingAliasesMap[alias.emailAddress] = alias
+                    }
+                    // If we want to clean up, we could delete the older duplicate here
+                }
+            }
             
             // Remove deleted aliases
             for alias in emailAliases {
@@ -97,7 +121,7 @@ struct EmailListView: View {
                 let emailAddress = rule.emailAddress
                 let forwardTo = rule.forwardTo
                 
-                if let existing = existingAliases[emailAddress] {
+                if let existing = existingAliasesMap[emailAddress] {
                     // Only update if there are actual changes
                     let needsUpdate = existing.cloudflareTag != rule.cloudflareTag ||
                                     existing.isEnabled != rule.isEnabled ||
@@ -124,6 +148,9 @@ struct EmailListView: View {
                     
                     // Set iCloud sync status based on user preference
                     newAlias.iCloudSyncDisabled = !iCloudSyncEnabled
+                    
+                    // Set the user identifier to ensure cross-device ownership
+                    newAlias.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
                     
                     modelContext.insert(newAlias)
                 }

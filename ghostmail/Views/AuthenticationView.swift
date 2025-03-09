@@ -195,7 +195,19 @@ struct AuthenticationView: View {
                                     }
                                 )
                                 let existingAliases = (try? modelContext.fetch(descriptor)) ?? []
-                                let existingAliasDict = Dictionary(uniqueKeysWithValues: existingAliases.map { ($0.emailAddress, $0) })
+                                
+                                // Create a map of email addresses to aliases, handling potential duplicates
+                                var existingAliasDict: [String: EmailAlias] = [:]
+                                for alias in existingAliases {
+                                    // Only add if not already present or if newer
+                                    if let existing = existingAliasDict[alias.emailAddress] {
+                                        if (alias.created ?? Date.distantPast) > (existing.created ?? Date.distantPast) {
+                                            existingAliasDict[alias.emailAddress] = alias
+                                        }
+                                    } else {
+                                        existingAliasDict[alias.emailAddress] = alias
+                                    }
+                                }
                                 
                                 // Process each Cloudflare alias
                                 for cloudflareAlias in cloudflareAliases {

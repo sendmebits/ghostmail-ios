@@ -149,6 +149,9 @@ struct EmailCreateView: View {
                 // Set the iCloud sync disabled flag based on the user's preference
                 newAlias.iCloudSyncDisabled = !iCloudSyncEnabled
                 
+                // Set the user identifier to ensure cross-device ownership
+                newAlias.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
+                
                 modelContext.insert(newAlias)
                 try modelContext.save()
                 dismiss()

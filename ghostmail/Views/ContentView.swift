@@ -69,10 +69,18 @@ struct ContentView: View {
         do {
             let rules = try await cloudflareClient.getEmailRules()
             
-            // Create a dictionary of existing aliases by email address
-            let existingAliases: [String: EmailAlias] = Dictionary(
-                uniqueKeysWithValues: emailAliases.map { ($0.emailAddress, $0) }
-            )
+            // Create a dictionary of existing aliases by email address, handling potential duplicates
+            var existingAliases: [String: EmailAlias] = [:]
+            for alias in emailAliases {
+                // Only add if not already present or if newer
+                if let existing = existingAliases[alias.emailAddress] {
+                    if (alias.created ?? Date.distantPast) > (existing.created ?? Date.distantPast) {
+                        existingAliases[alias.emailAddress] = alias
+                    }
+                } else {
+                    existingAliases[alias.emailAddress] = alias
+                }
+            }
             
             // Get email addresses from Cloudflare rules
             let cloudflareEmails = rules.map { $0.emailAddress }
