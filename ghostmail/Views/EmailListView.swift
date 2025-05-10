@@ -324,45 +324,32 @@ struct EmailRowView: View {
     
     var body: some View {
         HStack(spacing: 16) {
-            // Email icon with status indicator
+            // Modern email icon with gradient
             ZStack {
-                Circle()
-                    .fill(
+                Image(systemName: "envelope.fill")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(
                         LinearGradient(
                             colors: [
-                                Color.accentColor.opacity(0.2),
-                                Color.accentColor.opacity(0.15)
+                                Color.accentColor,
+                                Color.accentColor.opacity(0.7)
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
-                    .overlay(
-                        Circle()
-                            .stroke(Color.accentColor.opacity(0.2), lineWidth: 1)
-                    )
                     .frame(width: 40, height: 40)
-                
-                Image(systemName: "envelope.fill")
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .font(.system(size: 16, weight: .medium))
                 
                 // Status indicator
                 if !email.isEnabled {
                     Circle()
                         .fill(.gray)
-                        .frame(width: 12, height: 12)
+                        .frame(width: 10, height: 10)
                         .overlay(
                             Circle()
                                 .stroke(Color.background, lineWidth: 2)
                         )
-                        .offset(x: 14, y: 14)
+                        .offset(x: 12, y: 12)
                 }
             }
             
