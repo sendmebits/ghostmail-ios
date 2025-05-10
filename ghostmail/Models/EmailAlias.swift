@@ -60,13 +60,51 @@ final class EmailAlias {
             let descriptor = FetchDescriptor<EmailAlias>()
             let allAliases = try context.fetch(descriptor)
             
+            var changesMade = false
             for alias in allAliases {
-                alias.iCloudSyncDisabled = true
+                if !alias.iCloudSyncDisabled {
+                    alias.iCloudSyncDisabled = true
+                    changesMade = true
+                }
             }
             
-            try context.save()
+            if changesMade {
+                try context.save()
+                print("Successfully marked \(allAliases.count) aliases as not syncing to iCloud")
+            } else {
+                print("No changes needed: all \(allAliases.count) aliases already marked as not syncing")
+            }
         } catch {
             print("Error marking aliases as not syncing: \(error)")
+            
+            // Try to fetch and update in smaller batches if the main approach failed
+            do {
+                let descriptor = FetchDescriptor<EmailAlias>(predicate: #Predicate<EmailAlias> { alias in
+                    !alias.iCloudSyncDisabled
+                })
+                let aliasesToUpdate = try context.fetch(descriptor)
+                
+                if aliasesToUpdate.isEmpty {
+                    print("No aliases need updating")
+                    return
+                }
+                
+                // Update in smaller batches
+                let batchSize = 10
+                for i in stride(from: 0, to: aliasesToUpdate.count, by: batchSize) {
+                    let endIndex = min(i + batchSize, aliasesToUpdate.count)
+                    let batch = aliasesToUpdate[i..<endIndex]
+                    
+                    for alias in batch {
+                        alias.iCloudSyncDisabled = true
+                    }
+                    
+                    try context.save()
+                    print("Updated batch \(i/batchSize + 1): marked \(batch.count) aliases as not syncing")
+                }
+            } catch {
+                print("Failed to update aliases in batches: \(error)")
+            }
         }
     }
     

@@ -17,11 +17,9 @@ struct SettingsView: View {
     @State private var showImportError = false
     @State private var showImportConfirmation = false
     @State private var pendingImportURL: URL?
-    @State private var syncStatus: String?
     @State private var isLoading = false
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
     @State private var showDisableSyncConfirmation = false
-    @State private var showResetUserIdConfirmation = false
     
     private func exportToCSV() {
         let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To\n" + emailAliases.map { alias in
@@ -117,183 +115,10 @@ struct SettingsView: View {
         }
     }
     
-    private func verifyICloudSync() {
-        syncStatus = "Checking iCloud sync status..."
-        
-        // Ensure forwarding addresses are available
-        if cloudflareClient.forwardingAddresses.isEmpty {
-            // Start a task to refresh addresses first
-            Task {
-                syncStatus = "Fetching forwarding addresses from Cloudflare..."
-                do {
-                    try await cloudflareClient.refreshForwardingAddresses()
-                    await runICloudSyncCheck()
-                } catch {
-                    await MainActor.run {
-                        syncStatus = "❌ Error fetching forwarding addresses: \(error.localizedDescription)"
-                    }
-                }
-            }
-        } else {
-            // Addresses already available, run the check directly
-            Task {
-                await runICloudSyncCheck()
-            }
-        }
-    }
-    
-    private func runICloudSyncCheck() async {
-        // Test iCloud connectivity
-        let ubiquitousStore = NSUbiquitousKeyValueStore.default
-        let testKey = "com.ghostmail.test.sync.\(UUID().uuidString)"
-        let testValue = "Test value: \(Date().timeIntervalSince1970)"
-        
-        // Write to iCloud key-value store
-        ubiquitousStore.set(testValue, forKey: testKey)
-        let syncSuccess = ubiquitousStore.synchronize()
-        
-        // Count all records
-        let allDescriptor = FetchDescriptor<EmailAlias>()
-        let activeDescriptor = FetchDescriptor<EmailAlias>(
-            predicate: #Predicate<EmailAlias> { alias in
-                alias.isLoggedOut == false
-            }
-        )
-        let inactiveDescriptor = FetchDescriptor<EmailAlias>(
-            predicate: #Predicate<EmailAlias> { alias in
-                alias.isLoggedOut == true
-            }
-        )
-        
-        do {
-            let totalCount = try modelContext.fetchCount(allDescriptor)
-            let activeCount = try modelContext.fetchCount(activeDescriptor)
-            let inactiveCount = try modelContext.fetchCount(inactiveDescriptor)
-            
-            // Get forwarding address with fallbacks
-            let forwardToAddress = cloudflareClient.forwardingAddresses.first ?? "fallback-test@example.com"
-            
-            // Create a test record to verify sync
-            let testAlias = EmailAlias(
-                emailAddress: "test-\(UUID().uuidString)@\(cloudflareClient.emailDomain)",
-                forwardTo: forwardToAddress,
-                isManuallyCreated: true
-            )
-            testAlias.notes = "iCloud sync test - \(Date())"
-            testAlias.isLoggedOut = true // Mark as logged out so it won't show in the UI
-            
-            modelContext.insert(testAlias)
-            try modelContext.save()
-            
-            // Create status message
-            await MainActor.run {
-                syncStatus = """
-                ✅ iCloud Sync Check Complete
-                
-                Total records: \(totalCount + 1)
-                Active records: \(activeCount)
-                Inactive records: \(inactiveCount + 1)
-                
-                Test record created: \(testAlias.id)
-                iCloud KVS test: \(syncSuccess ? "Successful" : "Failed")
-                Forwarding address: \(forwardToAddress)
-                
-                CloudKit integration is active and database operations are working.
-                If your metadata is still not persisting after logout/login:
-                1. The app now preserves data during logout
-                2. Try forcing a sync by creating a new alias before logout
-                3. Check that iCloud is enabled for this app in Settings
-                4. Verify your Apple ID is signed in to iCloud
-                """
-            }
-        } catch {
-            await MainActor.run {
-                syncStatus = "❌ Error checking iCloud sync: \(error.localizedDescription)"
-            }
-        }
-    }
-    
-    private func forceICloudSync() {
-        syncStatus = "Forcing CloudKit sync..."
-        
-        // Ensure forwarding addresses are available
-        if cloudflareClient.forwardingAddresses.isEmpty {
-            // Start a task to refresh addresses first
-            Task {
-                syncStatus = "Fetching forwarding addresses from Cloudflare..."
-                do {
-                    try await cloudflareClient.refreshForwardingAddresses()
-                    await runForcedSync()
-                } catch {
-                    await MainActor.run {
-                        syncStatus = "❌ Error fetching forwarding addresses: \(error.localizedDescription)"
-                    }
-                }
-            }
-        } else {
-            // Addresses already available, run the sync directly
-            Task {
-                await runForcedSync()
-            }
-        }
-    }
-    
-    private func runForcedSync() async {
-        // Get forwarding address with fallbacks
-        let forwardToAddress = cloudflareClient.forwardingAddresses.first ?? "fallback-test@example.com"
-        
-        // 1. Create a test record that will be synced to CloudKit
-        let testAlias = EmailAlias(
-            emailAddress: "force-sync-\(UUID().uuidString)@\(cloudflareClient.emailDomain)",
-            forwardTo: forwardToAddress,
-            isManuallyCreated: true
-        )
-        testAlias.notes = "Force CloudKit sync - \(Date())"
-        testAlias.isLoggedOut = true // Hide from UI
-        
-        // 2. Insert and save to trigger a sync
-        modelContext.insert(testAlias)
-        
-        do {
-            try modelContext.save()
-            
-            // 3. Force iCloud key-value store sync
-            NSUbiquitousKeyValueStore.default.set(Date().timeIntervalSince1970, forKey: "com.ghostmail.last_force_sync")
-            let success = NSUbiquitousKeyValueStore.default.synchronize()
-            
-            // 4. Update all existing records to trigger more sync activity
-            let descriptor = FetchDescriptor<EmailAlias>()
-            if let allAliases = try? modelContext.fetch(descriptor) {
-                for alias in allAliases {
-                    alias.notes = alias.notes + " " // Add a space to trigger an update
-                }
-                try modelContext.save()
-            }
-            
-            await MainActor.run {
-                syncStatus = """
-                ⚡️ Force Sync Initiated
-                
-                Test record created: \(testAlias.id)
-                KVS sync: \(success ? "Successful" : "Failed")
-                Forwarding address: \(forwardToAddress)
-                Timestamp: \(Date().formatted())
-                
-                CloudKit sync has been manually triggered.
-                This may take a few minutes to complete.
-                Changes should propagate to other devices soon.
-                """
-            }
-        } catch {
-            await MainActor.run {
-                syncStatus = "❌ Error forcing sync: \(error.localizedDescription)"
-            }
-        }
-    }
-    
     private func toggleICloudSync(_ isEnabled: Bool) {
         if isEnabled {
             // Enable iCloud sync
+            isLoading = true
             enableICloudSync()
         } else {
             // Show confirmation before disabling
@@ -310,10 +135,6 @@ struct SettingsView: View {
         
         // Force a sync of all current data
         Task {
-            syncStatus = "Syncing data to iCloud..."
-            await runForcedSync()
-            
-            // Update the CloudKit sync schema properties
             let container = CKContainer.default()
             
             do {
@@ -334,11 +155,13 @@ struct SettingsView: View {
                 print("Successfully fetched \(zones.count) CloudKit record zones")
                 
                 await MainActor.run {
-                    self.syncStatus = "✅ iCloud sync enabled. Your data will now be synced across devices."
+                    isLoading = false
                 }
             } catch {
+                print("Error fetching CloudKit zones: \(error.localizedDescription)")
+                
                 await MainActor.run {
-                    self.syncStatus = "Error fetching CloudKit zones: \(error.localizedDescription)"
+                    isLoading = false
                 }
             }
         }
@@ -348,9 +171,10 @@ struct SettingsView: View {
         // Update app storage setting
         iCloudSyncEnabled = false
         
+        // Update UI to show loading state
+        isLoading = true
+        
         Task {
-            syncStatus = "Disabling iCloud sync..."
-            
             // Mark all aliases as not syncing to iCloud
             EmailAlias.disableSyncForAll(in: modelContext)
             
@@ -364,19 +188,40 @@ struct SettingsView: View {
                 
                 // Use a zone ID based fetch operation instead of querying by recordName
                 // This avoids the "recordName not queryable" error
-                let zoneIDs = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[CKRecordZone.ID], Error>) in
-                    container.privateCloudDatabase.fetchAllRecordZones { zones, error in
-                        if let error = error {
-                            continuation.resume(throwing: error)
-                        } else if let zones = zones {
-                            // Extract just the zone IDs from the zones
-                            let zoneIDs = zones.map { $0.zoneID }
-                            continuation.resume(returning: zoneIDs)
-                        } else {
-                            continuation.resume(throwing: NSError(domain: "CloudKit", code: 0, userInfo: [NSLocalizedDescriptionKey: "No zones returned and no error"]))
+                var zoneIDs: [CKRecordZone.ID] = []
+                
+                // Retry zone fetching up to 3 times with exponential backoff
+                for attempt in 1...3 {
+                    do {
+                        zoneIDs = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[CKRecordZone.ID], Error>) in
+                            container.privateCloudDatabase.fetchAllRecordZones { zones, error in
+                                if let error = error {
+                                    continuation.resume(throwing: error)
+                                } else if let zones = zones {
+                                    // Extract just the zone IDs from the zones
+                                    let zoneIDs = zones.map { $0.zoneID }
+                                    continuation.resume(returning: zoneIDs)
+                                } else {
+                                    continuation.resume(throwing: NSError(domain: "CloudKit", code: 0, userInfo: [NSLocalizedDescriptionKey: "No zones returned and no error"]))
+                                }
+                            }
                         }
+                        // If successful, break out of retry loop
+                        break
+                    } catch {
+                        if attempt == 3 {
+                            // On final attempt, propagate the error
+                            throw error
+                        }
+                        // Wait with exponential backoff before retrying
+                        try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt)) * 500_000_000))
+                        print("Retrying zone fetch, attempt \(attempt + 1)...")
                     }
                 }
+                
+                // Track if any deletions failed
+                var hadDeletionFailures = false
+                var zoneDeletionErrors: [Error] = []
                 
                 // For each zone, delete all EmailAlias records
                 for zoneID in zoneIDs {
@@ -385,91 +230,81 @@ struct SettingsView: View {
                         continue
                     }
                     
-                    // Instead of using a query, we'll delete the zone itself
-                    // This is more efficient and avoids the "recordName not queryable" error
-                    do {
-                        // Delete the entire zone and all its records
-                        try await database.deleteRecordZone(withID: zoneID)
-                        
-                        // Update status
-                        await MainActor.run {
-                            self.syncStatus = "✅ iCloud sync disabled. Your data has been removed from iCloud."
-                        }
-                    } catch let zoneError as NSError {
-                        // If zone doesn't exist or another specific error, just log it
-                        if zoneError.code == CKError.unknownItem.rawValue {
-                            await MainActor.run {
-                                self.syncStatus = "✅ iCloud sync disabled. No data found in iCloud to remove."
+                    // Try to delete the zone with retry logic
+                    var zoneDeleted = false
+                    for attempt in 1...3 {
+                        do {
+                            // Delete the entire zone and all its records
+                            try await database.deleteRecordZone(withID: zoneID)
+                            zoneDeleted = true
+                            print("Successfully deleted zone: \(zoneID.zoneName)")
+                            break
+                        } catch let zoneError as NSError {
+                            // If zone doesn't exist, that's success for our purposes
+                            if zoneError.code == CKError.unknownItem.rawValue {
+                                print("Zone \(zoneID.zoneName) doesn't exist or was already deleted")
+                                zoneDeleted = true
+                                break
                             }
-                        } else {
-                            // For other errors, propagate them
-                            throw zoneError
+                            
+                            // For rate limiting or network errors, retry with backoff
+                            if zoneError.code == CKError.serviceUnavailable.rawValue ||
+                               zoneError.code == CKError.networkFailure.rawValue ||
+                               zoneError.code == CKError.networkUnavailable.rawValue ||
+                               zoneError.code == CKError.requestRateLimited.rawValue {
+                                
+                                if attempt < 3 {
+                                    let delay = UInt64(pow(2.0, Double(attempt)) * 1_000_000_000)
+                                    try await Task.sleep(nanoseconds: delay)
+                                    print("Retrying zone deletion, attempt \(attempt + 1)...")
+                                    continue
+                                }
+                            }
+                            
+                            // If we're here on the last attempt, track the failure
+                            if attempt == 3 {
+                                hadDeletionFailures = true
+                                zoneDeletionErrors.append(zoneError)
+                                print("Failed to delete zone \(zoneID.zoneName) after 3 attempts: \(zoneError.localizedDescription)")
+                            }
                         }
                     }
+                    
+                    if !zoneDeleted {
+                        hadDeletionFailures = true
+                    }
+                }
+                
+                // Force a sync of the ubiquitous key-value store to persist the setting
+                NSUbiquitousKeyValueStore.default.set(false, forKey: "iCloudSyncEnabled")
+                NSUbiquitousKeyValueStore.default.synchronize()
+                
+                // Update UI based on success/failure
+                await MainActor.run {
+                    if hadDeletionFailures {
+                        print("⚠️ iCloud sync disabled, but some data couldn't be deleted from iCloud.")
+                        if let firstError = zoneDeletionErrors.first {
+                            print("Error detail: \(firstError.localizedDescription)")
+                        }
+                    } else {
+                        print("✅ iCloud sync disabled. All data successfully removed from iCloud.")
+                    }
+                    
+                    // Reset loading state
+                    isLoading = false
                 }
             } catch {
+                print("Error managing iCloud data: \(error.localizedDescription)")
+                
+                // Ensure settings are still updated even if there was an error
                 await MainActor.run {
-                    self.syncStatus = "Error managing iCloud data: \(error.localizedDescription)"
-                }
-            }
-        }
-    }
-    
-    private func resetUserIdentifier() {
-        syncStatus = "Resetting user identifier..."
-        
-        // Generate a new user identifier
-        let newUserId = UUID().uuidString
-        UserDefaults.standard.set(newUserId, forKey: "userIdentifier")
-        
-        Task {
-            do {
-                let descriptor = FetchDescriptor<EmailAlias>()
-                let allAliases = try modelContext.fetch(descriptor)
-                
-                // Apply new user ID to all aliases
-                for alias in allAliases {
-                    alias.userIdentifier = newUserId
-                }
-                
-                try modelContext.save()
-                
-                // Force a sync after changing identifiers
-                await runForcedSync()
-                
-                await MainActor.run {
-                    syncStatus = "✅ User identifier reset to: \(newUserId.prefix(8))...\nSync initiated. This should help repair device-to-iCloud connections."
-                }
-            } catch {
-                await MainActor.run {
-                    syncStatus = "❌ Error resetting user identifier: \(error.localizedDescription)"
-                }
-            }
-        }
-    }
-    
-    private func rebuildCloudSync() {
-        syncStatus = "Rebuilding iCloud sync connection..."
-        
-        Task {
-            do {
-                // Temporarily disable iCloud sync
-                iCloudSyncEnabled = false
-                try await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second
-                
-                // Re-enable iCloud sync
-                iCloudSyncEnabled = true
-                try await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second
-                
-                // Force a sync with the existing user identifier
-                await runForcedSync()
-                
-                await MainActor.run {
-                    syncStatus = "✅ iCloud sync connection rebuilt. This should help synchronize your data between devices and after reinstallation."
-                }
-            } catch {
-                await MainActor.run {
-                    syncStatus = "❌ Error rebuilding iCloud connection: \(error.localizedDescription)"
+                    // Make sure the iCloud sync setting stays disabled
+                    iCloudSyncEnabled = false
+                    NSUbiquitousKeyValueStore.default.set(false, forKey: "iCloudSyncEnabled")
+                    NSUbiquitousKeyValueStore.default.synchronize()
+                    
+                    // Reset loading state
+                    isLoading = false
                 }
             }
         }
@@ -535,15 +370,7 @@ struct SettingsView: View {
                                 toggleICloudSync(newValue)
                             }
                         }
-                        
-                    if let syncStatus = syncStatus {
-                        Text(syncStatus)
-                            .font(.caption)
-                            .foregroundStyle(
-                                syncStatus.contains("❌") ? .red : 
-                                (syncStatus.contains("✅") ? .green : .secondary)
-                            )
-                    }
+                        .disabled(isLoading)
                 } header: {
                     Text("Settings")
                         .textCase(.uppercase)
@@ -583,25 +410,6 @@ struct SettingsView: View {
                             Text("Logout")
                             Spacer()
                         }
-                    }
-                }
-                
-                // Diagnostics section
-                Section("Diagnostics") {
-                    Button("Verify iCloud Sync") {
-                        verifyICloudSync()
-                    }
-                    
-                    Button("Force iCloud Sync") {
-                        forceICloudSync()
-                    }
-                    
-                    Button("Rebuild Device-to-iCloud Link") {
-                        rebuildCloudSync()
-                    }
-                    
-                    Button("Reset User Identifier", role: .destructive) {
-                        showResetUserIdConfirmation = true
                     }
                 }
                 
@@ -668,18 +476,15 @@ struct SettingsView: View {
                     showImportError = true
                 }
             }
-            .alert("Are you sure you want to overwrite with \(pendingImportURL?.lastPathComponent ?? "")?", isPresented: $showImportConfirmation) {
-                Button("Cancel", role: .cancel) { 
-                    pendingImportURL = nil
-                }
+            .alert("Import Confirmation", isPresented: $showImportConfirmation) {
+                Button("Cancel", role: .cancel) { }
                 Button("Import", role: .destructive) {
                     if let url = pendingImportURL {
                         importFromCSV(url: url)
                     }
-                    pendingImportURL = nil
                 }
             } message: {
-                Text("This will update or create email aliases based on the CSV contents.")
+                Text("This will import \(pendingImportURL?.lastPathComponent ?? "the selected file") and may create duplicate records. Please check for duplicates after import.")
             }
             .fileExporter(
                 isPresented: $showExportDialog,
@@ -699,14 +504,6 @@ struct SettingsView: View {
                 }
             } message: {
                 Text("This will stop syncing data to iCloud and remove all existing Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId).")
-            }
-            .alert("Reset User Identifier?", isPresented: $showResetUserIdConfirmation) {
-                Button("Cancel", role: .cancel) { }
-                Button("Reset", role: .destructive) {
-                    resetUserIdentifier()
-                }
-            } message: {
-                Text("This assigns a new user identifier to all your aliases. Use this if you're having trouble with iCloud sync between devices or after reinstall. This may create duplicate entries temporarily until sync completes.")
             }
         }
         .onAppear {
