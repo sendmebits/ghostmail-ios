@@ -20,6 +20,7 @@ struct ghostmailApp: App {
         // First, read the iCloud sync preference from UserDefaults directly
         // instead of accessing self.iCloudSyncEnabled
         let syncEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
+        print("iCloud sync setting: \(syncEnabled ? "enabled" : "disabled")")
         
         // Create a unique user identifier if it doesn't exist yet
         if UserDefaults.standard.string(forKey: "userIdentifier")?.isEmpty ?? true {
@@ -51,114 +52,15 @@ struct ghostmailApp: App {
             cloudKitLogger.synchronize()
             
             // Log CloudKit container setup
-            print("Setting up CloudKit with container: iCloud.com.sendmebits.ghostmail")
-            
-            // Store references to avoid capturing self
-            let container = modelContainer
-            
-            // Setup notification for iCloud account changes
-            NotificationCenter.default.addObserver(
-                forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
-                object: nil,
-                queue: .main) { notification in
-                    print("iCloud account state changed")
-                    print("Changes: \(notification.userInfo ?? [:])")
-                    
-                    // Avoid capturing self by using Swift Concurrency directly
-                    Task { @MainActor in
-                        // Force a CloudKit sync by using NSUbiquitousKeyValueStore
-                        let syncKey = "com.ghostmail.force_sync_\(Date().timeIntervalSince1970)"
-                        NSUbiquitousKeyValueStore.default.set(Date().timeIntervalSince1970, forKey: syncKey)
-                        NSUbiquitousKeyValueStore.default.synchronize()
-                        
-                        // Let the system know we want fresh data
-                        let cloudContainer = CKContainer.default()
-                        do {
-                            let status = try await cloudContainer.accountStatus()
-                            print("CloudKit account status: \(status)")
-                        } catch {
-                            print("Error checking CloudKit status: \(error)")
-                        }
-                        
-                        // Access mainContext on the MainActor 
-                        let context = container.mainContext
-                        let userId = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
-                        
-                        do {
-                            let descriptor = FetchDescriptor<EmailAlias>()
-                            let allAliases = try context.fetch(descriptor)
-                            
-                            var needsSave = false
-                            for alias in allAliases {
-                                if alias.userIdentifier.isEmpty {
-                                    alias.userIdentifier = userId
-                                    needsSave = true
-                                }
-                            }
-                            
-                            if needsSave {
-                                try context.save()
-                                print("Updated user identifiers for \(allAliases.count) aliases")
-                            }
-                        } catch {
-                            print("Error updating user identifiers: \(error)")
-                        }
-                    }
+            if syncEnabled {
+                print("Setting up CloudKit with container: iCloud.com.sendmebits.ghostmail")
+            } else {
+                print("CloudKit sync is disabled, using local storage only")
             }
             
-            // Add general CloudKit account change observer
-            NotificationCenter.default.addObserver(
-                forName: NSNotification.Name.CKAccountChanged,
-                object: nil,
-                queue: .main) { _ in
-                    print("CloudKit account changed - may affect sync status")
-                    
-                    // Avoid capturing self by using Swift Concurrency directly
-                    Task { @MainActor in
-                        // Force a CloudKit sync by using NSUbiquitousKeyValueStore
-                        let syncKey = "com.ghostmail.force_sync_\(Date().timeIntervalSince1970)"
-                        NSUbiquitousKeyValueStore.default.set(Date().timeIntervalSince1970, forKey: syncKey)
-                        NSUbiquitousKeyValueStore.default.synchronize()
-                        
-                        // Let the system know we want fresh data
-                        let cloudContainer = CKContainer.default()
-                        do {
-                            let status = try await cloudContainer.accountStatus()
-                            print("CloudKit account status: \(status)")
-                        } catch {
-                            print("Error checking CloudKit status: \(error)")
-                        }
-                        
-                        // Access mainContext on the MainActor
-                        let context = container.mainContext
-                        let userId = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
-                        
-                        do {
-                            let descriptor = FetchDescriptor<EmailAlias>()
-                            let allAliases = try context.fetch(descriptor)
-                            
-                            var needsSave = false
-                            for alias in allAliases {
-                                if alias.userIdentifier.isEmpty {
-                                    alias.userIdentifier = userId
-                                    needsSave = true
-                                }
-                            }
-                            
-                            if needsSave {
-                                try context.save()
-                                print("Updated user identifiers for \(allAliases.count) aliases")
-                            }
-                        } catch {
-                            print("Error updating user identifiers: \(error)")
-                        }
-                    }
-            }
-            
-            // Manually set up periodic sync checks for diagnostics
-            Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
-                print("Periodic CloudKit sync check - \(Date())")
-                NSUbiquitousKeyValueStore.default.synchronize()
+            // Set up observers only if sync is enabled
+            if syncEnabled {
+                setupCloudKitObservers()
             }
             
             // Sync ubiquitous key-value store immediately
@@ -166,6 +68,111 @@ struct ghostmailApp: App {
         } catch {
             print("Failed to initialize ModelContainer: \(error)")
             fatalError("Could not initialize ModelContainer: \(error)")
+        }
+    }
+    
+    // Move observers to a separate function to avoid cluttering init
+    private func setupCloudKitObservers() {
+        // Store references to avoid capturing self
+        let container = self.modelContainer
+        
+        // Setup notification for iCloud account changes
+        NotificationCenter.default.addObserver(
+            forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+            object: nil,
+            queue: .main) { notification in
+                print("iCloud account state changed")
+                print("Changes: \(notification.userInfo ?? [:])")
+                
+                // Avoid capturing self by using Swift Concurrency directly
+                Task { @MainActor in
+                    // Force a CloudKit sync by using NSUbiquitousKeyValueStore
+                    let syncKey = "com.ghostmail.force_sync_\(Date().timeIntervalSince1970)"
+                    NSUbiquitousKeyValueStore.default.set(Date().timeIntervalSince1970, forKey: syncKey)
+                    NSUbiquitousKeyValueStore.default.synchronize()
+                    
+                    // Let the system know we want fresh data
+                    let cloudContainer = CKContainer.default()
+                    do {
+                        let status = try await cloudContainer.accountStatus()
+                        print("CloudKit account status: \(status)")
+                    } catch {
+                        print("Error checking CloudKit status: \(error)")
+                    }
+                    
+                    // Access mainContext on the MainActor 
+                    let context = container.mainContext
+                    let userId = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
+                    
+                    do {
+                        let descriptor = FetchDescriptor<EmailAlias>()
+                        let allAliases = try context.fetch(descriptor)
+                        
+                        var needsSave = false
+                        for alias in allAliases {
+                            if alias.userIdentifier.isEmpty {
+                                alias.userIdentifier = userId
+                                needsSave = true
+                            }
+                        }
+                        
+                        if needsSave {
+                            try context.save()
+                            print("Updated user identifiers for \(allAliases.count) aliases")
+                        }
+                    } catch {
+                        print("Error updating user identifiers: \(error)")
+                    }
+                }
+        }
+        
+        // Add general CloudKit account change observer
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name.CKAccountChanged,
+            object: nil,
+            queue: .main) { _ in
+                print("CloudKit account changed - may affect sync status")
+                
+                // Avoid capturing self by using Swift Concurrency directly
+                Task { @MainActor in
+                    // Force a CloudKit sync by using NSUbiquitousKeyValueStore
+                    let syncKey = "com.ghostmail.force_sync_\(Date().timeIntervalSince1970)"
+                    NSUbiquitousKeyValueStore.default.set(Date().timeIntervalSince1970, forKey: syncKey)
+                    NSUbiquitousKeyValueStore.default.synchronize()
+                    
+                    // Let the system know we want fresh data
+                    let cloudContainer = CKContainer.default()
+                    do {
+                        let status = try await cloudContainer.accountStatus()
+                        print("CloudKit account status: \(status)")
+                    } catch {
+                        print("Error checking CloudKit status: \(error)")
+                    }
+                    
+                    // Access mainContext on the MainActor
+                    let context = container.mainContext
+                    let userId = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
+                    
+                    do {
+                        let descriptor = FetchDescriptor<EmailAlias>()
+                        let allAliases = try context.fetch(descriptor)
+                        
+                        var needsSave = false
+                        for alias in allAliases {
+                            if alias.userIdentifier.isEmpty {
+                                alias.userIdentifier = userId
+                                needsSave = true
+                            }
+                        }
+                        
+                        if needsSave {
+                            try context.save()
+                            print("Updated user identifiers for \(allAliases.count) aliases")
+                        }
+                    } catch {
+                        print("Error updating user identifiers: \(error)")
+                    }
+                }
         }
     }
     
