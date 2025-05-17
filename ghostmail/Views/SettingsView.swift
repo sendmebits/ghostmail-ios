@@ -20,6 +20,7 @@ struct SettingsView: View {
     @State private var isLoading = false
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
     @State private var showDisableSyncConfirmation = false
+    @State private var showDeleteICloudDataConfirmation = false
     
     private func exportToCSV() {
         let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To\n" + emailAliases.map { alias in
@@ -121,8 +122,10 @@ struct SettingsView: View {
             isLoading = true
             enableICloudSync()
         } else {
-            // Show confirmation before disabling
-            showDisableSyncConfirmation = true
+            // Just disable sync without deleting data
+            iCloudSyncEnabled = false
+            EmailAlias.disableSyncForAll(in: modelContext)
+            try? modelContext.save()
         }
     }
     
@@ -371,6 +374,14 @@ struct SettingsView: View {
                             }
                         }
                         .disabled(isLoading)
+                    
+                    if !iCloudSyncEnabled {
+                        Button(role: .destructive) {
+                            showDeleteICloudDataConfirmation = true
+                        } label: {
+                            Label("Delete iCloud Data", systemImage: "trash")
+                        }
+                    }
                 } header: {
                     Text("Settings")
                         .textCase(.uppercase)
@@ -504,6 +515,14 @@ struct SettingsView: View {
                 }
             } message: {
                 Text("This will stop syncing data to iCloud and remove all existing Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId).")
+            }
+            .alert("Delete iCloud Data?", isPresented: $showDeleteICloudDataConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    disableICloudSync()
+                }
+            } message: {
+                Text("This will permanently delete all Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId). This action cannot be undone.")
             }
         }
         .onAppear {
