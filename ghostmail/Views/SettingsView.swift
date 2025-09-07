@@ -23,6 +23,12 @@ struct SettingsView: View {
     @State private var showDeleteICloudDataConfirmation = false
     @State private var showRestartAlert = false
     
+    init() {
+        // Initialize selectedDefaultAddress with the current saved value
+        let savedDefault = UserDefaults.standard.string(forKey: "defaultForwardingAddress") ?? ""
+        _selectedDefaultAddress = State(initialValue: savedDefault)
+    }
+    
     private func exportToCSV() {
         let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To\n" + emailAliases.map { alias in
             let createdStr = alias.created?.ISO8601Format() ?? ""
@@ -329,12 +335,6 @@ struct SettingsView: View {
                             }
                         }
                         .pickerStyle(.menu)
-                        .onAppear {
-                            // Ensure we have a valid selection
-                            if selectedDefaultAddress.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
-                                selectedDefaultAddress = cloudflareClient.forwardingAddresses.first ?? ""
-                            }
-                        }
                     } else {
                         Text("No forwarding addresses available")
                             .font(.system(.subheadline, design: .rounded))
@@ -530,8 +530,16 @@ struct SettingsView: View {
                     // Then update the UI with the fetched addresses
                     await MainActor.run {
                         if !cloudflareClient.forwardingAddresses.isEmpty {
-                            selectedDefaultAddress = cloudflareClient.currentDefaultForwardingAddress
-                            print("Selected default address: \(selectedDefaultAddress)")
+                            // Check if the current selected address is still valid
+                            if selectedDefaultAddress.isEmpty || !cloudflareClient.forwardingAddresses.contains(selectedDefaultAddress) {
+                                // If the saved address is no longer valid, use the current default
+                                let oldDefault = selectedDefaultAddress
+                                let newDefault = cloudflareClient.currentDefaultForwardingAddress
+                                selectedDefaultAddress = newDefault
+                                print("Updated default address from '\(oldDefault)' to '\(newDefault)' (saved address no longer available)")
+                            } else {
+                                print("Preserved user's saved default address: \(selectedDefaultAddress)")
+                            }
                         } else {
                             print("Warning: No forwarding addresses available")
                         }
