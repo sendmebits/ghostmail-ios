@@ -46,6 +46,12 @@ struct EmailCreateView: View {
                             }
                         }
                         .pickerStyle(.menu)
+                        .onAppear {
+                            // Ensure we have a valid selection
+                            if forwardTo.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
+                                forwardTo = cloudflareClient.forwardingAddresses.first ?? ""
+                            }
+                        }
                     } else {
                         Text("No forwarding addresses available")
                             .foregroundStyle(.secondary)
@@ -127,9 +133,6 @@ struct EmailCreateView: View {
         Task {
             isLoading = true
             do {
-                // Get the current iCloud sync setting
-                let iCloudSyncEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
-                
                 let fullEmailAddress = cloudflareClient.createFullEmailAddress(username: username)
                 let rule = try await cloudflareClient.createEmailRule(
                     emailAddress: fullEmailAddress,
@@ -145,9 +148,6 @@ struct EmailCreateView: View {
                 newAlias.notes = notes
                 newAlias.cloudflareTag = rule.tag
                 newAlias.sortIndex = minSortIndex - 1  // Set to less than the minimum
-                
-                // Set the iCloud sync disabled flag based on the user's preference
-                newAlias.iCloudSyncDisabled = !iCloudSyncEnabled
                 
                 // Set the user identifier to ensure cross-device ownership
                 newAlias.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString

@@ -21,6 +21,7 @@ struct SettingsView: View {
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
     @State private var showDisableSyncConfirmation = false
     @State private var showDeleteICloudDataConfirmation = false
+    @State private var showRestartAlert = false
     
     private func exportToCSV() {
         let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To\n" + emailAliases.map { alias in
@@ -119,12 +120,10 @@ struct SettingsView: View {
     private func toggleICloudSync(_ isEnabled: Bool) {
         if isEnabled {
             // Enable iCloud sync
-            isLoading = true
             enableICloudSync()
         } else {
             // Just disable sync without deleting data
             iCloudSyncEnabled = false
-            EmailAlias.disableSyncForAll(in: modelContext)
             try? modelContext.save()
         }
     }
@@ -133,42 +132,16 @@ struct SettingsView: View {
         // Update app storage setting
         iCloudSyncEnabled = true
         
-        // Enable sync for all aliases
-        EmailAlias.enableSyncForAll(in: modelContext)
-        
-        // Force a sync of all current data
-        Task {
-            let container = CKContainer.default()
-            
-            do {
-                // Properly wrap the completion handler in an async pattern
-                let zones = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[CKRecordZone], Error>) in
-                    container.privateCloudDatabase.fetchAllRecordZones { zones, error in
-                        if let error = error {
-                            continuation.resume(throwing: error)
-                        } else if let zones = zones {
-                            continuation.resume(returning: zones)
-                        } else {
-                            continuation.resume(throwing: NSError(domain: "CloudKit", code: 0, userInfo: [NSLocalizedDescriptionKey: "No zones returned and no error"]))
-                        }
-                    }
-                }
-                
-                // Just log the number of zones to show success
-                print("Successfully fetched \(zones.count) CloudKit record zones")
-                
-                await MainActor.run {
-                    isLoading = false
-                }
-            } catch {
-                print("Error fetching CloudKit zones: \(error.localizedDescription)")
-                
-                await MainActor.run {
-                    isLoading = false
-                }
-            }
-        }
+        // Show restart alert since ModelContainer needs to be reinitialized
+        showRestartAlert = true
     }
+    
+    private func restartApp() {
+        // Exit the app to force restart with new CloudKit configuration
+        exit(0)
+    }
+    
+    // (Removed debug/testing helper functions related to CloudKit testing and diagnostics)
     
     private func disableICloudSync() {
         // Update app storage setting
@@ -178,9 +151,6 @@ struct SettingsView: View {
         isLoading = true
         
         Task {
-            // Mark all aliases as not syncing to iCloud
-            EmailAlias.disableSyncForAll(in: modelContext)
-            
             // Delete CloudKit data for the current Zone ID
             let container = CKContainer.default()
             let database = container.privateCloudDatabase
@@ -313,6 +283,8 @@ struct SettingsView: View {
         }
     }
     
+    // (Removed debug/testing helper functions related to CloudKit testing and diagnostics)
+    
     var body: some View {
         NavigationStack {
             List {
@@ -357,6 +329,12 @@ struct SettingsView: View {
                             }
                         }
                         .pickerStyle(.menu)
+                        .onAppear {
+                            // Ensure we have a valid selection
+                            if selectedDefaultAddress.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
+                                selectedDefaultAddress = cloudflareClient.forwardingAddresses.first ?? ""
+                            }
+                        }
                     } else {
                         Text("No forwarding addresses available")
                             .font(.system(.subheadline, design: .rounded))
@@ -382,6 +360,8 @@ struct SettingsView: View {
                             Label("Delete iCloud Data", systemImage: "trash")
                         }
                     }
+                    
+                    // Debug/testing buttons removed
                 } header: {
                     Text("Settings")
                         .textCase(.uppercase)
@@ -524,6 +504,14 @@ struct SettingsView: View {
             } message: {
                 Text("This will permanently delete all Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId). This action cannot be undone.")
             }
+            .alert("Restart Required", isPresented: $showRestartAlert) {
+                Button("Restart Now") {
+                    restartApp()
+                }
+                Button("Later", role: .cancel) { }
+            } message: {
+                Text("To properly enable iCloud sync, the app needs to restart. Would you like to restart now?")
+            }
         }
         .onAppear {
             // Force fetching addresses from Cloudflare first
@@ -532,7 +520,11 @@ struct SettingsView: View {
                     isLoading = true
                     print("Settings View: Fetching forwarding addresses...")
                     
-                    // Always fetch addresses directly from Cloudflare API
+                    // Fetch domain name first if needed
+                    if cloudflareClient.domainName.isEmpty {
+                        try await cloudflareClient.fetchDomainName()
+                    }
+                    // Then fetch addresses directly from Cloudflare API
                     try await cloudflareClient.refreshForwardingAddresses()
                     
                     // Then update the UI with the fetched addresses

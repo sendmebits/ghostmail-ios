@@ -17,9 +17,16 @@ struct ghostmailApp: App {
     @AppStorage("userIdentifier") private var userIdentifier: String = ""
     
     init() {
-        // First, read the iCloud sync preference from UserDefaults directly
-        // instead of accessing self.iCloudSyncEnabled
-        let syncEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
+        // Read iCloud sync preference with a safe default of TRUE when unset
+        // Avoid accessing self.iCloudSyncEnabled here to prevent capturing self in init
+        let syncEnabled: Bool
+        if let stored = UserDefaults.standard.object(forKey: "iCloudSyncEnabled") as? Bool {
+            syncEnabled = stored
+        } else {
+            // Default to enabled for first launch so CloudKit mirroring is active
+            syncEnabled = true
+            UserDefaults.standard.set(true, forKey: "iCloudSyncEnabled")
+        }
         print("iCloud sync setting: \(syncEnabled ? "enabled" : "disabled")")
         
         // Create a unique user identifier if it doesn't exist yet
@@ -32,9 +39,13 @@ struct ghostmailApp: App {
             let config: ModelConfiguration
             
             if syncEnabled {
-                // CloudKit-enabled configuration
-                config = ModelConfiguration(cloudKitDatabase: .automatic)
-                print("Initialized with CloudKit configuration")
+                // CloudKit-enabled configuration with explicit schema
+                let schema = Schema([EmailAlias.self])
+                config = ModelConfiguration(
+                    schema: schema, 
+                    cloudKitDatabase: .automatic
+                )
+                print("Initialized with CloudKit configuration and explicit schema")
             } else {
                 // Local-only configuration
                 config = ModelConfiguration(isStoredInMemoryOnly: false)
@@ -60,7 +71,8 @@ struct ghostmailApp: App {
             
             // Set up observers only if sync is enabled
             if syncEnabled {
-                setupCloudKitObservers()
+                // CloudKit sync is handled automatically by SwiftData
+                print("CloudKit sync enabled - SwiftData will handle sync automatically")
             }
             
             // Sync ubiquitous key-value store immediately
@@ -71,156 +83,97 @@ struct ghostmailApp: App {
         }
     }
     
-    // Move observers to a separate function to avoid cluttering init
-    private func setupCloudKitObservers() {
-        // Store references to avoid capturing self
-        let container = self.modelContainer
-        
-        // Setup notification for iCloud account changes
-        NotificationCenter.default.addObserver(
-            forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
-            object: nil,
-            queue: .main) { notification in
-                print("iCloud account state changed")
-                print("Changes: \(notification.userInfo ?? [:])")
-                
-                // Avoid capturing self by using Swift Concurrency directly
-                Task { @MainActor in
-                    // Force a CloudKit sync by using NSUbiquitousKeyValueStore
-                    let syncKey = "com.ghostmail.force_sync_\(Date().timeIntervalSince1970)"
-                    NSUbiquitousKeyValueStore.default.set(Date().timeIntervalSince1970, forKey: syncKey)
-                    NSUbiquitousKeyValueStore.default.synchronize()
-                    
-                    // Let the system know we want fresh data
-                    let cloudContainer = CKContainer.default()
-                    do {
-                        let status = try await cloudContainer.accountStatus()
-                        print("CloudKit account status: \(status)")
-                    } catch {
-                        print("Error checking CloudKit status: \(error)")
-                    }
-                    
-                    // Access mainContext on the MainActor 
-                    let context = container.mainContext
-                    let userId = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
-                    
-                    do {
-                        let descriptor = FetchDescriptor<EmailAlias>()
-                        let allAliases = try context.fetch(descriptor)
-                        
-                        var needsSave = false
-                        for alias in allAliases {
-                            if alias.userIdentifier.isEmpty {
-                                alias.userIdentifier = userId
-                                needsSave = true
-                            }
-                        }
-                        
-                        if needsSave {
-                            try context.save()
-                            print("Updated user identifiers for \(allAliases.count) aliases")
-                        }
-                    } catch {
-                        print("Error updating user identifiers: \(error)")
-                    }
-                }
-        }
-        
-        // Add general CloudKit account change observer
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name.CKAccountChanged,
-            object: nil,
-            queue: .main) { _ in
-                print("CloudKit account changed - may affect sync status")
-                
-                // Avoid capturing self by using Swift Concurrency directly
-                Task { @MainActor in
-                    // Force a CloudKit sync by using NSUbiquitousKeyValueStore
-                    let syncKey = "com.ghostmail.force_sync_\(Date().timeIntervalSince1970)"
-                    NSUbiquitousKeyValueStore.default.set(Date().timeIntervalSince1970, forKey: syncKey)
-                    NSUbiquitousKeyValueStore.default.synchronize()
-                    
-                    // Let the system know we want fresh data
-                    let cloudContainer = CKContainer.default()
-                    do {
-                        let status = try await cloudContainer.accountStatus()
-                        print("CloudKit account status: \(status)")
-                    } catch {
-                        print("Error checking CloudKit status: \(error)")
-                    }
-                    
-                    // Access mainContext on the MainActor
-                    let context = container.mainContext
-                    let userId = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
-                    
-                    do {
-                        let descriptor = FetchDescriptor<EmailAlias>()
-                        let allAliases = try context.fetch(descriptor)
-                        
-                        var needsSave = false
-                        for alias in allAliases {
-                            if alias.userIdentifier.isEmpty {
-                                alias.userIdentifier = userId
-                                needsSave = true
-                            }
-                        }
-                        
-                        if needsSave {
-                            try context.save()
-                            print("Updated user identifiers for \(allAliases.count) aliases")
-                        }
-                    } catch {
-                        print("Error updating user identifiers: \(error)")
-                    }
-                }
-        }
-    }
-    
-    // Function to trigger a data refresh through CloudKit
-    @MainActor
-    private func triggerDataRefresh() async throws {
-        print("Triggering CloudKit data refresh")
-        
-        // Update user identifiers
-        await updateUserIdentifiers()
-        
-        // Force a CloudKit sync by using NSUbiquitousKeyValueStore
-        let syncKey = "com.ghostmail.force_sync_\(Date().timeIntervalSince1970)"
-        NSUbiquitousKeyValueStore.default.set(Date().timeIntervalSince1970, forKey: syncKey)
-        NSUbiquitousKeyValueStore.default.synchronize()
-        
-        // Let the system know we want fresh data
-        let container = CKContainer.default()
-        let status = try await container.accountStatus()
-        print("CloudKit account status: \(status)")
-        
-        print("CloudKit refresh triggered successfully")
-    }
-    
     // Function to ensure all aliases have a user identifier
     @MainActor
-    private func updateUserIdentifiers() async {
+    private static func updateUserIdentifiers(modelContainer: ModelContainer) async {
         let context = modelContainer.mainContext
         let userId = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
         
         do {
-            let descriptor = FetchDescriptor<EmailAlias>()
-            let allAliases = try context.fetch(descriptor)
-            
-            var needsSave = false
-            for alias in allAliases {
-                if alias.userIdentifier.isEmpty {
-                    alias.userIdentifier = userId
-                    needsSave = true
+            let descriptor = FetchDescriptor<EmailAlias>(
+                predicate: #Predicate<EmailAlias> { alias in
+                    alias.userIdentifier.isEmpty
                 }
-            }
+            )
+            let aliasesNeedingUpdate = try context.fetch(descriptor)
             
-            if needsSave {
+            if !aliasesNeedingUpdate.isEmpty {
+                for alias in aliasesNeedingUpdate {
+                    alias.userIdentifier = userId
+                }
                 try context.save()
-                print("Updated user identifiers for \(allAliases.count) aliases")
+                print("Updated user identifiers for \(aliasesNeedingUpdate.count) aliases")
             }
         } catch {
             print("Error updating user identifiers: \(error)")
+        }
+    }
+    
+    // Function to force sync of existing data to CloudKit - now optimized
+    @MainActor
+    private static func forceSyncExistingData(modelContainer: ModelContainer) async {
+        print("Checking for data that needs CloudKit sync...")
+        let context = modelContainer.mainContext
+        
+        do {
+            // Only sync aliases that don't have a user identifier or have recent changes
+            let descriptor = FetchDescriptor<EmailAlias>(
+                predicate: #Predicate<EmailAlias> { alias in
+                    alias.userIdentifier.isEmpty
+                }
+            )
+            let aliasesNeedingSync = try context.fetch(descriptor)
+            
+            if !aliasesNeedingSync.isEmpty {
+                print("Found \(aliasesNeedingSync.count) aliases needing sync")
+                
+                // Update user identifier if empty
+                for alias in aliasesNeedingSync {
+                    if alias.userIdentifier.isEmpty {
+                        alias.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
+                    }
+                }
+                
+                // Save the context to trigger CloudKit sync
+                try context.save()
+                print("Successfully saved context, triggering CloudKit sync for \(aliasesNeedingSync.count) aliases")
+            } else {
+                print("No aliases need CloudKit sync")
+            }
+            
+        } catch {
+            print("Error syncing existing data: \(error)")
+        }
+    }
+    
+    // Function to check CloudKit sync status - now asynchronous and non-blocking
+    @MainActor
+    private func checkCloudKitSyncStatus() async {
+        print("Checking CloudKit sync status...")
+        let cloudContainer = CKContainer.default()
+        do {
+            let status = try await cloudContainer.accountStatus()
+            print("CloudKit account status: \(status)")
+            
+            // Only perform detailed checks if account is available
+            if status == .available {
+                // Check if we can access the private database
+                let database = cloudContainer.privateCloudDatabase
+                do {
+                    let zones = try await database.allRecordZones()
+                    print("Found \(zones.count) CloudKit record zones")
+                } catch {
+                    print("Error checking CloudKit database: \(error)")
+                }
+            } else if status == .noAccount {
+                print("CloudKit account not signed in. Please sign in to iCloud.")
+            } else if status == .restricted {
+                print("CloudKit account restricted. Please check settings.")
+            } else if status == .temporarilyUnavailable {
+                print("CloudKit account temporarily unavailable. Please try again later.")
+            }
+        } catch {
+            print("Error checking CloudKit status: \(error)")
         }
     }
     
@@ -229,36 +182,40 @@ struct ghostmailApp: App {
             ContentView()
                 .environmentObject(cloudflareClient)
                 .onAppear {
-                    // If authenticated, refresh forwarding addresses from Cloudflare
-                    if cloudflareClient.isAuthenticated {
-                        Task {
-                            print("App startup: Refreshing forwarding addresses")
+                    // Perform startup operations asynchronously to avoid blocking UI
+                    Task {
+                        // If authenticated, refresh forwarding addresses and domain from Cloudflare
+                        if cloudflareClient.isAuthenticated {
+                            print("App startup: Refreshing forwarding addresses and domain")
                             do {
-                                // Try a few times with exponential backoff
-                                for attempt in 1...3 {
-                                    do {
-                                        try await cloudflareClient.refreshForwardingAddresses()
-                                        print("App startup: Successfully refreshed forwarding addresses")
-                                        break
-                                    } catch {
-                                        if attempt == 3 {
-                                            throw error
-                                        }
-                                        print("App startup: Attempt \(attempt) failed, retrying after delay...")
-                                        try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt)) * 1_000_000_000))
+                                // Single attempt with shorter timeout
+                                try await withTimeout(seconds: 10) {
+                                    // Fetch domain name first
+                                    if cloudflareClient.domainName.isEmpty {
+                                        try await cloudflareClient.fetchDomainName()
                                     }
+                                    // Then refresh forwarding addresses
+                                    try await cloudflareClient.refreshForwardingAddresses()
                                 }
+                                print("App startup: Successfully refreshed forwarding addresses and domain")
                             } catch {
-                                print("App startup: Failed to refresh forwarding addresses after multiple attempts: \(error)")
+                                print("App startup: Failed to refresh forwarding addresses: \(error)")
                             }
                         }
-                    }
-                    
-                    // Update user identifiers and trigger sync on app launch
-                    if iCloudSyncEnabled {
-                        Task {
-                            await updateUserIdentifiers()
-                            try? await triggerDataRefresh()
+                        
+                        // Update user identifiers and trigger sync on app launch - now non-blocking
+                        if iCloudSyncEnabled {
+                            // First, clean up any duplicate records so sync doesn't propagate dups
+                            do {
+                                let deleted = try EmailAlias.deduplicate(in: modelContainer.mainContext)
+                                if deleted > 0 { print("Deduplicated \(deleted) aliases on startup") }
+                            } catch {
+                                print("Error during startup deduplication: \(error)")
+                            }
+
+                            await ghostmailApp.updateUserIdentifiers(modelContainer: modelContainer)
+                            await ghostmailApp.forceSyncExistingData(modelContainer: modelContainer)
+                            await checkCloudKitSyncStatus()
                         }
                     }
                 }
@@ -267,43 +224,22 @@ struct ghostmailApp: App {
     }
 }
 
-// Helper function to perform sync operations without capturing self
-@MainActor
-private func performSync(container: ModelContainer, userId: String) async throws {
-    print("Performing sync after notification")
-    
-    // Update user identifiers - we're on the MainActor so this is safe
-    let context = container.mainContext
-    
-    do {
-        let descriptor = FetchDescriptor<EmailAlias>()
-        let allAliases = try context.fetch(descriptor)
-        
-        var needsSave = false
-        for alias in allAliases {
-            if alias.userIdentifier.isEmpty {
-                alias.userIdentifier = userId
-                needsSave = true
-            }
+// Helper function for timeout
+func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await operation()
         }
         
-        if needsSave {
-            try context.save()
-            print("Updated user identifiers for \(allAliases.count) aliases")
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw TimeoutError()
         }
-    } catch {
-        print("Error updating user identifiers: \(error)")
+        
+        let result = try await group.next()!
+        group.cancelAll()
+        return result
     }
-    
-    // Force a CloudKit sync by using NSUbiquitousKeyValueStore
-    let syncKey = "com.ghostmail.force_sync_\(Date().timeIntervalSince1970)"
-    NSUbiquitousKeyValueStore.default.set(Date().timeIntervalSince1970, forKey: syncKey)
-    NSUbiquitousKeyValueStore.default.synchronize()
-    
-    // Let the system know we want fresh data
-    let ckContainer = CKContainer.default()
-    let status = try await ckContainer.accountStatus()
-    print("CloudKit account status: \(status)")
-    
-    print("CloudKit refresh triggered successfully")
 }
+
+struct TimeoutError: Error {}
