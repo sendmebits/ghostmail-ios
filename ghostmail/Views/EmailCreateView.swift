@@ -16,6 +16,12 @@ struct EmailCreateView: View {
     @State private var forwardTo = ""
     @FocusState private var isUsernameFocused: Bool
     
+    init() {
+        // Load the default forwarding address exactly as in SettingsView
+        let savedDefault = UserDefaults.standard.string(forKey: "defaultForwardingAddress") ?? ""
+        _forwardTo = State(initialValue: savedDefault)
+    }
+    
     var body: some View {
         NavigationStack {
             Form {
@@ -47,7 +53,7 @@ struct EmailCreateView: View {
                         }
                         .pickerStyle(.menu)
                         .onAppear {
-                            // Ensure we have a valid selection
+                            // Ensure we have a valid selection for the Picker
                             if forwardTo.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
                                 forwardTo = cloudflareClient.forwardingAddresses.first ?? ""
                             }
@@ -95,36 +101,16 @@ struct EmailCreateView: View {
         }
         .task {
             isUsernameFocused = true
-            
-            // Load forwarding addresses from the Cloudflare API
-            do {
-                isLoading = true
-                print("Email Create View: Loading forwarding addresses...")
-                
-                // Force a fresh load from the API
-                try await cloudflareClient.refreshForwardingAddresses()
-                
-                // Set default forwarding address to the one selected in settings
-                if forwardTo.isEmpty {
-                    let defaultAddress = cloudflareClient.currentDefaultForwardingAddress
-                    if !defaultAddress.isEmpty {
-                        print("Setting forwarding address to default from settings: \(defaultAddress)")
-                        forwardTo = defaultAddress
-                    } else if !cloudflareClient.forwardingAddresses.isEmpty {
-                        // Fall back to first address if no default is set
-                        let firstAddress = cloudflareClient.forwardingAddresses.first ?? ""
-                        print("No default address in settings, using first available: \(firstAddress)")
-                        forwardTo = firstAddress
-                    }
+
+            // Set default forwarding address to the one selected in settings
+            if forwardTo.isEmpty {
+                let defaultAddress = cloudflareClient.currentDefaultForwardingAddress
+                if !defaultAddress.isEmpty {
+                    print("Setting forwarding address to default from settings: \(defaultAddress)")
+                    forwardTo = defaultAddress
+                } else {
+                    print("No default forwarding address set in settings.")
                 }
-                
-                isLoading = false
-                print("Forwarding addresses loaded successfully")
-            } catch {
-                print("Error loading forwarding addresses: \(error.localizedDescription)")
-                self.error = error
-                self.showError = true
-                isLoading = false
             }
         }
     }
@@ -162,4 +148,4 @@ struct EmailCreateView: View {
             isLoading = false
         }
     }
-} 
+}
