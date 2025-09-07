@@ -156,6 +156,12 @@ struct EmailDetailView: View {
                                         }
                                     }
                                     .pickerStyle(.menu)
+                                    .onAppear {
+                                        // Ensure we have a valid selection
+                                        if tempForwardTo.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
+                                            tempForwardTo = cloudflareClient.forwardingAddresses.first ?? ""
+                                        }
+                                    }
                                 } else {
                                     Text("No forwarding addresses available")
                                         .foregroundStyle(.secondary)
@@ -338,6 +344,10 @@ struct EmailDetailView: View {
         isLoading = true
         
         do {
+            print("Saving changes for email: \(email.emailAddress)")
+            print("Website: '\(tempWebsite)' -> '\(email.website)'")
+            print("Notes: '\(tempNotes)' -> '\(email.notes)'")
+            
             // Update the model with temporary values
             email.emailAddress = fullEmailAddress
             email.website = tempWebsite
@@ -345,8 +355,15 @@ struct EmailDetailView: View {
             email.isEnabled = tempIsEnabled
             email.forwardTo = tempForwardTo
             
+            // Ensure user identifier is set for CloudKit sync
+            if email.userIdentifier.isEmpty {
+                email.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
+                print("Set user identifier for email: \(email.userIdentifier)")
+            }
+            
             // Save to SwiftData
             try modelContext.save()
+            print("Successfully saved to SwiftData, triggering CloudKit sync")
             
             // Update Cloudflare with email-related changes and enabled state
             if let tag = email.cloudflareTag {
@@ -362,6 +379,7 @@ struct EmailDetailView: View {
             // Dismiss the view after successful save
             dismiss()
         } catch {
+            print("Error saving changes: \(error)")
             self.error = error
             self.showError = true
             

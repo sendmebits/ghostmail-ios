@@ -107,9 +107,6 @@ struct ContentView: View {
                     alias = EmailAlias(emailAddress: emailAddress, forwardTo: rule.forwardTo)
                     alias.created = nil  // Ensure no creation date for Cloudflare-fetched entries
                     
-                    // Set iCloud sync status based on user preference
-                    alias.iCloudSyncDisabled = !iCloudSyncEnabled
-                    
                     modelContext.insert(alias)
                 }
                 

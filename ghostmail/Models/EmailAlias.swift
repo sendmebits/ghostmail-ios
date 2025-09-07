@@ -14,7 +14,6 @@ final class EmailAlias {
     var sortIndex: Int = 0
     var forwardTo: String = ""
     var isLoggedOut: Bool = false
-    var iCloudSyncDisabled: Bool = false
     var userIdentifier: String = ""
     
     init(emailAddress: String, forwardTo: String = "", isManuallyCreated: Bool = false) {
@@ -27,7 +26,6 @@ final class EmailAlias {
         self.sortIndex = 0
         self.forwardTo = forwardTo
         self.isLoggedOut = false
-        self.iCloudSyncDisabled = false
         self.userIdentifier = ""
         
         print("EmailAlias initialized - address: \(emailAddress), forward to: \(forwardTo)")
@@ -54,76 +52,6 @@ final class EmailAlias {
         return "alias_\(emailAddress.lowercased())"
     }
     
-    // Helper method to mark aliases as not syncing to iCloud
-    static func disableSyncForAll(in context: ModelContext) {
-        do {
-            let descriptor = FetchDescriptor<EmailAlias>()
-            let allAliases = try context.fetch(descriptor)
-            
-            var changesMade = false
-            for alias in allAliases {
-                if !alias.iCloudSyncDisabled {
-                    alias.iCloudSyncDisabled = true
-                    changesMade = true
-                }
-            }
-            
-            if changesMade {
-                try context.save()
-                print("Successfully marked \(allAliases.count) aliases as not syncing to iCloud")
-            } else {
-                print("No changes needed: all \(allAliases.count) aliases already marked as not syncing")
-            }
-        } catch {
-            print("Error marking aliases as not syncing: \(error)")
-            
-            // Try to fetch and update in smaller batches if the main approach failed
-            do {
-                let descriptor = FetchDescriptor<EmailAlias>(predicate: #Predicate<EmailAlias> { alias in
-                    !alias.iCloudSyncDisabled
-                })
-                let aliasesToUpdate = try context.fetch(descriptor)
-                
-                if aliasesToUpdate.isEmpty {
-                    print("No aliases need updating")
-                    return
-                }
-                
-                // Update in smaller batches
-                let batchSize = 10
-                for i in stride(from: 0, to: aliasesToUpdate.count, by: batchSize) {
-                    let endIndex = min(i + batchSize, aliasesToUpdate.count)
-                    let batch = aliasesToUpdate[i..<endIndex]
-                    
-                    for alias in batch {
-                        alias.iCloudSyncDisabled = true
-                    }
-                    
-                    try context.save()
-                    print("Updated batch \(i/batchSize + 1): marked \(batch.count) aliases as not syncing")
-                }
-            } catch {
-                print("Failed to update aliases in batches: \(error)")
-            }
-        }
-    }
-    
-    // Helper method to enable sync for all aliases
-    static func enableSyncForAll(in context: ModelContext) {
-        do {
-            let descriptor = FetchDescriptor<EmailAlias>()
-            let allAliases = try context.fetch(descriptor)
-            
-            for alias in allAliases {
-                alias.iCloudSyncDisabled = false
-            }
-            
-            try context.save()
-        } catch {
-            print("Error enabling sync for aliases: \(error)")
-        }
-    }
-    
     // Helper method to set user identifier for all aliases
     static func setUserIdentifier(_ identifier: String, in context: ModelContext) {
         do {
@@ -140,5 +68,84 @@ final class EmailAlias {
         } catch {
             print("Error setting user identifier for aliases: \(error)")
         }
+    }
+
+    // Remove duplicate aliases by emailAddress while merging useful fields.
+    // Returns number of records deleted.
+    static func deduplicate(in context: ModelContext) throws -> Int {
+        let descriptor = FetchDescriptor<EmailAlias>()
+        let all = try context.fetch(descriptor)
+
+        // Group by normalized email address
+        let grouped = Dictionary(grouping: all) { $0.emailAddress.lowercased() }
+
+        var deletedCount = 0
+        for (_, group) in grouped where group.count > 1 {
+            // Choose survivor:
+            // 1) Prefer a record with a Cloudflare tag (ties broken by most recent created)
+            // 2) Else prefer the one with a created date (most recent)
+            // 3) Else fall back to first
+            let survivor: EmailAlias =
+                group.sorted { a, b in
+                    // Prefer entries that look manually created or enriched with metadata
+                    let aHasManualOrMetadata = (a.created != nil) || !a.notes.isEmpty || !a.website.isEmpty
+                    let bHasManualOrMetadata = (b.created != nil) || !b.notes.isEmpty || !b.website.isEmpty
+                    if aHasManualOrMetadata != bHasManualOrMetadata {
+                        return aHasManualOrMetadata
+                    }
+
+                    // Prefer the one with more metadata fields populated
+                    let aMetaCount = (a.notes.isEmpty ? 0 : 1) + (a.website.isEmpty ? 0 : 1)
+                    let bMetaCount = (b.notes.isEmpty ? 0 : 1) + (b.website.isEmpty ? 0 : 1)
+                    if aMetaCount != bMetaCount { return aMetaCount > bMetaCount }
+
+                    // Then prefer Cloudflare tag presence
+                    if (a.cloudflareTag != nil) != (b.cloudflareTag != nil) {
+                        return a.cloudflareTag != nil
+                    }
+
+                    // Then most recent created date
+                    let aDate = a.created ?? Date.distantPast
+                    let bDate = b.created ?? Date.distantPast
+                    if aDate != bDate { return aDate > bDate }
+
+                    // Stable fallback
+                    return a.id < b.id
+                }.first!
+
+            // Merge fields from others into survivor where survivor lacks data
+            for duplicate in group where duplicate !== survivor {
+                if survivor.website.isEmpty && !duplicate.website.isEmpty {
+                    survivor.website = duplicate.website
+                }
+                if survivor.notes.isEmpty && !duplicate.notes.isEmpty {
+                    survivor.notes = duplicate.notes
+                }
+                if survivor.forwardTo.isEmpty && !duplicate.forwardTo.isEmpty {
+                    survivor.forwardTo = duplicate.forwardTo
+                }
+                if survivor.cloudflareTag == nil, let tag = duplicate.cloudflareTag {
+                    survivor.cloudflareTag = tag
+                }
+                if survivor.created == nil, let created = duplicate.created {
+                    survivor.created = created
+                }
+                // Prefer enabled if any duplicate was enabled
+                survivor.isEnabled = survivor.isEnabled || duplicate.isEnabled
+
+                // Ensure user identifier is set
+                if survivor.userIdentifier.isEmpty && !duplicate.userIdentifier.isEmpty {
+                    survivor.userIdentifier = duplicate.userIdentifier
+                }
+
+                context.delete(duplicate)
+                deletedCount += 1
+            }
+        }
+
+        if deletedCount > 0 {
+            try context.save()
+        }
+        return deletedCount
     }
 } 

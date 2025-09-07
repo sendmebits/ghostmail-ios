@@ -2,54 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleDocumentTypes</key>
+	<key>aps-environment</key>
+	<string>production</string>
+	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>CSV Document</string>
-			<key>LSHandlerRank</key>
-			<string>Alternate</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>public.comma-separated-values-text</string>
-				<string>public.text</string>
-				<string>public.plain-text</string>
-				<string>public.data</string>
-			</array>
-			<key>NSDocumentClass</key>
-			<string>CSVDocument</string>
-		</dict>
+		<string>iCloud.com.sendmebits.ghostmail</string>
 	</array>
-	<key>UIBackgroundModes</key>
+	<key>com.apple.developer.icloud-services</key>
 	<array>
-		<string>remote-notification</string>
-	</array>
-	<key>UTExportedTypeDeclarations</key>
-	<array>
-		<dict>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.plain-text</string>
-				<string>public.text</string>
-				<string>public.data</string>
-			</array>
-			<key>UTTypeDescription</key>
-			<string>CSV Document</string>
-			<key>UTTypeIdentifier</key>
-			<string>public.comma-separated-values-text</string>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>csv</string>
-				</array>
-				<key>public.mime-type</key>
-				<array>
-					<string>text/csv</string>
-					<string>text/plain</string>
-				</array>
-			</dict>
-		</dict>
+		<string>CloudKit</string>
 	</array>
 </dict>
 </plist>

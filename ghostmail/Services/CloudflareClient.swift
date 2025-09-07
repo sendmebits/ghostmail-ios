@@ -18,6 +18,11 @@ class CloudflareClient: ObservableObject {
     
     @Published private(set) var domainName: String = ""
     
+    // Cache for API responses to avoid redundant calls
+    private var forwardingAddressesCache: Set<String> = []
+    private var lastForwardingAddressesFetch: Date = .distantPast
+    private let cacheValidityDuration: TimeInterval = 300 // 5 minutes
+    
     init(accountId: String = "", zoneId: String = "", apiToken: String = "") {
         // Load stored credentials
         let defaults = UserDefaults.standard
@@ -57,17 +62,15 @@ class CloudflareClient: ObservableObject {
     
     // Get email rules from Cloudflare (returns custom type to avoid circular dependencies)
     func getEmailRules() async throws -> [CloudflareEmailRule] {
+        // Fetch domain name if needed (cached)
         if domainName.isEmpty {
             try await fetchDomainName()
         }
         
-        // Fetch forwarding addresses first
-        try await refreshForwardingAddresses()
-        
-        // Fetch all entries from Cloudflare in chunks of 50
+        // Fetch all entries from Cloudflare in chunks of 100 (increased from 50)
         var allRules: [EmailRule] = []
         var currentPage = 1
-        let perPage = 50  // Match the server's actual per_page value
+        let perPage = 100  // Increased page size for fewer API calls
         
         while true {
             let url = URL(string: "\(baseURL)/zones/\(zoneId)/email/routing/rules?page=\(currentPage)&per_page=\(perPage)")!
@@ -116,7 +119,7 @@ class CloudflareClient: ObservableObject {
         // Print the total number of rules fetched
         print("Total email rules fetched: \(allRules.count)")
         
-        // Collect all unique forwarding addresses
+        // Collect all unique forwarding addresses and update cache
         let forwards = Set(allRules.compactMap { rule -> String? in
             // Only consider forward actions
             guard let forwardAction = rule.actions.first(where: { $0.type == "forward" }),
@@ -125,8 +128,11 @@ class CloudflareClient: ObservableObject {
             return firstValue
         })
         
+        // Update forwarding addresses cache from rules
         await MainActor.run {
             self.forwardingAddresses = forwards
+            self.forwardingAddressesCache = forwards
+            self.lastForwardingAddressesFetch = Date()
         }
         
         // Convert to CloudflareEmailRule and ensure there are no duplicates by email address
@@ -212,6 +218,10 @@ class CloudflareClient: ObservableObject {
         defaults.set(zoneId, forKey: "zoneId")
         defaults.set(apiToken, forKey: "apiToken")
         
+        // Clear cache when credentials change
+        forwardingAddressesCache = []
+        lastForwardingAddressesFetch = .distantPast
+        
         // Fetch the domain name when credentials are updated
         Task {
             do {
@@ -228,6 +238,10 @@ class CloudflareClient: ObservableObject {
         zoneId = ""
         apiToken = ""
         isAuthenticated = false
+        
+        // Clear cache on logout
+        forwardingAddressesCache = []
+        lastForwardingAddressesFetch = .distantPast
         
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: "accountId")
@@ -285,8 +299,18 @@ class CloudflareClient: ObservableObject {
         email.components(separatedBy: "@").first ?? email
     }
     
-    // Ensure we have the current forwarding addresses available
+    // Ensure we have the current forwarding addresses available - now with caching
     func ensureForwardingAddressesLoaded() async throws {
+        // Check if we have valid cached data
+        let cacheAge = Date().timeIntervalSince(lastForwardingAddressesFetch)
+        if !forwardingAddressesCache.isEmpty && cacheAge < cacheValidityDuration {
+            print("Using cached forwarding addresses (age: \(Int(cacheAge))s)")
+            await MainActor.run {
+                self.forwardingAddresses = forwardingAddressesCache
+            }
+            return
+        }
+        
         if forwardingAddresses.isEmpty {
             print("Forwarding addresses not loaded, fetching now...")
             
@@ -302,6 +326,7 @@ class CloudflareClient: ObservableObject {
                         print("Using stored default email as fallback: \(forwardingEmail)")
                         await MainActor.run {
                             self.forwardingAddresses = [forwardingEmail]
+                            self.forwardingAddressesCache = [forwardingEmail]
                         }
                     } else if !accountId.isEmpty {
                         // As a last resort, create a dummy fallback to prevent UI issues
@@ -309,6 +334,7 @@ class CloudflareClient: ObservableObject {
                         print("No stored email available. Using generated fallback: \(fallbackEmail)")
                         await MainActor.run {
                             self.forwardingAddresses = [fallbackEmail]
+                            self.forwardingAddressesCache = [fallbackEmail]
                         }
                     } else {
                         print("Cannot generate fallback address - missing domain information.")
@@ -365,7 +391,7 @@ class CloudflareClient: ObservableObject {
         set { showWebsitesInList = newValue }
     }
     
-    private func fetchDomainName() async throws {
+    func fetchDomainName() async throws {
         let url = URL(string: "\(baseURL)/zones/\(zoneId)")!
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -411,11 +437,27 @@ class CloudflareClient: ObservableObject {
             throw CloudflareError(message: "Missing Cloudflare credentials. Please check your account ID, zone ID, and API token.")
         }
         
+        // Check cache first
+        let cacheAge = Date().timeIntervalSince(lastForwardingAddressesFetch)
+        if !forwardingAddressesCache.isEmpty && cacheAge < cacheValidityDuration {
+            print("Using cached forwarding addresses (age: \(Int(cacheAge))s)")
+            await MainActor.run {
+                self.forwardingAddresses = forwardingAddressesCache
+            }
+            return
+        }
+        
         do {
-            // Always fetch fresh from the Cloudflare API, never from cache or iCloud
+            // Fetch fresh from the Cloudflare API
             print("Calling fetchForwardingAddresses() directly")
             try await fetchForwardingAddresses()
             print("Successfully refreshed forwarding addresses. Count: \(self.forwardingAddresses.count)")
+            
+            // Update cache
+            await MainActor.run {
+                self.forwardingAddressesCache = self.forwardingAddresses
+                self.lastForwardingAddressesFetch = Date()
+            }
             
             // Print the first few addresses for debugging (limited for privacy)
             if !self.forwardingAddresses.isEmpty {

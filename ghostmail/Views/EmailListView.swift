@@ -68,12 +68,11 @@ struct EmailListView: View {
     }
     
     private func refreshEmailRules() async {
+        guard !isLoading else { return }
         isLoading = true
+        
         do {
             var cloudflareRules = try await cloudflareClient.getEmailRules()
-            
-            // Get the current iCloud sync setting
-            let iCloudSyncEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
             
             // Handle potential duplicates in Cloudflare rules
             // Keep track of seen email addresses and only include the first occurrence
@@ -145,9 +144,6 @@ struct EmailListView: View {
                     newAlias.cloudflareTag = rule.cloudflareTag
                     newAlias.isEnabled = rule.isEnabled
                     newAlias.sortIndex = index + 1
-                    
-                    // Set iCloud sync status based on user preference
-                    newAlias.iCloudSyncDisabled = !iCloudSyncEnabled
                     
                     // Set the user identifier to ensure cross-device ownership
                     newAlias.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
@@ -229,6 +225,12 @@ struct EmailListView: View {
                         EmailDetailView(email: email, needsRefresh: $needsRefresh)
                     }
                     .refreshable {
+                        do {
+                            let deleted = try EmailAlias.deduplicate(in: modelContext)
+                            if deleted > 0 { print("Deduplicated \(deleted) aliases during refresh") }
+                        } catch {
+                            print("Error during refresh deduplication: \(error)")
+                        }
                         await refreshEmailRules()
                     }
                 }
@@ -301,9 +303,12 @@ struct EmailListView: View {
             Text(error.localizedDescription)
         }
         .task {
-            // Only load if we haven't loaded yet
-            if isInitialLoad {
+            // Only load if we haven't loaded yet and there are no existing aliases
+            if isInitialLoad && emailAliases.isEmpty {
                 await refreshEmailRules()
+            } else {
+                // If we have existing data, just mark as loaded
+                isInitialLoad = false
             }
         }
         .onChange(of: needsRefresh) { _, needsRefresh in
