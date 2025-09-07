@@ -254,10 +254,6 @@ struct SettingsView: View {
                     }
                 }
                 
-                // Force a sync of the ubiquitous key-value store to persist the setting
-                NSUbiquitousKeyValueStore.default.set(false, forKey: "iCloudSyncEnabled")
-                NSUbiquitousKeyValueStore.default.synchronize()
-                
                 // Update UI based on success/failure
                 await MainActor.run {
                     if hadDeletionFailures {
@@ -279,9 +275,7 @@ struct SettingsView: View {
                 await MainActor.run {
                     // Make sure the iCloud sync setting stays disabled
                     iCloudSyncEnabled = false
-                    NSUbiquitousKeyValueStore.default.set(false, forKey: "iCloudSyncEnabled")
-                    NSUbiquitousKeyValueStore.default.synchronize()
-                    
+                    // Removed synchronization of ubiquitous key-value store
                     // Reset loading state
                     isLoading = false
                 }
@@ -603,4 +597,4 @@ struct CSVDocument: FileDocument {
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         try FileWrapper(url: url, options: .immediate)
     }
-} 
+}
