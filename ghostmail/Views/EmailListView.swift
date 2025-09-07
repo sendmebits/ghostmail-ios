@@ -1,6 +1,19 @@
 import SwiftUI
 import SwiftData
 
+/// Filter option for destination address
+enum DestinationFilter: Equatable {
+    case all
+    case address(String)
+    
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .address(let addr): return addr
+        }
+    }
+}
+
 struct EmailListView: View {
     @Binding var searchText: String
     @State private var sortOrder: SortOrder = .cloudflareOrder
@@ -17,6 +30,10 @@ struct EmailListView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Binding var needsRefresh: Bool
     @State private var toastWorkItem: DispatchWorkItem?
+
+    // Filter state
+    @State private var showFilterSheet = false
+    @State private var destinationFilter: DestinationFilter = .all
     
     enum SortOrder {
         case alphabetical
@@ -46,25 +63,38 @@ struct EmailListView: View {
         })
     }
     
+
     var sortedEmails: [EmailAlias] {
         let filtered = filteredEmails
         switch sortOrder {
         case .alphabetical:
             return filtered.sorted { $0.emailAddress < $1.emailAddress }
         case .cloudflareOrder:
-            // Use the sortIndex to preserve Cloudflare's order
             return filtered.sorted { $0.sortIndex < $1.sortIndex }
         }
     }
-    
+
     var filteredEmails: [EmailAlias] {
+        let base: [EmailAlias]
         if searchText.isEmpty {
-            return emailAliases
+            base = emailAliases
+        } else {
+            base = emailAliases.filter { email in
+                email.emailAddress.localizedCaseInsensitiveContains(searchText) ||
+                email.website.localizedCaseInsensitiveContains(searchText)
+            }
         }
-        return emailAliases.filter { email in
-            email.emailAddress.localizedCaseInsensitiveContains(searchText) ||
-            email.website.localizedCaseInsensitiveContains(searchText)
+        switch destinationFilter {
+        case .all:
+            return base
+        case .address(let addr):
+            return base.filter { $0.forwardTo == addr }
         }
+    }
+
+    var allDestinationAddresses: [String] {
+        let addresses = emailAliases.map { $0.forwardTo }.filter { !$0.isEmpty }
+        return Array(Set(addresses)).sorted()
     }
     
     private func refreshEmailRules() async {
@@ -271,7 +301,7 @@ struct EmailListView: View {
         .navigationTitle("Email Aliases")
         .searchable(text: $searchText, prompt: "Search emails or websites")
         .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
+            ToolbarItemGroup(placement: .navigationBarLeading) {
                 Menu {
                     Picker("Sort Order", selection: $sortOrder) {
                         ForEach([SortOrder.cloudflareOrder, .alphabetical], id: \.self) { order in
@@ -281,13 +311,60 @@ struct EmailListView: View {
                 } label: {
                     Image(systemName: "arrow.up.arrow.down.circle")
                 }
+                // Filter icon
+                Button {
+                    showFilterSheet = true
+                } label: {
+                    Image(systemName: destinationFilter == .all ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                        .accessibilityLabel("Filter")
+                }
             }
-            
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     showingSettings = true
                 } label: {
                     Image(systemName: "gear")
+                }
+            }
+        }
+        .sheet(isPresented: $showFilterSheet) {
+            NavigationView {
+                List {
+                    Section(header: Text("Destination Address")) {
+                        Button(action: {
+                            destinationFilter = .all
+                            showFilterSheet = false
+                        }) {
+                            HStack {
+                                Text("All")
+                                if destinationFilter == .all {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        ForEach(allDestinationAddresses, id: \.self) { addr in
+                            Button(action: {
+                                destinationFilter = .address(addr)
+                                showFilterSheet = false
+                            }) {
+                                HStack {
+                                    Text(addr)
+                                    if destinationFilter == .address(addr) {
+                                        Spacer()
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .navigationTitle("Filter")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showFilterSheet = false }
+                    }
                 }
             }
         }
