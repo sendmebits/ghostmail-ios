@@ -57,11 +57,6 @@ struct ghostmailApp: App {
             
             // After initializing modelContainer, we can now use self safely
             
-            // Enable CloudKit logging
-            let cloudKitLogger = NSUbiquitousKeyValueStore.default
-            cloudKitLogger.set(true, forKey: "com.apple.coredata.cloudkit.logging")
-            cloudKitLogger.synchronize()
-            
             // Log CloudKit container setup
             if syncEnabled {
                 print("Setting up CloudKit with container: iCloud.com.sendmebits.ghostmail")
@@ -74,9 +69,6 @@ struct ghostmailApp: App {
                 // CloudKit sync is handled automatically by SwiftData
                 print("CloudKit sync enabled - SwiftData will handle sync automatically")
             }
-            
-            // Sync ubiquitous key-value store immediately
-            NSUbiquitousKeyValueStore.default.synchronize()
         } catch {
             print("Failed to initialize ModelContainer: \(error)")
             fatalError("Could not initialize ModelContainer: \(error)")
