@@ -22,6 +22,7 @@ struct SettingsView: View {
     @State private var showDisableSyncConfirmation = false
     @State private var showDeleteICloudDataConfirmation = false
     @State private var showRestartAlert = false
+    @Environment(\.openURL) private var openURL
     
     init() {
         // Initialize selectedDefaultAddress with the current saved value
@@ -407,6 +408,15 @@ struct SettingsView: View {
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
+                    Button(action: {
+                        openURL(URL(string: "https://github.com/sendmebits/ghostmail-ios")!)
+                    }) {
+                        HStack {
+                            Image(systemName: "link")
+                            Text("Website")
+                        }
+                    }
+                    .buttonStyle(.plain)
                 } header: {
                     Text("About")
                         .textCase(.uppercase)
