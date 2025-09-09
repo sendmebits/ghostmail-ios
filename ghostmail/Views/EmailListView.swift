@@ -35,7 +35,7 @@ struct EmailListView: View {
     @State private var showFilterSheet = false
     @State private var destinationFilter: DestinationFilter = .all
     
-    enum SortOrder {
+    enum SortOrder: String, CaseIterable, Hashable {
         case alphabetical
         case cloudflareOrder
         
@@ -61,6 +61,37 @@ struct EmailListView: View {
         self._emailAliases = Query(filter: #Predicate<EmailAlias> { alias in
             alias.isLoggedOut == false
         })
+
+        // Load persisted sort order
+        if let rawSort = UserDefaults.standard.string(forKey: "EmailListView.sortOrder"),
+           let loadedSort = SortOrder(rawValue: rawSort) {
+            _sortOrder = State(initialValue: loadedSort)
+        }
+
+        // Load persisted destination filter
+        if let filterType = UserDefaults.standard.string(forKey: "EmailListView.destinationFilterType") {
+            if filterType == "all" {
+                _destinationFilter = State(initialValue: .all)
+            } else if filterType == "address",
+                      let addr = UserDefaults.standard.string(forKey: "EmailListView.destinationFilterAddress") {
+                _destinationFilter = State(initialValue: .address(addr))
+            }
+        }
+    }
+    // Persist sortOrder and destinationFilter when changed
+    private func persistSortOrder(_ newValue: SortOrder) {
+        UserDefaults.standard.set(newValue.rawValue, forKey: "EmailListView.sortOrder")
+    }
+
+    private func persistDestinationFilter(_ newValue: DestinationFilter) {
+        switch newValue {
+        case .all:
+            UserDefaults.standard.set("all", forKey: "EmailListView.destinationFilterType")
+            UserDefaults.standard.removeObject(forKey: "EmailListView.destinationFilterAddress")
+        case .address(let addr):
+            UserDefaults.standard.set("address", forKey: "EmailListView.destinationFilterType")
+            UserDefaults.standard.set(addr, forKey: "EmailListView.destinationFilterAddress")
+        }
     }
     
 
@@ -300,6 +331,12 @@ struct EmailListView: View {
         }
         .navigationTitle("Email Aliases")
         .searchable(text: $searchText, prompt: "Search emails or websites")
+        .onChange(of: sortOrder) { _, newValue in
+            persistSortOrder(newValue)
+        }
+        .onChange(of: destinationFilter) { _, newValue in
+            persistDestinationFilter(newValue)
+        }
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarLeading) {
                 Menu {
@@ -334,6 +371,7 @@ struct EmailListView: View {
                         Button(action: {
                             destinationFilter = .all
                             showFilterSheet = false
+                            persistDestinationFilter(.all)
                         }) {
                             HStack {
                                 Text("All")
@@ -347,6 +385,7 @@ struct EmailListView: View {
                             Button(action: {
                                 destinationFilter = .address(addr)
                                 showFilterSheet = false
+                                persistDestinationFilter(.address(addr))
                             }) {
                                 HStack {
                                     Text(addr)

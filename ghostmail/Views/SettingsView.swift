@@ -289,6 +289,31 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                // About section (moved to top)
+                Section {
+                    InfoRow(title: "App Version") {
+                        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
+                        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown"
+                        Text("\(appVersion) (\(buildNumber))")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    Button(action: {
+                        openURL(URL(string: "https://github.com/sendmebits/ghostmail-ios")!)
+                    }) {
+                        HStack {
+                            Image(systemName: "link")
+                            Text("Website")
+                        }
+                    }
+                    .buttonStyle(.plain)
+                } header: {
+                    Text("About")
+                        .textCase(.uppercase)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+
                 // Account section
                 Section {
                     InfoRow(title: "Account ID") {
@@ -400,29 +425,7 @@ struct SettingsView: View {
                 }
                 
                 // App Version section
-                Section {
-                    InfoRow(title: "App Version") {
-                        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
-                        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown"
-                        Text("\(appVersion) (\(buildNumber))")
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
-                    Button(action: {
-                        openURL(URL(string: "https://github.com/sendmebits/ghostmail-ios")!)
-                    }) {
-                        HStack {
-                            Image(systemName: "link")
-                            Text("Website")
-                        }
-                    }
-                    .buttonStyle(.plain)
-                } header: {
-                    Text("About")
-                        .textCase(.uppercase)
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
+                // ...existing code...
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
