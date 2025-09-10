@@ -275,7 +275,6 @@ struct EmailListView: View {
                                 generator.prepare()
                                 // Trigger haptic immediately when gesture threshold is met
                                 generator.impactOccurred()
-                                
                                 // Then handle the clipboard and toast
                                 UIPasteboard.general.string = email.emailAddress
                                 showToastWithTimer(email.emailAddress)
@@ -296,7 +295,6 @@ struct EmailListView: View {
                     }
                 }
             }
-            
             // Floating Action Button
             VStack {
                 Spacer()
@@ -314,7 +312,6 @@ struct EmailListView: View {
                     .padding()
                 }
             }
-            
             // Toast overlay
             if showCopyToast {
                 VStack {
@@ -329,31 +326,25 @@ struct EmailListView: View {
                 }
             }
         }
-        .navigationTitle("Email Aliases")
-        .searchable(text: $searchText, prompt: "Search emails or websites")
-        .onChange(of: sortOrder) { _, newValue in
-            persistSortOrder(newValue)
-        }
-        .onChange(of: destinationFilter) { _, newValue in
-            persistDestinationFilter(newValue)
-        }
         .toolbar {
-            ToolbarItemGroup(placement: .navigationBarLeading) {
+            ToolbarItem(placement: .navigationBarLeading) {
                 Menu {
+                    // Sort option
                     Picker("Sort Order", selection: $sortOrder) {
                         ForEach([SortOrder.cloudflareOrder, .alphabetical], id: \.self) { order in
                             Label(order.label, systemImage: order.systemImage)
                         }
                     }
+                    // Filter option
+                    Button {
+                        showFilterSheet = true
+                    } label: {
+                        Label("Filter", systemImage: destinationFilter == .all ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                    }
                 } label: {
-                    Image(systemName: "arrow.up.arrow.down.circle")
-                }
-                // Filter icon
-                Button {
-                    showFilterSheet = true
-                } label: {
-                    Image(systemName: destinationFilter == .all ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
-                        .accessibilityLabel("Filter")
+                    Image(systemName: "ellipsis.circle")
+                        .imageScale(.large)
+                        .accessibilityLabel("Menu")
                 }
             }
             ToolbarItem(placement: .primaryAction) {
@@ -364,6 +355,15 @@ struct EmailListView: View {
                 }
             }
         }
+        .navigationTitle("Email Aliases")
+        .searchable(text: $searchText, prompt: "Search emails or websites")
+        .onChange(of: sortOrder) { _, newValue in
+            persistSortOrder(newValue)
+        }
+        .onChange(of: destinationFilter) { _, newValue in
+            persistDestinationFilter(newValue)
+        }
+    // ...existing code...
         .sheet(isPresented: $showFilterSheet) {
             NavigationView {
                 List {
