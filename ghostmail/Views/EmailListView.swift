@@ -246,7 +246,7 @@ struct EmailListView: View {
     }
     
     var body: some View {
-        ZStack {
+    ZStack {
             Group {
                 if isLoading && isInitialLoad {
                     ProgressView()
@@ -281,6 +281,9 @@ struct EmailListView: View {
                             })
                         }
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .listRowBackground(Color.black)
                     .navigationDestination(for: EmailAlias.self) { email in
                         EmailDetailView(email: email, needsRefresh: $needsRefresh)
                     }
@@ -326,6 +329,8 @@ struct EmailListView: View {
                 }
             }
         }
+    .background(Color.black.ignoresSafeArea())
+    .preferredColorScheme(.dark)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 Menu {
