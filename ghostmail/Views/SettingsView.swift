@@ -298,16 +298,45 @@ struct SettingsView: View {
                         Text("\(appVersion) (\(buildNumber))")
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(.secondary)
+                            .onLongPressGesture(minimumDuration: 0.5) {
+                                let val = "\(appVersion) (\(buildNumber))"
+                                UIPasteboard.general.string = val
+                                // lightweight feedback
+                                let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
+                            }
+                            .contextMenu {
+                                Button {
+                                    let val = "\(appVersion) (\(buildNumber))"
+                                    UIPasteboard.general.string = val
+                                } label: {
+                                    Text("Copy Version")
+                                    Image(systemName: "doc.on.doc")
+                                }
+                            }
                     }
-                    Button(action: {
-                        openURL(URL(string: "https://github.com/sendmebits/ghostmail-ios")!)
-                    }) {
-                        HStack {
-                            Image(systemName: "link")
-                            Text("Website")
-                        }
+                    InfoRow(title: "Website") {
+                        let site = "https://github.com/sendmebits/ghostmail-ios"
+                        Text(site)
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .onTapGesture {
+                                if let url = URL(string: site) {
+                                    openURL(url)
+                                }
+                            }
+                            .onLongPressGesture(minimumDuration: 0.5) {
+                                UIPasteboard.general.string = site
+                                let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
+                            }
+                            .contextMenu {
+                                Button {
+                                    UIPasteboard.general.string = site
+                                } label: {
+                                    Text("Copy Website")
+                                    Image(systemName: "doc.on.doc")
+                                }
+                            }
                     }
-                    .buttonStyle(.plain)
                 } header: {
                     Text("About")
                         .textCase(.uppercase)
@@ -317,22 +346,44 @@ struct SettingsView: View {
 
                 // Account section
                 Section {
-                    InfoRow(title: "Account ID") {
+                    InfoRow(title: "Account ID for \(cloudflareClient.accountName)") {
                         Text(cloudflareClient.accountId)
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(.secondary)
-                        Text(cloudflareClient.accountName)
-                            .font(.system(.caption, design: .rounded))
-                            .foregroundStyle(.secondary)
+                            .onLongPressGesture(minimumDuration: 0.5) {
+                                if !cloudflareClient.accountId.isEmpty {
+                                    UIPasteboard.general.string = cloudflareClient.accountId
+                                    let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
+                                }
+                            }
+                            .contextMenu {
+                                Button {
+                                    UIPasteboard.general.string = cloudflareClient.accountId
+                                } label: {
+                                    Text("Copy Account ID")
+                                    Image(systemName: "doc.on.doc")
+                                }
+                            }
                     }
                     
-                    InfoRow(title: "Zone ID") {
+                    InfoRow(title: "Zone ID for \(cloudflareClient.emailDomain)") {
                         Text(cloudflareClient.zoneId)
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(.secondary)
-                        Text("@\(cloudflareClient.emailDomain)")
-                            .font(.system(.caption, design: .rounded))
-                            .foregroundStyle(.secondary)
+                            .onLongPressGesture(minimumDuration: 0.5) {
+                                if !cloudflareClient.zoneId.isEmpty {
+                                    UIPasteboard.general.string = cloudflareClient.zoneId
+                                    let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
+                                }
+                            }
+                            .contextMenu {
+                                Button {
+                                    UIPasteboard.general.string = cloudflareClient.zoneId
+                                } label: {
+                                    Text("Copy Zone ID")
+                                    Image(systemName: "doc.on.doc")
+                                }
+                            }
                     }
                     
                     InfoRow(title: "Entries") {
