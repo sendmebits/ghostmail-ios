@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct EmailDetailView: View {
     @Environment(\.modelContext) private var modelContext
@@ -11,6 +12,8 @@ struct EmailDetailView: View {
     @State private var showError = false
     @State private var showCopyToast = false
     @State private var copiedText = ""
+    @State private var websiteUIImage: UIImage?
+    @State private var isLoadingIcon = false
     @Bindable private var email: EmailAlias
     @Binding var needsRefresh: Bool
     
@@ -91,16 +94,68 @@ struct EmailDetailView: View {
                 VStack(spacing: 20) {
                     // Header with email icon
                     VStack(spacing: 16) {
-                        Image(systemName: "envelope.fill")
-                            .font(.system(size: 48, weight: .medium))
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                            .padding(.top, 20)
+                        // Icon area: mirror the logic used in EmailRowView
+                        ZStack {
+                            if cloudflareClient.shouldShowWebsiteLogos && !email.website.isEmpty {
+                                if let uiImage = websiteUIImage {
+                                    Image(uiImage: uiImage)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 64, height: 64)
+                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                } else if isLoadingIcon {
+                                    ProgressView()
+                                        .frame(width: 64, height: 64)
+                                } else {
+                                    Image(systemName: "globe")
+                                        .font(.system(size: 48, weight: .medium))
+                                        .foregroundStyle(
+                                            LinearGradient(
+                                                colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                        .frame(width: 64, height: 64)
+                                }
+                            } else {
+                                if !email.website.isEmpty {
+                                    Image(systemName: "globe")
+                                        .font(.system(size: 48, weight: .medium))
+                                        .foregroundStyle(
+                                            LinearGradient(
+                                                colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                        .frame(width: 64, height: 64)
+                                } else {
+                                    Image(systemName: "envelope.fill")
+                                        .font(.system(size: 48, weight: .medium))
+                                        .foregroundStyle(
+                                            LinearGradient(
+                                                colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                        .frame(width: 64, height: 64)
+                                }
+                            }
+                        }
+                        .padding(.top, 20)
+                        .task(id: email.website) {
+                            websiteUIImage = nil
+                            guard !email.website.isEmpty, cloudflareClient.shouldShowWebsiteLogos else { return }
+                            isLoadingIcon = true
+                            if let img = await IconCache.shared.image(for: email.website) {
+                                websiteUIImage = img
+                            } else {
+                                websiteUIImage = nil
+                            }
+                            isLoadingIcon = false
+                        }
                         
                         VStack(spacing: 8) {
                             if isEditing {
