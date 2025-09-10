@@ -487,7 +487,7 @@ struct EmailRowView: View {
                     // If logos disabled or no website: show globe if website present, else envelope
                     if !email.website.isEmpty {
                         Image(systemName: "globe")
-                            .font(.system(size: 28, weight: .medium))
+                            .font(.system(size: 22, weight: .medium))
                             .foregroundStyle(
                                 LinearGradient(
                                     colors: [
@@ -501,7 +501,7 @@ struct EmailRowView: View {
                             .frame(width: 40, height: 40)
                     } else {
                         Image(systemName: "envelope.fill")
-                            .font(.system(size: 24, weight: .medium))
+                            .font(.system(size: 20, weight: .medium))
                             .foregroundStyle(
                                 LinearGradient(
                                     colors: [
@@ -550,6 +550,14 @@ struct EmailRowView: View {
             websiteUIImage = nil
             // Only load actual logo images when the setting is enabled
             guard !email.website.isEmpty, cloudflareClient.shouldShowWebsiteLogos else { return }
+
+            // If we already know this host has no icon, avoid showing a spinner or fetching again
+            if IconCache.shared.hasMissingIcon(for: email.website) {
+                isLoadingIcon = false
+                websiteUIImage = nil
+                return
+            }
+
             isLoadingIcon = true
             if let img = await IconCache.shared.image(for: email.website) {
                 websiteUIImage = img

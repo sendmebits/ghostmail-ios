@@ -4,6 +4,8 @@ import UIKit
 final class IconCache {
     static let shared = IconCache()
     private let memoryCache = NSCache<NSString, UIImage>()
+    // Cache for hosts that were checked and had no icon available
+    private let negativeMemoryCache = NSCache<NSString, NSNumber>()
     private let fileManager = FileManager.default
     private let cacheDir: URL
 
@@ -25,6 +27,10 @@ final class IconCache {
 
     private func fileURL(for host: String) -> URL {
         return cacheDir.appendingPathComponent(filename(for: host))
+    }
+
+    private func missingFileURL(for host: String) -> URL {
+        return cacheDir.appendingPathComponent(filename(for: host) + ".missing")
     }
 
     private func hostFromWebsite(_ website: String) -> String? {
@@ -50,6 +56,18 @@ final class IconCache {
 
         if let cached = memoryCache.object(forKey: host as NSString) {
             return cached
+        }
+
+        // Fast-path: if we previously determined this host has no icon, avoid network
+        if negativeMemoryCache.object(forKey: host as NSString) != nil {
+            return nil
+        }
+
+        // Also check for a persisted "missing" marker on disk
+        let missingURL = missingFileURL(for: host)
+        if fileManager.fileExists(atPath: missingURL.path) {
+            negativeMemoryCache.setObject(NSNumber(value: true), forKey: host as NSString)
+            return nil
         }
 
         let fileURL = fileURL(for: host)
@@ -79,6 +97,9 @@ final class IconCache {
                 if let http = response as? HTTPURLResponse, http.statusCode == 200, let img = UIImage(data: data) {
                     memoryCache.setObject(img, forKey: host as NSString)
                     try? data.write(to: fileURL, options: .atomic)
+                    // If we previously created a missing marker, remove it now
+                    try? fileManager.removeItem(at: missingURL)
+                    negativeMemoryCache.removeObject(forKey: host as NSString)
                     return img
                 }
             } catch {
@@ -87,6 +108,24 @@ final class IconCache {
             }
         }
 
+        // No icon found: persist a small marker so we don't re-query repeatedly
+        let markerData = Data()
+        try? markerData.write(to: missingURL, options: .atomic)
+        negativeMemoryCache.setObject(NSNumber(value: true), forKey: host as NSString)
+
         return nil
+    }
+
+    /// Synchronous check to quickly determine whether we previously marked this host as missing.
+    /// Useful for avoiding UI spinners when the icon is known to be absent.
+    func hasMissingIcon(for website: String) -> Bool {
+        guard let host = hostFromWebsite(website) else { return false }
+        if negativeMemoryCache.object(forKey: host as NSString) != nil { return true }
+        let missingURL = missingFileURL(for: host)
+        if fileManager.fileExists(atPath: missingURL.path) {
+            negativeMemoryCache.setObject(NSNumber(value: true), forKey: host as NSString)
+            return true
+        }
+        return false
     }
 }
