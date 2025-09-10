@@ -254,6 +254,21 @@ struct EmailDetailView: View {
                                 } else {
                                     Text(email.website)
                                         .foregroundStyle(.secondary)
+                                        .onLongPressGesture(minimumDuration: 0.5) {
+                                            if !email.website.isEmpty {
+                                                copyToClipboard(email.website)
+                                            }
+                                        }
+                                        .contextMenu {
+                                            Button {
+                                                if !email.website.isEmpty {
+                                                    copyToClipboard(email.website)
+                                                }
+                                            } label: {
+                                                Text("Copy Website")
+                                                Image(systemName: "doc.on.doc")
+                                            }
+                                        }
                                 }
                             }
                         }
@@ -267,6 +282,21 @@ struct EmailDetailView: View {
                                 } else {
                                     Text(email.notes)
                                         .foregroundStyle(.secondary)
+                                        .onLongPressGesture(minimumDuration: 0.5) {
+                                            if !email.notes.isEmpty {
+                                                copyToClipboard(email.notes)
+                                            }
+                                        }
+                                        .contextMenu {
+                                            Button {
+                                                if !email.notes.isEmpty {
+                                                    copyToClipboard(email.notes)
+                                                }
+                                            } label: {
+                                                Text("Copy Notes")
+                                                Image(systemName: "doc.on.doc")
+                                            }
+                                        }
                                 }
                             }
                         }
