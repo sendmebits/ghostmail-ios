@@ -15,6 +15,7 @@ class CloudflareClient: ObservableObject {
     @Published private(set) var forwardingAddresses: Set<String> = []
     @AppStorage("defaultForwardingAddress") private var defaultForwardingAddress: String = ""
     @AppStorage("showWebsitesInList") private var showWebsitesInList: Bool = true
+    @AppStorage("showWebsiteLogo") private var showWebsiteLogo: Bool = true
     
     @Published private(set) var domainName: String = ""
     
@@ -389,6 +390,11 @@ class CloudflareClient: ObservableObject {
     var shouldShowWebsitesInList: Bool {
         get { showWebsitesInList }
         set { showWebsitesInList = newValue }
+    }
+
+    var shouldShowWebsiteLogos: Bool {
+        get { showWebsiteLogo }
+        set { showWebsiteLogo = newValue }
     }
     
     func fetchDomainName() async throws {

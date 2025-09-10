@@ -10,6 +10,7 @@ struct SettingsView: View {
     @Query(sort: \EmailAlias.emailAddress) private var emailAliases: [EmailAlias]
     @State private var selectedDefaultAddress: String = ""
     @State private var showWebsites: Bool = true
+    @AppStorage("showWebsiteLogo") private var showWebsiteLogo: Bool = true
     @State private var showLogoutAlert: Bool = false
     @State private var showFileImporter = false
     @State private var showExportDialog = false
@@ -363,6 +364,9 @@ struct SettingsView: View {
                     
                     Toggle("Show Websites in List", isOn: $showWebsites)
                         .tint(.accentColor)
+
+                    Toggle("Show Website Logo", isOn: $showWebsiteLogo)
+                        .tint(.accentColor)
                     
                     Toggle("Sync metadata to iCloud", isOn: $iCloudSyncEnabled)
                         .tint(.accentColor)
@@ -552,6 +556,7 @@ struct SettingsView: View {
                         }
                         
                         showWebsites = cloudflareClient.shouldShowWebsitesInList
+                        showWebsiteLogo = cloudflareClient.shouldShowWebsiteLogos
                         isLoading = false
                         print("Settings loaded successfully")
                     }

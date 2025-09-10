@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import SwiftData
 
 /// Filter option for destination address
@@ -447,25 +448,74 @@ struct EmailRowView: View {
     let email: EmailAlias
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     let onCopy: () -> Void
+    @State private var websiteUIImage: UIImage?
+    @State private var isLoadingIcon = false
     
     var body: some View {
         HStack(spacing: 16) {
-            // Modern email icon with gradient
+            // Icon area: website icon (if available), globe when website exists but no icon, envelope when no website
             ZStack {
-                Image(systemName: "envelope.fill")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                Color.accentColor,
-                                Color.accentColor.opacity(0.7)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 40, height: 40)
-                
+                // Decide icon based on settings
+                if cloudflareClient.shouldShowWebsiteLogos && !email.website.isEmpty {
+                    // Show website icon if loaded
+                    if let uiImage = websiteUIImage {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 40, height: 40)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    } else if isLoadingIcon {
+                        ProgressView()
+                            .frame(width: 40, height: 40)
+                    } else {
+                        // Globe fallback when website is specified but icon not found yet/failed
+                        Image(systemName: "globe")
+                            .font(.system(size: 28, weight: .medium))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [
+                                        Color.accentColor,
+                                        Color.accentColor.opacity(0.7)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 40, height: 40)
+                    }
+                } else {
+                    // If logos disabled or no website: show globe if website present, else envelope
+                    if !email.website.isEmpty {
+                        Image(systemName: "globe")
+                            .font(.system(size: 28, weight: .medium))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [
+                                        Color.accentColor,
+                                        Color.accentColor.opacity(0.7)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 40, height: 40)
+                    } else {
+                        Image(systemName: "envelope.fill")
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [
+                                        Color.accentColor,
+                                        Color.accentColor.opacity(0.7)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 40, height: 40)
+                    }
+                }
+
                 // Status indicator
                 if !email.isEnabled {
                     Circle()
@@ -496,6 +546,18 @@ struct EmailRowView: View {
         }
         .contentShape(Rectangle())
         .opacity(email.isEnabled ? 1.0 : 0.6)
+        .task(id: email.website) {
+            websiteUIImage = nil
+            // Only load actual logo images when the setting is enabled
+            guard !email.website.isEmpty, cloudflareClient.shouldShowWebsiteLogos else { return }
+            isLoadingIcon = true
+            if let img = await IconCache.shared.image(for: email.website) {
+                websiteUIImage = img
+            } else {
+                websiteUIImage = nil
+            }
+            isLoadingIcon = false
+        }
     }
 }
 
