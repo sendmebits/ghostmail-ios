@@ -25,9 +25,9 @@ struct EmailCreateView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Email Address") {
+                Section("Email Alias") {
                     HStack {
-                        TextField("username", text: $username)
+                        TextField("alias", text: $username)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.emailAddress)
@@ -37,7 +37,7 @@ struct EmailCreateView: View {
                     }
                 }
                 
-                Section("Destination") {
+                Section("Destination Email") {
                     if isLoading {
                         HStack {
                             ProgressView()
@@ -46,7 +46,7 @@ struct EmailCreateView: View {
                                 .foregroundStyle(.secondary)
                         }
                     } else if !cloudflareClient.forwardingAddresses.isEmpty {
-                        Picker("Forward to", selection: $forwardTo) {
+                        Picker("", selection: $forwardTo) {
                             ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
                                 Text(address).tag(address)
                             }
