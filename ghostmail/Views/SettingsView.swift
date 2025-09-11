@@ -330,6 +330,15 @@ struct SettingsView: View {
                             }
                             .contextMenu {
                                 Button {
+                                    if let url = URL(string: site) {
+                                        openURL(url)
+                                    }
+                                } label: {
+                                    Text("Open Website")
+                                    Image(systemName: "safari")
+                                }
+
+                                Button {
                                     UIPasteboard.general.string = site
                                 } label: {
                                     Text("Copy Website")

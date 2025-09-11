@@ -28,7 +28,6 @@ struct EmailDetailView: View {
     @State private var toastWorkItem: DispatchWorkItem?
     
     init(email: EmailAlias, needsRefresh: Binding<Bool>) {
-        print("Initializing DetailView with email: \(email.emailAddress), forward to: \(email.forwardTo)")
         self.email = email
         self._needsRefresh = needsRefresh
         _tempWebsite = State(initialValue: email.website)
@@ -36,7 +35,6 @@ struct EmailDetailView: View {
         _tempIsEnabled = State(initialValue: email.isEnabled)
         _tempForwardTo = State(initialValue: email.forwardTo)
         
-        print("DetailView initialized with tempForwardTo: \(email.forwardTo)")
         
         // Extract username from email address
         if let username = email.emailAddress.split(separator: "@").first {
@@ -82,6 +80,16 @@ struct EmailDetailView: View {
         generator.impactOccurred()
         UIPasteboard.general.string = text
         showToastWithTimer(text)
+    }
+
+    /// Returns a valid URL for a website string, adding https:// if the scheme is missing.
+    private func urlFrom(_ website: String) -> URL? {
+        var s = website.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.isEmpty { return nil }
+        if !s.hasPrefix("http://") && !s.hasPrefix("https://") {
+            s = "https://" + s
+        }
+        return URL(string: s)
     }
     
     private var fullEmailAddress: String {
@@ -182,6 +190,17 @@ struct EmailDetailView: View {
                                     .font(.system(.title2, design: .rounded, weight: .medium))
                                     .multilineTextAlignment(.center)
                                     .strikethrough(!email.isEnabled)
+                                    .contentShape(Rectangle())
+                                    .contextMenu {
+                                        Button {
+                                            if !email.emailAddress.isEmpty {
+                                                copyToClipboard(email.emailAddress)
+                                            }
+                                        } label: {
+                                            Text("Copy Address")
+                                            Image(systemName: "doc.on.doc")
+                                        }
+                                    }
                             }
                             
                             Button {
@@ -247,28 +266,39 @@ struct EmailDetailView: View {
                         // Website section
                         if isEditing || !email.website.isEmpty {
                             DetailSection(title: "Website") {
-                                if isEditing {
-                                    TextField("Website", text: $tempWebsite)
-                                        .textInputAutocapitalization(.never)
-                                        .keyboardType(.URL)
-                                } else {
-                                    Text(email.website)
-                                        .foregroundStyle(.secondary)
-                                        .onLongPressGesture(minimumDuration: 0.5) {
-                                            if !email.website.isEmpty {
-                                                copyToClipboard(email.website)
-                                            }
-                                        }
-                                        .contextMenu {
-                                            Button {
-                                                if !email.website.isEmpty {
-                                                    copyToClipboard(email.website)
-                                                }
-                                            } label: {
-                                                Text("Copy Website")
-                                                Image(systemName: "doc.on.doc")
-                                            }
-                                        }
+                                Group {
+                                    if isEditing {
+                                        TextField("Website", text: $tempWebsite)
+                                            .textInputAutocapitalization(.never)
+                                            .keyboardType(.URL)
+                                    } else {
+                                        Text(email.website)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                // Open website in Safari when possible
+                                if let url = urlFrom(email.website) {
+                                    Button {
+                                        let generator = UIImpactFeedbackGenerator(style: .medium)
+                                        generator.impactOccurred()
+                                        UIApplication.shared.open(url)
+                                    } label: {
+                                        Text("Open Website")
+                                        Image(systemName: "safari")
+                                    }
+                                }
+
+                                // Copy website to clipboard
+                                Button {
+                                    if !email.website.isEmpty {
+                                        copyToClipboard(email.website)
+                                    }
+                                } label: {
+                                    Text("Copy Website")
+                                    Image(systemName: "doc.on.doc")
                                 }
                             }
                         }
@@ -276,27 +306,25 @@ struct EmailDetailView: View {
                         // Notes section
                         if isEditing || !email.notes.isEmpty {
                             DetailSection(title: "Notes") {
-                                if isEditing {
-                                    TextField("Notes", text: $tempNotes, axis: .vertical)
-                                        .lineLimit(3...6)
-                                } else {
-                                    Text(email.notes)
-                                        .foregroundStyle(.secondary)
-                                        .onLongPressGesture(minimumDuration: 0.5) {
-                                            if !email.notes.isEmpty {
-                                                copyToClipboard(email.notes)
-                                            }
-                                        }
-                                        .contextMenu {
-                                            Button {
-                                                if !email.notes.isEmpty {
-                                                    copyToClipboard(email.notes)
-                                                }
-                                            } label: {
-                                                Text("Copy Notes")
-                                                Image(systemName: "doc.on.doc")
-                                            }
-                                        }
+                                Group {
+                                    if isEditing {
+                                        TextField("Notes", text: $tempNotes, axis: .vertical)
+                                            .lineLimit(3...6)
+                                    } else {
+                                        Text(email.notes)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button {
+                                    if !email.notes.isEmpty {
+                                        copyToClipboard(email.notes)
+                                    }
+                                } label: {
+                                    Text("Copy Notes")
+                                    Image(systemName: "doc.on.doc")
                                 }
                             }
                         }
