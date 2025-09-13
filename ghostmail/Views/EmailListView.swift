@@ -177,8 +177,8 @@ struct EmailListView: View {
     }
 
     var allDestinationAddresses: [String] {
-    let addresses = allAliases.map { $0.forwardTo }.filter { !$0.isEmpty }
-        return Array(Set(addresses)).sorted()
+        // Use the same source as SettingsView so the filter list is consistent
+        Array(cloudflareClient.forwardingAddresses).sorted()
     }
     
     private func refreshEmailRules() async {
@@ -514,6 +514,16 @@ struct EmailListView: View {
             Text(error.localizedDescription)
         }
         .task {
+            // Ensure we have forwarding addresses ready for the filter picker
+            do {
+                if cloudflareClient.zones.count > 1 {
+                    try await cloudflareClient.refreshForwardingAddressesAllZones()
+                } else {
+                    try await cloudflareClient.ensureForwardingAddressesLoaded()
+                }
+            } catch {
+                print("Error loading forwarding addresses for list view: \(error)")
+            }
             // Only load if we haven't loaded yet and there are no existing aliases
             if isInitialLoad && emailAliases.isEmpty {
                 await refreshEmailRules()
@@ -532,7 +542,19 @@ struct EmailListView: View {
         }
         // Auto-refresh when zones change (e.g., adding/removing a zone)
         .onChange(of: cloudflareClient.zones) { _, _ in
-            Task { await refreshEmailRules() }
+            Task {
+                // Keep forwarding addresses in sync when zones change
+                do {
+                    if cloudflareClient.zones.count > 1 {
+                        try await cloudflareClient.refreshForwardingAddressesAllZones()
+                    } else {
+                        try await cloudflareClient.refreshForwardingAddresses()
+                    }
+                } catch {
+                    print("Error refreshing addresses after zone change: \(error)")
+                }
+                await refreshEmailRules()
+            }
         }
     }
 }
