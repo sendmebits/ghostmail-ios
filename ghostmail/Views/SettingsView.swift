@@ -34,6 +34,8 @@ struct SettingsView: View {
         }
     }
     @AppStorage("defaultZoneId") private var defaultZoneId: String = ""
+    @State private var zoneToRemove: CloudflareClient.CloudflareZone? = nil
+    @State private var showRemoveZoneAlert: Bool = false
     
     init() {
         // Initialize selectedDefaultAddress with the current saved value
@@ -48,7 +50,7 @@ struct SettingsView: View {
 
     // Entry count helper for a specific zone
     private func entryCount(for zoneId: String) -> Int {
-        emailAliases.filter { $0.zoneId == zoneId }.count
+    emailAliases.filter { $0.zoneId == zoneId && $0.isLoggedOut == false }.count
     }
 
     private var sortedForwardingAddresses: [String] {
@@ -319,26 +321,7 @@ struct SettingsView: View {
                 // About section (moved to top)
                 Section {
                     InfoRow(title: "App Version") {
-                        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
-                        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown"
-                        Text("\(appVersion) (\(buildNumber))")
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .onLongPressGesture(minimumDuration: 0.5) {
-                                let val = "\(appVersion) (\(buildNumber))"
-                                UIPasteboard.general.string = val
-                                // lightweight feedback
-                                let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
-                            }
-                            .contextMenu {
-                                Button {
-                                    let val = "\(appVersion) (\(buildNumber))"
-                                    UIPasteboard.general.string = val
-                                } label: {
-                                    Text("Copy Version")
-                                    Image(systemName: "doc.on.doc")
-                                }
-                            }
+                        AppVersionValueView()
                     }
                     InfoRow(title: "Website") {
                         let site = "https://github.com/sendmebits/ghostmail-ios"
@@ -434,6 +417,19 @@ struct SettingsView: View {
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
+                    Button(role: .destructive) {
+                        // Prepare removal of the primary zone
+                        zoneToRemove = CloudflareClient.CloudflareZone(
+                            accountId: cloudflareClient.accountId,
+                            zoneId: cloudflareClient.zoneId,
+                            apiToken: "", // token not needed for removal
+                            accountName: cloudflareClient.accountName,
+                            domainName: cloudflareClient.domainName
+                        )
+                        showRemoveZoneAlert = true
+                    } label: {
+                        Label("Remove This Zone", systemImage: "trash")
+                    }
                 }
 
                 // Additional zone sections
@@ -457,6 +453,12 @@ struct SettingsView: View {
                             Text("\(count) Addresses Created")
                                 .font(.system(.subheadline, design: .rounded))
                                 .foregroundStyle(.secondary)
+                        }
+                        Button(role: .destructive) {
+                            zoneToRemove = z
+                            showRemoveZoneAlert = true
+                        } label: {
+                            Label("Remove This Zone", systemImage: "trash")
                         }
                     }
                 }
@@ -593,6 +595,35 @@ struct SettingsView: View {
                 }
             } message: {
                 Text("This will clear all local data and you'll need to sign in again.")
+            }
+            .alert("Remove Zone?", isPresented: $showRemoveZoneAlert) {
+                Button("Cancel", role: .cancel) { zoneToRemove = nil }
+                Button("Remove", role: .destructive) {
+                    guard let z = zoneToRemove else { return }
+                    // Do not delete anything from iCloud; just mark local aliases as logged out
+                    let targetZoneId = z.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+                    for alias in emailAliases where alias.zoneId == targetZoneId {
+                        alias.isLoggedOut = true
+                    }
+                    try? modelContext.save()
+
+                    // Remove zone from client (and possibly promote another as primary)
+                    cloudflareClient.removeZone(zoneId: targetZoneId)
+                    // Clear default domain if it pointed to this zone
+                    if defaultZoneId == targetZoneId {
+                        defaultZoneId = cloudflareClient.zoneId
+                    }
+                    // If list filter was locked to this zone, reset it to All
+                    let ud = UserDefaults.standard
+                    if ud.string(forKey: "EmailListView.domainFilterZoneId") == targetZoneId {
+                        ud.set("all", forKey: "EmailListView.domainFilterType")
+                        ud.removeObject(forKey: "EmailListView.domainFilterZoneId")
+                    }
+                    zoneToRemove = nil
+                }
+            } message: {
+                let name = zoneToRemove?.domainName.isEmpty == false ? zoneToRemove!.domainName : (zoneToRemove?.zoneId ?? "this zone")
+                Text("This will remove \(name) from this device. Your Cloudflare configuration and iCloud data will remain intact.")
             }
             .alert("Import Error", isPresented: $showImportError, presenting: importError) { _ in
                 Button("OK", role: .cancel) { }
@@ -775,3 +806,31 @@ struct CSVDocument: FileDocument {
 // Duplicate ZoneCard removed
 
 // ZoneCard removed; using native Section groupings
+
+// Small helper view to show app version; keeps the main view simpler for the type-checker
+private struct AppVersionValueView: View {
+    private var versionText: String {
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
+        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown"
+        return "\(appVersion) (\(buildNumber))"
+    }
+
+    var body: some View {
+        let val = versionText
+        return Text(val)
+            .font(.system(.subheadline, design: .rounded))
+            .foregroundStyle(.secondary)
+            .onLongPressGesture(minimumDuration: 0.5) {
+                UIPasteboard.general.string = val
+                let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
+            }
+            .contextMenu {
+                Button {
+                    UIPasteboard.general.string = val
+                } label: {
+                    Text("Copy Version")
+                    Image(systemName: "doc.on.doc")
+                }
+            }
+    }
+}

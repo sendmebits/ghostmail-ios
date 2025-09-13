@@ -859,6 +859,41 @@ class CloudflareClient: ObservableObject {
         }
     }
 
+    // Remove a zone locally without touching Cloudflare or iCloud.
+    // If the removed zone is the current primary, switch to another configured zone if available,
+    // otherwise perform a full logout.
+    @MainActor
+    func removeZone(zoneId removedZoneId: String) {
+        // Remove from zones list first
+        zones.removeAll { $0.zoneId == removedZoneId }
+        persistZones()
+
+        // If we removed the active/primary zone, promote another zone or logout
+        if self.zoneId == removedZoneId {
+            if let newPrimary = zones.first {
+                // Promote first remaining zone to primary credentials
+                accountId = newPrimary.accountId
+                zoneId = newPrimary.zoneId
+                apiToken = newPrimary.apiToken
+                accountName = newPrimary.accountName
+                domainName = newPrimary.domainName
+
+                let defaults = UserDefaults.standard
+                defaults.set(accountId, forKey: "accountId")
+                defaults.set(zoneId, forKey: "zoneId")
+                defaults.set(apiToken, forKey: "apiToken")
+                defaults.set(true, forKey: "isAuthenticated")
+
+                // Clear forwarding cache to avoid stale state across accounts
+                forwardingAddressesCache = []
+                lastForwardingAddressesFetch = .distantPast
+            } else {
+                // No zones left — same as a full logout
+                logout()
+            }
+        }
+    }
+
     // Fetch zone details (domain/account names) without mutating current state
     func fetchZoneDetails(accountId: String, zoneId: String, token: String) async throws -> (domainName: String, accountName: String) {
         let url = URL(string: "\(baseURL)/zones/\(zoneId)")!

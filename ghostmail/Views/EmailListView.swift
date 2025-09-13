@@ -205,20 +205,31 @@ struct EmailListView: View {
                 uniqueKeysWithValues: cloudflareRules.map { ($0.emailAddress, $0) }
             )
             
-            // Create dictionary for existing aliases across zones, handling potential duplicates
+            // Build dictionary for existing aliases across zones, including logged-out ones
+            // so we can reactivate instead of creating duplicates
             var existingAliasesMap: [String: EmailAlias] = [:]
-            for alias in allAliases {
-                if existingAliasesMap[alias.emailAddress] == nil {
-                    existingAliasesMap[alias.emailAddress] = alias
-                } else {
-                    // Handle duplicate in local database - keep the one with the most recent created date
-                    print("⚠️ Found duplicate local alias for: \(alias.emailAddress)")
-                    let existing = existingAliasesMap[alias.emailAddress]!
-                    if (alias.created ?? Date.distantPast) > (existing.created ?? Date.distantPast) {
+            do {
+                let descriptor = FetchDescriptor<EmailAlias>()
+                let allExisting = try modelContext.fetch(descriptor)
+                for alias in allExisting {
+                    if let current = existingAliasesMap[alias.emailAddress] {
+                        // Prefer non-logged-out entries; otherwise prefer the one with richer metadata
+                        if current.isLoggedOut && !alias.isLoggedOut {
+                            existingAliasesMap[alias.emailAddress] = alias
+                        } else if current.isLoggedOut == alias.isLoggedOut {
+                            // Tie-breaker: prefer the one with more metadata
+                            let currentMeta = (current.notes.isEmpty ? 0 : 1) + (current.website.isEmpty ? 0 : 1)
+                            let aliasMeta = (alias.notes.isEmpty ? 0 : 1) + (alias.website.isEmpty ? 0 : 1)
+                            if aliasMeta > currentMeta {
+                                existingAliasesMap[alias.emailAddress] = alias
+                            }
+                        }
+                    } else {
                         existingAliasesMap[alias.emailAddress] = alias
                     }
-                    // If we want to clean up, we could delete the older duplicate here
                 }
+            } catch {
+                print("Error fetching existing aliases for refresh: \(error)")
             }
             
             // Remove deleted aliases, but only those that belong to configured zones and are missing there
@@ -238,22 +249,16 @@ struct EmailListView: View {
                 let emailAddress = rule.emailAddress
                 let forwardTo = rule.forwardTo
                 
-                    if let existing = existingAliasesMap[emailAddress] {
-                    // Only update if there are actual changes
-                    let needsUpdate = existing.cloudflareTag != rule.cloudflareTag ||
-                                    existing.isEnabled != rule.isEnabled ||
-                                    existing.forwardTo != forwardTo ||
-                                    existing.sortIndex != index + 1
-                    
-            if needsUpdate {
-                        withAnimation {
-                            existing.cloudflareTag = rule.cloudflareTag
-                            existing.isEnabled = rule.isEnabled
-                            existing.forwardTo = forwardTo
-                            existing.sortIndex = index + 1
-                // Ensure the alias is marked as belonging to the correct originating zone
-                existing.zoneId = rule.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
-                        }
+                if let existing = existingAliasesMap[emailAddress] {
+                    // Reactivate if it was logged out and update fields
+                    let newZoneId = rule.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+                    withAnimation {
+                        existing.isLoggedOut = false
+                        existing.cloudflareTag = rule.cloudflareTag
+                        existing.isEnabled = rule.isEnabled
+                        existing.forwardTo = forwardTo
+                        existing.sortIndex = index + 1
+                        existing.zoneId = newZoneId
                     }
                 } else {
                     // Create new alias with proper properties
@@ -273,8 +278,14 @@ struct EmailListView: View {
                 }
             }
             
-            // Save once after all updates
+            // Save once after all updates and run a quick dedup pass to merge any stragglers
             try modelContext.save()
+            do {
+                let removed = try EmailAlias.deduplicate(in: modelContext)
+                if removed > 0 { print("Deduplicated \(removed) aliases during refresh (post-reactivation)") }
+            } catch {
+                print("Deduplication error: \(error)")
+            }
             
         } catch {
             print("Error during refresh: \(error)")
@@ -319,26 +330,9 @@ struct EmailListView: View {
                 } else {
                     List {
                         ForEach(sortedEmails, id: \.id) { email in
-                            NavigationLink(value: email) {
-                                EmailRowView(email: email) {
-                                    let generator = UIImpactFeedbackGenerator(style: .heavy)
-                                    generator.impactOccurred()
-                                    UIPasteboard.general.string = email.emailAddress
-                                    showToastWithTimer(email.emailAddress)
-                                }
+                            EmailListRowLink(email: email) { copied in
+                                showToastWithTimer(copied)
                             }
-                            .buttonStyle(.plain)
-                            .contentShape(Rectangle())
-                            .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-                                // Prepare the generator before the gesture is triggered
-                                let generator = UIImpactFeedbackGenerator(style: .heavy)
-                                generator.prepare()
-                                // Trigger haptic immediately when gesture threshold is met
-                                generator.impactOccurred()
-                                // Then handle the clipboard and toast
-                                UIPasteboard.general.string = email.emailAddress
-                                showToastWithTimer(email.emailAddress)
-                            })
                         }
                     }
                     .listStyle(.plain)
@@ -536,6 +530,10 @@ struct EmailListView: View {
                 }
             }
         }
+        // Auto-refresh when zones change (e.g., adding/removing a zone)
+        .onChange(of: cloudflareClient.zones) { _, _ in
+            Task { await refreshEmailRules() }
+        }
     }
 }
 
@@ -661,6 +659,32 @@ struct EmailRowView: View {
             }
             isLoadingIcon = false
         }
+    }
+}
+
+// Compact wrapper for a list row + NavigationLink + copy gestures
+private struct EmailListRowLink: View {
+    let email: EmailAlias
+    let onCopied: (String) -> Void
+
+    var body: some View {
+        NavigationLink(value: email) {
+            EmailRowView(email: email) {
+                let generator = UIImpactFeedbackGenerator(style: .heavy)
+                generator.impactOccurred()
+                UIPasteboard.general.string = email.emailAddress
+                onCopied(email.emailAddress)
+            }
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+            let generator = UIImpactFeedbackGenerator(style: .heavy)
+            generator.prepare()
+            generator.impactOccurred()
+            UIPasteboard.general.string = email.emailAddress
+            onCopied(email.emailAddress)
+        })
     }
 }
 
