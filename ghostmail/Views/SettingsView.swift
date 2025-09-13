@@ -159,81 +159,85 @@ struct SettingsView: View {
         isLoading = true
         
         Task {
-            // Delete CloudKit data for the current Zone ID
+            // Delete CloudKit data for the current Zone ID only
             let container = CKContainer.default()
             let database = container.privateCloudDatabase
-            
+
             do {
                 // First, mark all local data as not syncing to prevent re-upload
                 try modelContext.save()
-                
-                // Use a zone ID based fetch operation instead of querying by recordName
-                // This avoids the "recordName not queryable" error
-                var zoneIDs: [CKRecordZone.ID] = []
-                
+
+                // Ensure we have a zoneId to target; we must not delete zones for other accounts
+                let targetZoneFragment = cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+                if targetZoneFragment.isEmpty {
+                    print("No Cloudflare zoneId available – skipping iCloud zone deletion to avoid accidental data loss")
+                    await MainActor.run { isLoading = false }
+                    return
+                }
+
+                // Fetch all zones but only attempt to delete those that appear to belong to the current Cloudflare zone
+                var allZones: [CKRecordZone] = []
+
                 // Retry zone fetching up to 3 times with exponential backoff
                 for attempt in 1...3 {
                     do {
-                        zoneIDs = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[CKRecordZone.ID], Error>) in
+                        allZones = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[CKRecordZone], Error>) in
                             container.privateCloudDatabase.fetchAllRecordZones { zones, error in
                                 if let error = error {
                                     continuation.resume(throwing: error)
                                 } else if let zones = zones {
-                                    // Extract just the zone IDs from the zones
-                                    let zoneIDs = zones.map { $0.zoneID }
-                                    continuation.resume(returning: zoneIDs)
+                                    continuation.resume(returning: zones)
                                 } else {
                                     continuation.resume(throwing: NSError(domain: "CloudKit", code: 0, userInfo: [NSLocalizedDescriptionKey: "No zones returned and no error"]))
                                 }
                             }
                         }
-                        // If successful, break out of retry loop
                         break
                     } catch {
-                        if attempt == 3 {
-                            // On final attempt, propagate the error
-                            throw error
-                        }
-                        // Wait with exponential backoff before retrying
+                        if attempt == 3 { throw error }
                         try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt)) * 500_000_000))
                         print("Retrying zone fetch, attempt \(attempt + 1)...")
                     }
                 }
-                
-                // Track if any deletions failed
+
+                // Filter zones to only those that likely belong to the current Cloudflare zoneId.
+                // We deliberately avoid deleting the _defaultZone and we only proceed if a zone's name
+                // contains the Cloudflare zoneId fragment. This is a conservative heuristic to avoid
+                // accidentally removing unrelated users' data.
+                let candidateZones = allZones.filter { zone in
+                    let name = zone.zoneID.zoneName
+                    return name != "_defaultZone" && name.contains(targetZoneFragment)
+                }
+
+                if candidateZones.isEmpty {
+                    print("No matching iCloud record zones found for zoneId '\(targetZoneFragment)'. Skipping deletion.")
+                    await MainActor.run { isLoading = false }
+                    return
+                }
+
                 var hadDeletionFailures = false
                 var zoneDeletionErrors: [Error] = []
-                
-                // For each zone, delete all EmailAlias records
-                for zoneID in zoneIDs {
-                    // Skip the default zone as it's not used by SwiftData/CloudKit integration
-                    if zoneID.zoneName == "_defaultZone" {
-                        continue
-                    }
-                    
-                    // Try to delete the zone with retry logic
+
+                for zone in candidateZones {
+                    let zoneID = zone.zoneID
                     var zoneDeleted = false
                     for attempt in 1...3 {
                         do {
-                            // Delete the entire zone and all its records
                             try await database.deleteRecordZone(withID: zoneID)
                             zoneDeleted = true
                             print("Successfully deleted zone: \(zoneID.zoneName)")
                             break
                         } catch let zoneError as NSError {
-                            // If zone doesn't exist, that's success for our purposes
                             if zoneError.code == CKError.unknownItem.rawValue {
                                 print("Zone \(zoneID.zoneName) doesn't exist or was already deleted")
                                 zoneDeleted = true
                                 break
                             }
-                            
-                            // For rate limiting or network errors, retry with backoff
+
                             if zoneError.code == CKError.serviceUnavailable.rawValue ||
                                zoneError.code == CKError.networkFailure.rawValue ||
                                zoneError.code == CKError.networkUnavailable.rawValue ||
                                zoneError.code == CKError.requestRateLimited.rawValue {
-                                
                                 if attempt < 3 {
                                     let delay = UInt64(pow(2.0, Double(attempt)) * 1_000_000_000)
                                     try await Task.sleep(nanoseconds: delay)
@@ -241,8 +245,7 @@ struct SettingsView: View {
                                     continue
                                 }
                             }
-                            
-                            // If we're here on the last attempt, track the failure
+
                             if attempt == 3 {
                                 hadDeletionFailures = true
                                 zoneDeletionErrors.append(zoneError)
@@ -250,35 +253,26 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    
-                    if !zoneDeleted {
-                        hadDeletionFailures = true
-                    }
+
+                    if !zoneDeleted { hadDeletionFailures = true }
                 }
-                
-                // Update UI based on success/failure
+
                 await MainActor.run {
                     if hadDeletionFailures {
-                        print("⚠️ iCloud sync disabled, but some data couldn't be deleted from iCloud.")
+                        print("⚠️ iCloud sync disabled, but some data couldn't be deleted from iCloud for zoneId: \(targetZoneFragment).")
                         if let firstError = zoneDeletionErrors.first {
                             print("Error detail: \(firstError.localizedDescription)")
                         }
                     } else {
-                        print("✅ iCloud sync disabled. All data successfully removed from iCloud.")
+                        print("✅ iCloud sync disabled. Selected zone data successfully removed from iCloud for zoneId: \(targetZoneFragment).")
                     }
-                    
-                    // Reset loading state
+
                     isLoading = false
                 }
             } catch {
                 print("Error managing iCloud data: \(error.localizedDescription)")
-                
-                // Ensure settings are still updated even if there was an error
                 await MainActor.run {
-                    // Make sure the iCloud sync setting stays disabled
                     iCloudSyncEnabled = false
-                    // Removed synchronization of ubiquitous key-value store
-                    // Reset loading state
                     isLoading = false
                 }
             }

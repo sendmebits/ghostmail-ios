@@ -13,10 +13,13 @@ final class EmailAlias {
     var isEnabled: Bool = true
     var sortIndex: Int = 0
     var forwardTo: String = ""
+    // The Cloudflare Zone ID this alias belongs to (optional). Used to avoid deleting
+    // aliases that belong to a different Cloudflare zone/account.
+    var zoneId: String = ""
     var isLoggedOut: Bool = false
     var userIdentifier: String = ""
     
-    init(emailAddress: String, forwardTo: String = "", isManuallyCreated: Bool = false) {
+    init(emailAddress: String, forwardTo: String = "", isManuallyCreated: Bool = false, zoneId: String = "") {
         self.id = UUID().uuidString
         self.emailAddress = emailAddress
         self.website = ""
@@ -27,6 +30,7 @@ final class EmailAlias {
         self.forwardTo = forwardTo
         self.isLoggedOut = false
         self.userIdentifier = ""
+        self.zoneId = zoneId
         
         print("EmailAlias initialized - address: \(emailAddress), forward to: \(forwardTo)")
     }
@@ -136,6 +140,11 @@ final class EmailAlias {
                 // Ensure user identifier is set
                 if survivor.userIdentifier.isEmpty && !duplicate.userIdentifier.isEmpty {
                     survivor.userIdentifier = duplicate.userIdentifier
+                }
+
+                // If survivor lacks a zoneId but the duplicate has one, prefer that
+                if survivor.zoneId.isEmpty && !duplicate.zoneId.isEmpty {
+                    survivor.zoneId = duplicate.zoneId
                 }
 
                 context.delete(duplicate)
