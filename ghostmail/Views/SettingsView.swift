@@ -65,6 +65,18 @@ struct SettingsView: View {
         zone.domainName.isEmpty ? zone.zoneId : zone.domainName
     }
     
+    // Resolve zone from an email address' domain (best-effort)
+    private func zoneForEmailAddress(_ email: String) -> CloudflareClient.CloudflareZone? {
+        let parts = email.split(separator: "@", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return nil }
+        let domain = parts[1].lowercased()
+        // Prefer an exact domain match from configured zones
+        if let z = cloudflareClient.zones.first(where: { $0.domainName.lowercased() == domain }) {
+            return z
+        }
+        return nil
+    }
+    
     private func exportToCSV() {
         let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To\n" + emailAliases.map { alias in
             let createdStr = alias.created?.ISO8601Format() ?? ""
@@ -113,28 +125,81 @@ struct SettingsView: View {
                     existingAlias.forwardTo = forwardTo
                     existingAlias.created = created  // Always overwrite the created date, even if nil
                     
-                    // Update Cloudflare if the email is enabled or forward address changed
+                    // Update Cloudflare if we have a tag, using the alias' zone if available
                     if let tag = existingAlias.cloudflareTag {
+                        // Prefer the zone recorded on the alias; otherwise infer by email domain
+                        let zone: CloudflareClient.CloudflareZone? =
+                            cloudflareClient.zones.first(where: { !$0.zoneId.isEmpty && $0.zoneId == existingAlias.zoneId })
+                            ?? zoneForEmailAddress(emailAddress)
+
+                        // Align local alias zone if we could resolve it
+                        if let z = zone { existingAlias.zoneId = z.zoneId }
+
                         Task {
-                            try await cloudflareClient.updateEmailRule(
-                                tag: tag,
-                                emailAddress: emailAddress,
-                                isEnabled: isEnabled,
-                                forwardTo: forwardTo
-                            )
+                            if let z = zone {
+                                try await cloudflareClient.updateEmailRule(
+                                    tag: tag,
+                                    emailAddress: emailAddress,
+                                    isEnabled: isEnabled,
+                                    forwardTo: forwardTo,
+                                    in: z
+                                )
+                            } else {
+                                // Fallback to current primary zone
+                                try await cloudflareClient.updateEmailRule(
+                                    tag: tag,
+                                    emailAddress: emailAddress,
+                                    isEnabled: isEnabled,
+                                    forwardTo: forwardTo
+                                )
+                            }
                         }
                     }
                 } else {
                     // Create new Cloudflare rule first
                     Task {
                         do {
-                            let rule = try await cloudflareClient.createEmailRule(
-                                emailAddress: emailAddress,
-                                forwardTo: forwardTo
-                            )
+                            // Choose zone by email domain when possible
+                            let zone = zoneForEmailAddress(emailAddress)
+                            let rule: EmailRule
+                            if let z = zone {
+                                rule = try await cloudflareClient.createEmailRule(
+                                    emailAddress: emailAddress,
+                                    forwardTo: forwardTo,
+                                    in: z
+                                )
+                                // If CSV specifies disabled, reflect that state
+                                if isEnabled == false {
+                                    try await cloudflareClient.updateEmailRule(
+                                        tag: rule.tag,
+                                        emailAddress: emailAddress,
+                                        isEnabled: false,
+                                        forwardTo: forwardTo,
+                                        in: z
+                                    )
+                                }
+                            } else {
+                                rule = try await cloudflareClient.createEmailRule(
+                                    emailAddress: emailAddress,
+                                    forwardTo: forwardTo
+                                )
+                                if isEnabled == false {
+                                    try await cloudflareClient.updateEmailRule(
+                                        tag: rule.tag,
+                                        emailAddress: emailAddress,
+                                        isEnabled: false,
+                                        forwardTo: forwardTo
+                                    )
+                                }
+                            }
                             
-                            // Create new alias with Cloudflare tag
-                            let newAlias = EmailAlias(emailAddress: emailAddress, forwardTo: forwardTo, isManuallyCreated: created != nil)
+                            // Create new alias with Cloudflare tag and zone attribution
+                            let newAlias = EmailAlias(
+                                emailAddress: emailAddress,
+                                forwardTo: forwardTo,
+                                isManuallyCreated: created != nil,
+                                zoneId: zone?.zoneId ?? cloudflareClient.zoneId
+                            )
                             newAlias.website = website
                             newAlias.notes = notes
                             newAlias.created = created  // This will be nil if not in CSV

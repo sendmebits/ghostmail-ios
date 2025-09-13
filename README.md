@@ -31,3 +31,10 @@ CSV formatting is as follows, note the optional fields:
 Email Address,Website,Notes,Created,Enabled,Forward To
 user@domain.com,website.com[optional],notes[optional],2025-02-07T01:39:10Z[optional],true,forwardto@domain.com
 ```
+
+Multi-zone notes:
+- The CSV export lists aliases across all configured zones and does not include a zone column.
+- On import, the app infers the target zone from the email domain in `Email Address` and applies the Cloudflare change in that domain's zone.
+- If no configured zone matches the email's domain, the current primary zone is used as a fallback.
+- Existing aliases keep their original zone when present; otherwise the zone is set based on the inferred domain.
+- Import may create duplicates if you have the same address in multiple zones; review after importing.
