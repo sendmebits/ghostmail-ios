@@ -23,6 +23,7 @@ struct EmailListView: View {
     @State private var showingSettings = false
     @State private var isLoading = false
     @State private var isInitialLoad = true
+    @State private var isNetworking = false
     @State private var error: Error?
     @State private var showError = false
     @State private var showCopyToast = false
@@ -181,9 +182,11 @@ struct EmailListView: View {
         Array(cloudflareClient.forwardingAddresses).sorted()
     }
     
-    private func refreshEmailRules() async {
-        guard !isLoading else { return }
-        isLoading = true
+    private func refreshEmailRules(showLoading: Bool = false) async {
+        // Coalesce concurrent refreshes regardless of UI loading state
+        guard !isNetworking else { return }
+        isNetworking = true
+        if showLoading { isLoading = true }
         
         do {
             var cloudflareRules = try await cloudflareClient.getEmailRulesAllZones()
@@ -287,13 +290,25 @@ struct EmailListView: View {
                 print("Deduplication error: \(error)")
             }
             
-        } catch {
-            print("Error during refresh: \(error)")
-            self.error = error
-            self.showError = true
+    } catch {
+            // Treat user-initiated cancellations (URLError.cancelled / -999) as non-fatal
+            if isCancellationError(error) {
+                print("Refresh cancelled (ignored)")
+            } else {
+                print("Error during refresh: \(error)")
+                self.error = error
+                self.showError = true
+            }
         }
-        isLoading = false
+    if showLoading { isLoading = false }
+    isNetworking = false
         isInitialLoad = false
+    }
+
+    private func isCancellationError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
     
     private func showToastWithTimer(_ email: String) {
@@ -316,17 +331,37 @@ struct EmailListView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem)
     }
     
+    // Unified refresh action used by both list and empty-state scroll view
+    private func refreshAction() async {
+        do {
+            let deleted = try EmailAlias.deduplicate(in: modelContext)
+            if deleted > 0 { print("Deduplicated \(deleted) aliases during refresh") }
+        } catch {
+            print("Error during refresh deduplication: \(error)")
+        }
+        await refreshEmailRules()
+    }
+    
     var body: some View {
     ZStack {
             Group {
                 if isLoading && isInitialLoad {
                     ProgressView()
                 } else if sortedEmails.isEmpty {
-                    ContentUnavailableView(
-                        "No Email Aliases",
-                        systemImage: "envelope.badge.shield.half.filled",
-                        description: Text("Create your first email alias using the + button")
-                    )
+                    // Wrap empty state in a ScrollView so pull-to-refresh works even when empty
+                    ScrollView {
+                        VStack {
+                            ContentUnavailableView(
+                                "No Email Aliases",
+                                systemImage: "envelope.badge.shield.half.filled",
+                                description: Text("Create your first email alias using the + button")
+                            )
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .refreshable {
+                        await refreshAction()
+                    }
                 } else {
                     List {
                         ForEach(sortedEmails, id: \.id) { email in
@@ -342,13 +377,7 @@ struct EmailListView: View {
                         EmailDetailView(email: email, needsRefresh: $needsRefresh)
                     }
                     .refreshable {
-                        do {
-                            let deleted = try EmailAlias.deduplicate(in: modelContext)
-                            if deleted > 0 { print("Deduplicated \(deleted) aliases during refresh") }
-                        } catch {
-                            print("Error during refresh deduplication: \(error)")
-                        }
-                        await refreshEmailRules()
+                        await refreshAction()
                     }
                 }
             }
@@ -526,7 +555,7 @@ struct EmailListView: View {
             }
             // Only load if we haven't loaded yet and there are no existing aliases
             if isInitialLoad && emailAliases.isEmpty {
-                await refreshEmailRules()
+                await refreshEmailRules(showLoading: true)
             } else {
                 // If we have existing data, just mark as loaded
                 isInitialLoad = false
