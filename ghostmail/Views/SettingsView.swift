@@ -24,11 +24,35 @@ struct SettingsView: View {
     @State private var showDeleteICloudDataConfirmation = false
     @State private var showRestartAlert = false
     @Environment(\.openURL) private var openURL
+    @State private var showAddZoneSheet = false
+    @AppStorage("defaultZoneId") private var defaultZoneId: String = ""
     
     init() {
         // Initialize selectedDefaultAddress with the current saved value
         let savedDefault = UserDefaults.standard.string(forKey: "defaultForwardingAddress") ?? ""
         _selectedDefaultAddress = State(initialValue: savedDefault)
+    }
+
+    // Precompute additional zones (exclude the primary zone)
+    private var additionalZones: [CloudflareClient.CloudflareZone] {
+        cloudflareClient.zones.filter { $0.zoneId != cloudflareClient.zoneId }
+    }
+
+    // Entry count helper for a specific zone
+    private func entryCount(for zoneId: String) -> Int {
+        emailAliases.filter { $0.zoneId == zoneId }.count
+    }
+
+    private var sortedForwardingAddresses: [String] {
+        Array(cloudflareClient.forwardingAddresses).sorted()
+    }
+
+    private var primaryZoneId: String {
+        cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func zoneDisplayName(_ zone: CloudflareClient.CloudflareZone) -> String {
+        zone.domainName.isEmpty ? zone.zoneId : zone.domainName
     }
     
     private func exportToCSV() {
@@ -347,7 +371,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                // Account section
+                // Cloudflare Account grouped as separate sections (no outer shading)
                 Section {
                     InfoRow(title: "Account ID for \(cloudflareClient.accountName)") {
                         Text(cloudflareClient.accountId)
@@ -368,7 +392,15 @@ struct SettingsView: View {
                                 }
                             }
                     }
-                    
+                } header: {
+                    Text("Cloudflare Account")
+                        .textCase(.uppercase)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+
+                // Primary zone section
+                Section {
                     InfoRow(title: "Zone ID for \(cloudflareClient.emailDomain)") {
                         Text(cloudflareClient.zoneId)
                             .font(.system(.subheadline, design: .rounded))
@@ -388,24 +420,67 @@ struct SettingsView: View {
                                 }
                             }
                     }
-                    
                     InfoRow(title: "Entries") {
-                        Text("\(emailAliases.count) Addresses Created")
+                        let count = entryCount(for: primaryZoneId)
+                        Text("\(count) Addresses Created")
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
-                } header: {
-                    Text("Cloudflare Account")
-                        .textCase(.uppercase)
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundStyle(.secondary)
+                }
+
+                // Additional zone sections
+                ForEach(additionalZones, id: \.zoneId) { z in
+                    Section {
+                        InfoRow(title: "Zone ID for \(zoneDisplayName(z))") {
+                            Text(z.zoneId)
+                                .font(.system(.subheadline, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .contextMenu {
+                                    Button {
+                                        UIPasteboard.general.string = z.zoneId
+                                    } label: {
+                                        Text("Copy Zone ID")
+                                        Image(systemName: "doc.on.doc")
+                                    }
+                                }
+                        }
+                        InfoRow(title: "Entries") {
+                            let count = entryCount(for: z.zoneId)
+                            Text("\(count) Addresses Created")
+                                .font(.system(.subheadline, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                // Add Zone entry point
+                Section {
+                    Button {
+                        showAddZoneSheet = true
+                    } label: {
+                        Label("Add Zone", systemImage: "plus.circle")
+                    }
                 }
                 
                 // Settings section
                 Section {
-                    if !cloudflareClient.forwardingAddresses.isEmpty {
+                    // Default Domain (only when multiple zones)
+                    if cloudflareClient.zones.count > 1 {
+                        Picker("Default Domain", selection: $defaultZoneId) {
+                            ForEach(cloudflareClient.zones, id: \.zoneId) { z in
+                                Text(zoneDisplayName(z)).tag(z.zoneId)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .onAppear {
+                            if defaultZoneId.isEmpty {
+                                defaultZoneId = cloudflareClient.zoneId
+                            }
+                        }
+                    }
+
+            if !cloudflareClient.forwardingAddresses.isEmpty {
                         Picker("Default Destination", selection: $selectedDefaultAddress) {
-                            ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
+                ForEach(sortedForwardingAddresses, id: \.self) { address in
                                 Text(address).tag(address)
                             }
                         }
@@ -578,6 +653,20 @@ struct SettingsView: View {
                 Text("To properly enable iCloud sync, the app needs to restart. Would you like to restart now?")
             }
         }
+        .sheet(isPresented: $showAddZoneSheet) {
+            NavigationStack {
+                AddZoneView(onSuccess: {
+                    showAddZoneSheet = false
+                })
+                .navigationTitle("Add Zone (Domain)")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showAddZoneSheet = false }
+                    }
+                }
+            }
+        }
         .onAppear {
             // Force fetching addresses from Cloudflare first
             Task {
@@ -589,8 +678,12 @@ struct SettingsView: View {
                     if cloudflareClient.domainName.isEmpty {
                         try await cloudflareClient.fetchDomainName()
                     }
-                    // Then fetch addresses directly from Cloudflare API
-                    try await cloudflareClient.refreshForwardingAddresses()
+                    // Then fetch addresses directly from Cloudflare API (all zones when available)
+                    if cloudflareClient.zones.count > 1 {
+                        try await cloudflareClient.refreshForwardingAddressesAllZones()
+                    } else {
+                        try await cloudflareClient.refreshForwardingAddresses()
+                    }
                     
                     // Then update the UI with the fetched addresses
                     await MainActor.run {
@@ -670,3 +763,7 @@ struct CSVDocument: FileDocument {
         try FileWrapper(url: url, options: .immediate)
     }
 }
+
+// Duplicate ZoneCard removed
+
+// ZoneCard removed; using native Section groupings
