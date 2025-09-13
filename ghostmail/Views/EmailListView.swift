@@ -39,6 +39,9 @@ struct EmailListView: View {
     // Domain filter (by Cloudflare zone)
     enum DomainFilter: Equatable { case all, zone(String) }
     @State private var domainFilter: DomainFilter = .all
+    // Pending (staged) filters used inside the filter sheet
+    @State private var pendingDestinationFilter: DestinationFilter = .all
+    @State private var pendingDomainFilter: DomainFilter = .all
 
     // Derived UI state
     private var isFilterActive: Bool {
@@ -72,7 +75,7 @@ struct EmailListView: View {
             }
         }
     }
-    
+
     init(searchText: Binding<String>, needsRefresh: Binding<Bool>) {
         self._searchText = searchText
         self._needsRefresh = needsRefresh
@@ -425,6 +428,9 @@ struct EmailListView: View {
                     }
                     // Filter option
                     Button {
+                        // Stage current filters before presenting the sheet
+                        pendingDestinationFilter = destinationFilter
+                        pendingDomainFilter = domainFilter
                         showFilterSheet = true
                     } label: {
                         Label("Filter", systemImage: isFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
@@ -454,19 +460,19 @@ struct EmailListView: View {
         .onChange(of: domainFilter) { _, newValue in
             persistDomainFilter(newValue)
         }
-    // ...existing code...
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
+        }
         .sheet(isPresented: $showFilterSheet) {
             NavigationView {
                 List {
                     Section(header: Text("Destination Address")) {
                         Button(action: {
-                            destinationFilter = .all
-                            showFilterSheet = false
-                            persistDestinationFilter(.all)
+                            pendingDestinationFilter = .all
                         }) {
                             HStack {
                                 Text("All")
-                                if destinationFilter == .all {
+                                if pendingDestinationFilter == .all {
                                     Spacer()
                                     Image(systemName: "checkmark")
                                 }
@@ -474,13 +480,11 @@ struct EmailListView: View {
                         }
                         ForEach(allDestinationAddresses, id: \.self) { addr in
                             Button(action: {
-                                destinationFilter = .address(addr)
-                                showFilterSheet = false
-                                persistDestinationFilter(.address(addr))
+                                pendingDestinationFilter = .address(addr)
                             }) {
                                 HStack {
                                     Text(addr)
-                                    if destinationFilter == .address(addr) {
+                                    if pendingDestinationFilter == .address(addr) {
                                         Spacer()
                                         Image(systemName: "checkmark")
                                     }
@@ -492,13 +496,11 @@ struct EmailListView: View {
                     if cloudflareClient.zones.count > 1 {
                         Section(header: Text("Domain")) {
                             Button(action: {
-                                domainFilter = .all
-                                showFilterSheet = false
-                                persistDomainFilter(.all)
+                                pendingDomainFilter = .all
                             }) {
                                 HStack {
                                     Text("All")
-                                    if domainFilter == .all {
+                                    if pendingDomainFilter == .all {
                                         Spacer()
                                         Image(systemName: "checkmark")
                                     }
@@ -506,13 +508,11 @@ struct EmailListView: View {
                             }
                             ForEach(cloudflareClient.zones, id: \.zoneId) { z in
                                 Button(action: {
-                                    domainFilter = .zone(z.zoneId)
-                                    showFilterSheet = false
-                                    persistDomainFilter(.zone(z.zoneId))
+                                    pendingDomainFilter = .zone(z.zoneId)
                                 }) {
                                     HStack {
                                         Text(z.domainName.isEmpty ? z.zoneId : z.domainName)
-                                        if domainFilter == .zone(z.zoneId) {
+                                        if pendingDomainFilter == .zone(z.zoneId) {
                                             Spacer()
                                             Image(systemName: "checkmark")
                                         }
@@ -529,10 +529,35 @@ struct EmailListView: View {
                         Button("Cancel") { showFilterSheet = false }
                     }
                 }
+                // Bottom Apply button so selections don't auto-apply until confirmed
+                .safeAreaInset(edge: .bottom) {
+                    ZStack {
+                        // subtle background to separate from list content
+                        Rectangle()
+                            .fill(Color.black.opacity(0.6))
+                            .ignoresSafeArea()
+                            .frame(height: 0)
+                        VStack {
+                            Button {
+                                // Apply staged filters and close
+                                destinationFilter = pendingDestinationFilter
+                                domainFilter = pendingDomainFilter
+                                showFilterSheet = false
+                            } label: {
+                                Text("Apply Filters")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.blue)
+                            .disabled(pendingDestinationFilter == destinationFilter && pendingDomainFilter == domainFilter)
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                            .padding(.bottom)
+                        }
+                        .background(.ultraThinMaterial)
+                    }
+                }
             }
-        }
-        .sheet(isPresented: $showingSettings) {
-            SettingsView()
         }
         .sheet(isPresented: $showingCreateSheet) {
             EmailCreateView()
@@ -712,7 +737,6 @@ struct EmailRowView: View {
         }
     }
 }
-
 // Compact wrapper for a list row + NavigationLink + copy gestures
 private struct EmailListRowLink: View {
     let email: EmailAlias
