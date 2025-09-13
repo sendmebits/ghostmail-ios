@@ -23,6 +23,7 @@ struct EmailDetailView: View {
     @State private var tempIsEnabled: Bool
     @State private var tempForwardTo: String
     @State private var tempUsername: String = ""
+    @State private var availableForwardingAddresses: [String] = []
     
     @State private var showDeleteConfirmation = false
     @State private var toastWorkItem: DispatchWorkItem?
@@ -44,6 +45,30 @@ struct EmailDetailView: View {
         }
     }
     
+    // Determine domain and zone for this alias to support multi-zone editing
+    private var aliasDomain: String {
+        let parts = email.emailAddress.split(separator: "@")
+        if parts.count == 2 { return String(parts[1]) }
+        // Fallback to zone's domain name if available
+        if let z = aliasZone, !z.domainName.isEmpty { return z.domainName }
+        return cloudflareClient.emailDomain
+    }
+
+    private var aliasZone: CloudflareClient.CloudflareZone? {
+        if !email.zoneId.isEmpty, let z = cloudflareClient.zones.first(where: { $0.zoneId == email.zoneId }) {
+            return z
+        }
+        // Fallback: try match by domain name from the email address
+        let parts = email.emailAddress.split(separator: "@")
+        if parts.count == 2 {
+            let domain = String(parts[1])
+            if let z = cloudflareClient.zones.first(where: { $0.domainName == domain }) {
+                return z
+            }
+        }
+        return nil
+    }
+
     private var formattedCreatedDate: String {
         guard let created = email.created else {
             return "Created by Cloudflare"
@@ -92,9 +117,7 @@ struct EmailDetailView: View {
         return URL(string: s)
     }
     
-    private var fullEmailAddress: String {
-        "\(tempUsername)@\(cloudflareClient.emailDomain)"
-    }
+    private var fullEmailAddress: String { "\(tempUsername)@\(aliasDomain)" }
     
     var body: some View {
         ZStack {
@@ -180,7 +203,7 @@ struct EmailDetailView: View {
                                         .clipShape(RoundedRectangle(cornerRadius: 8))
                                         .padding(.horizontal)
                                     
-                                    Text("@\(cloudflareClient.emailDomain)")
+                                    Text("@\(aliasDomain)")
                                         .foregroundStyle(.primary)
                                         .font(.system(.title2, design: .rounded, weight: .medium))
                                         .frame(maxWidth: .infinity, alignment: .center)
@@ -223,19 +246,27 @@ struct EmailDetailView: View {
                         // Destination section
                         DetailSection(title: "Destination") {
                             if isEditing {
-                                if !cloudflareClient.forwardingAddresses.isEmpty {
+                                if !availableForwardingAddresses.isEmpty {
+                                    Picker("Forward to", selection: $tempForwardTo) {
+                                        ForEach(availableForwardingAddresses, id: \.self) { address in
+                                            Text(address).tag(address)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .onAppear {
+                                        // Ensure we have a valid selection for this zone
+                                        if tempForwardTo.isEmpty || !availableForwardingAddresses.contains(tempForwardTo) {
+                                            tempForwardTo = availableForwardingAddresses.first ?? ""
+                                        }
+                                    }
+                                } else if !cloudflareClient.forwardingAddresses.isEmpty {
+                                    // Fallback to global list if zone-specific list not loaded yet
                                     Picker("Forward to", selection: $tempForwardTo) {
                                         ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
                                             Text(address).tag(address)
                                         }
                                     }
                                     .pickerStyle(.menu)
-                                    .onAppear {
-                                        // Ensure we have a valid selection
-                                        if tempForwardTo.isEmpty && !cloudflareClient.forwardingAddresses.isEmpty {
-                                            tempForwardTo = cloudflareClient.forwardingAddresses.first ?? ""
-                                        }
-                                    }
                                 } else {
                                     Text("No forwarding addresses available")
                                         .foregroundStyle(.secondary)
@@ -372,7 +403,24 @@ struct EmailDetailView: View {
                 // Load forwarding addresses immediately on appear
                 Task {
                     do {
-                        try await cloudflareClient.refreshForwardingAddresses()
+                        // Load zone-specific forwarding addresses if we can resolve the zone
+                        if let z = aliasZone {
+                            let set = try await cloudflareClient.fetchForwardingAddresses(accountId: z.accountId, token: z.apiToken)
+                            await MainActor.run {
+                                self.availableForwardingAddresses = Array(set).sorted()
+                                if self.tempForwardTo.isEmpty || !self.availableForwardingAddresses.contains(self.tempForwardTo) {
+                                    self.tempForwardTo = self.availableForwardingAddresses.first ?? ""
+                                }
+                            }
+                        } else {
+                            try await cloudflareClient.refreshForwardingAddresses()
+                            await MainActor.run {
+                                self.availableForwardingAddresses = Array(cloudflareClient.forwardingAddresses).sorted()
+                                if self.tempForwardTo.isEmpty || !self.availableForwardingAddresses.contains(self.tempForwardTo) {
+                                    self.tempForwardTo = self.availableForwardingAddresses.first ?? ""
+                                }
+                            }
+                        }
                     } catch {
                         self.error = error
                         self.showError = true
@@ -451,7 +499,11 @@ struct EmailDetailView: View {
         
         do {
             if let tag = email.cloudflareTag {
-                try await cloudflareClient.deleteEmailRule(tag: tag)
+                if let z = aliasZone {
+                    try await cloudflareClient.deleteEmailRule(tag: tag, in: z)
+                } else {
+                    try await cloudflareClient.deleteEmailRule(tag: tag)
+                }
                 modelContext.delete(email)
                 try modelContext.save()
                 needsRefresh = true
@@ -486,18 +538,44 @@ struct EmailDetailView: View {
                 print("Set user identifier for email: \(email.userIdentifier)")
             }
             
+            // Ensure we have a valid zone for this alias and a verified forwarding address within that zone
+            if let z = aliasZone {
+                // If zone-specific list is empty, fetch to validate
+                if availableForwardingAddresses.isEmpty {
+                    let set = try await cloudflareClient.fetchForwardingAddresses(accountId: z.accountId, token: z.apiToken)
+                    availableForwardingAddresses = Array(set).sorted()
+                }
+                guard tempForwardTo.isEmpty || availableForwardingAddresses.contains(tempForwardTo) else {
+                    throw CloudflareClient.CloudflareError(message: "Selected forwarding address isn't verified for this domain's account.")
+                }
+                // Correct legacy zoneId if needed
+                if email.zoneId != z.zoneId {
+                    email.zoneId = z.zoneId
+                }
+            }
+
             // Save to SwiftData
             try modelContext.save()
             print("Successfully saved to SwiftData, triggering CloudKit sync")
             
             // Update Cloudflare with email-related changes and enabled state
             if let tag = email.cloudflareTag {
-                try await cloudflareClient.updateEmailRule(
-                    tag: tag,
-                    emailAddress: fullEmailAddress,
-                    isEnabled: tempIsEnabled,
-                    forwardTo: tempForwardTo
-                )
+                if let z = aliasZone {
+                    try await cloudflareClient.updateEmailRule(
+                        tag: tag,
+                        emailAddress: fullEmailAddress,
+                        isEnabled: tempIsEnabled,
+                        forwardTo: tempForwardTo,
+                        in: z
+                    )
+                } else {
+                    try await cloudflareClient.updateEmailRule(
+                        tag: tag,
+                        emailAddress: fullEmailAddress,
+                        isEnabled: tempIsEnabled,
+                        forwardTo: tempForwardTo
+                    )
+                }
             }
             needsRefresh = true
             
@@ -528,6 +606,34 @@ struct EmailDetailView: View {
         tempIsEnabled = email.isEnabled
         tempForwardTo = email.forwardTo
         isEditing = true
+
+        // Load zone-specific forwarding addresses for the edit session
+        Task {
+            do {
+                if let z = aliasZone {
+                    let set = try await cloudflareClient.fetchForwardingAddresses(accountId: z.accountId, token: z.apiToken)
+                    await MainActor.run {
+                        self.availableForwardingAddresses = Array(set).sorted()
+                        if self.tempForwardTo.isEmpty || !self.availableForwardingAddresses.contains(self.tempForwardTo) {
+                            self.tempForwardTo = self.availableForwardingAddresses.first ?? ""
+                        }
+                    }
+                } else {
+                    try await cloudflareClient.refreshForwardingAddresses()
+                    await MainActor.run {
+                        self.availableForwardingAddresses = Array(cloudflareClient.forwardingAddresses).sorted()
+                        if self.tempForwardTo.isEmpty || !self.availableForwardingAddresses.contains(self.tempForwardTo) {
+                            self.tempForwardTo = self.availableForwardingAddresses.first ?? ""
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.error = error
+                    self.showError = true
+                }
+            }
+        }
     }
 }
 

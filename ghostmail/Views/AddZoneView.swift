@@ -17,81 +17,109 @@ struct AddZoneView: View {
     @State private var showSuccess = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Toggle("Quick Auth", isOn: $useQuickAuth)
-                .tint(.accentColor)
-
-            if useQuickAuth {
-                AuthTextField(
-                    text: $quickAuthString,
-                    placeholder: "Account ID:Zone ID:Token",
-                    systemImage: "key.fill"
-                )
-            } else {
-                VStack(spacing: 10) {
-                    AuthTextField(
-                        text: $accountId,
-                        placeholder: "Account ID",
-                        systemImage: "person.fill",
-                        helpTitle: "Account ID",
-                        helpMessage: """
-                        Log in to your Cloudflare dashboard, choose a zone/domain, on the bottom right of the screen in the API section: copy "Account ID" and "Zone ID"
-                        """,
-                        helpURL: "https://dash.cloudflare.com/"
+        ZStack(alignment: .top) {
+            // Icon pinned at top
+            HStack {
+                Spacer()
+                Image(systemName: "globe")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 64, height: 64)
+                    .foregroundColor(.accentColor)
+                    .padding(12)
+                    .background(
+                        Circle()
+                            .fill(Color.accentColor.opacity(0.12))
                     )
-
-                    AuthTextField(
-                        text: $zoneId,
-                        placeholder: "Zone ID",
-                        systemImage: "globe",
-                        helpTitle: "Zone ID",
-                        helpMessage: """
-                        Log in to your Cloudflare dashboard, choose a zone/domain, on the bottom right of the screen in the API section: copy "Account ID" and "Zone ID"
-                        """,
-                        helpURL: "https://dash.cloudflare.com/"
-                    )
-
-                    AuthTextField(
-                        text: $apiToken,
-                        placeholder: "API Token",
-                        systemImage: "key.fill",
-                        helpTitle: "API Token",
-                        helpMessage: """
-                        In Cloudflare, create new token (choose Custom token)
-                        
-                        Permissions:
-                        1) Account > Email Routing Addresses > Read
-                        2) Zone > Email Routing Rules > Edit
-                        3) Zone > Zone Settings > Read
-                        """,
-                        helpURL: "https://dash.cloudflare.com/profile/api-tokens"
-                    )
-                }
+                Spacer()
             }
+            .padding(.top, 16)
 
-            Button(action: addZone) {
-                HStack {
-                    if isLoading {
-                        ProgressView().tint(.white)
+            // Form centered vertically across full screen
+            VStack {
+                Spacer(minLength: 0)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Quick Auth", isOn: $useQuickAuth)
+                        .tint(.accentColor)
+
+                    if useQuickAuth {
+                        AuthTextField(
+                            text: $quickAuthString,
+                            placeholder: "Account ID:Zone ID:Token",
+                            systemImage: "key.fill"
+                        )
                     } else {
-                        Text("Add Zone")
-                            .font(.system(.body, design: .rounded, weight: .medium))
+                        VStack(spacing: 10) {
+                            AuthTextField(
+                                text: $accountId,
+                                placeholder: "Account ID",
+                                systemImage: "person.fill",
+                                helpTitle: "Account ID",
+                                helpMessage: """
+                                Log in to your Cloudflare dashboard, choose a zone/domain, on the bottom right of the screen in the API section: copy "Account ID" and "Zone ID"
+                                """,
+                                helpURL: "https://dash.cloudflare.com/"
+                            )
+
+                            AuthTextField(
+                                text: $zoneId,
+                                placeholder: "Zone ID",
+                                systemImage: "globe",
+                                helpTitle: "Zone ID",
+                                helpMessage: """
+                                Log in to your Cloudflare dashboard, choose a zone/domain, on the bottom right of the screen in the API section: copy "Account ID" and "Zone ID"
+                                """,
+                                helpURL: "https://dash.cloudflare.com/"
+                            )
+
+                            AuthTextField(
+                                text: $apiToken,
+                                placeholder: "API Token",
+                                systemImage: "key.fill",
+                                helpTitle: "API Token",
+                                helpMessage: """
+                                In Cloudflare, create new token (choose Custom token)
+                                Permissions:
+                                1) Account > Email Routing Addresses > Read
+                                2) Zone > Email Routing Rules > Edit
+                                3) Zone > Zone Settings > Read
+                                """,
+                                helpURL: "https://dash.cloudflare.com/profile/api-tokens"
+                            )
+                        }
+                    }
+
+                    Button(action: addZone) {
+                        HStack {
+                            if isLoading {
+                                ProgressView().tint(.white)
+                            } else {
+                                Text("Add Zone")
+                                    .font(.system(.body, design: .rounded, weight: .medium))
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(12)
+                        .background(Color.accentColor)
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .disabled(isLoading)
+
+                    if showSuccess {
+                        Text(successMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.green)
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .padding(12)
-                .background(Color.accentColor)
-                .foregroundColor(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
-            .disabled(isLoading)
+                .padding(.horizontal)
+                .frame(maxWidth: 500)
 
-            if showSuccess {
-                Text(successMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.green)
+                Spacer(minLength: 0)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .alert("Add Zone Failed", isPresented: $showError) {
             Button("OK", role: .cancel) { }
         } message: {

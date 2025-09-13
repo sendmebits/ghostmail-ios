@@ -39,6 +39,17 @@ struct EmailListView: View {
     enum DomainFilter: Equatable { case all, zone(String) }
     @State private var domainFilter: DomainFilter = .all
 
+    // Derived UI state
+    private var isFilterActive: Bool {
+        let destActive = destinationFilter != .all
+        let domainActive: Bool
+        switch domainFilter {
+        case .all: domainActive = false
+        default: domainActive = true
+        }
+        return destActive || domainActive
+    }
+
     // Display all aliases from all configured zones; keep legacy entries too
     private var allAliases: [EmailAlias] { emailAliases }
     
@@ -234,14 +245,14 @@ struct EmailListView: View {
                                     existing.forwardTo != forwardTo ||
                                     existing.sortIndex != index + 1
                     
-                    if needsUpdate {
+            if needsUpdate {
                         withAnimation {
                             existing.cloudflareTag = rule.cloudflareTag
                             existing.isEnabled = rule.isEnabled
                             existing.forwardTo = forwardTo
                             existing.sortIndex = index + 1
-                            // Ensure the alias is marked as belonging to the current zone
-                            existing.zoneId = cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Ensure the alias is marked as belonging to the correct originating zone
+                existing.zoneId = rule.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
                         }
                     }
                 } else {
@@ -393,16 +404,10 @@ struct EmailListView: View {
                     Button {
                         showFilterSheet = true
                     } label: {
-                        let anyFilterActive: Bool = {
-                            let destActive = destinationFilter != .all
-                            let domainActive: Bool
-                            switch domainFilter { case .all: domainActive = false; default: domainActive = true }
-                            return destActive || domainActive
-                        }()
-                        Label("Filter", systemImage: anyFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                        Label("Filter", systemImage: isFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                     }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Image(systemName: isFilterActive ? "ellipsis.circle.fill" : "ellipsis.circle")
                         .imageScale(.large)
                         .accessibilityLabel("Menu")
                 }

@@ -421,6 +421,45 @@ class CloudflareClient: ObservableObject {
             throw CloudflareError(message: "Failed to update email rule")
         }
     }
+
+    // Overload to update a rule in a specified zone using that zone's token
+    func updateEmailRule(tag: String, emailAddress: String, isEnabled: Bool, forwardTo: String, in zone: CloudflareZone) async throws {
+        let url = URL(string: "\(baseURL)/zones/\(zone.zoneId)/email/routing/rules/\(tag)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.allHTTPHeaderFields = [
+            "Authorization": "Bearer \(zone.apiToken)",
+            "Content-Type": "application/json"
+        ]
+
+        let rule = [
+            "matchers": [
+                [
+                    "type": "literal",
+                    "field": "to",
+                    "value": emailAddress
+                ]
+            ],
+            "actions": [
+                [
+                    "type": "forward",
+                    "value": [forwardTo]
+                ]
+            ],
+            "enabled": isEnabled,
+            "priority": 0
+        ] as [String: Any]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: rule)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
+                throw CloudflareError(message: errorResponse.errors.first?.message ?? "Unknown error")
+            }
+            throw CloudflareError(message: "Failed to update email rule in specified zone")
+        }
+    }
     
     var emailDomain: String {
         // Use the fetched domain name, or fall back to a placeholder
@@ -519,6 +558,26 @@ class CloudflareClient: ObservableObject {
                 throw CloudflareError(message: errorResponse.errors.first?.message ?? "Unknown error")
             }
             throw CloudflareError(message: "Failed to delete email rule")
+        }
+    }
+
+    // Overload to delete a rule in a specified zone using that zone's token
+    func deleteEmailRule(tag: String, in zone: CloudflareZone) async throws {
+        let url = URL(string: "\(baseURL)/zones/\(zone.zoneId)/email/routing/rules/\(tag)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.allHTTPHeaderFields = [
+            "Authorization": "Bearer \(zone.apiToken)",
+            "Content-Type": "application/json"
+        ]
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
+                throw CloudflareError(message: errorResponse.errors.first?.message ?? "Unknown error")
+            }
+            throw CloudflareError(message: "Failed to delete email rule in specified zone")
         }
     }
     
