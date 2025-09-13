@@ -350,6 +350,18 @@ struct EmailDetailView: View {
                     .padding(.horizontal)
                 }
             }
+            .refreshable {
+                // Only refresh the website icon for this entry
+                guard !email.website.isEmpty, cloudflareClient.shouldShowWebsiteLogos else { return }
+                isLoadingIcon = true
+                websiteUIImage = nil
+                if let img = await IconCache.shared.refreshImage(for: email.website) {
+                    websiteUIImage = img
+                } else {
+                    websiteUIImage = nil
+                }
+                isLoadingIcon = false
+            }
             .navigationTitle("Email Details")
             .navigationBarTitleDisplayMode(.inline)
             .opacity(email.isEnabled ? 1.0 : 0.8)
