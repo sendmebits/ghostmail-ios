@@ -24,7 +24,15 @@ struct SettingsView: View {
     @State private var showDeleteICloudDataConfirmation = false
     @State private var showRestartAlert = false
     @Environment(\.openURL) private var openURL
-    @State private var showAddZoneSheet = false
+    @State private var showAddZoneSheet = false {
+        didSet {
+            if showAddZoneSheet {
+                UserDefaults.standard.set("", forKey: "addZone.accountId")
+                UserDefaults.standard.set("", forKey: "addZone.zoneId")
+                UserDefaults.standard.set("", forKey: "addZone.apiToken")
+            }
+        }
+    }
     @AppStorage("defaultZoneId") private var defaultZoneId: String = ""
     
     init() {
@@ -457,7 +465,7 @@ struct SettingsView: View {
                     Button {
                         showAddZoneSheet = true
                     } label: {
-                        Label("Add Zone", systemImage: "plus.circle")
+                        Label("Add Zone (Domain)", systemImage: "plus.circle")
                     }
                 }
                 
