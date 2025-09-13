@@ -134,6 +134,8 @@ struct EmailCreateView: View {
                 newAlias.notes = notes
                 newAlias.cloudflareTag = rule.tag
                 newAlias.sortIndex = minSortIndex - 1  // Set to less than the minimum
+                // Ensure new alias is scoped to the current Cloudflare zone
+                newAlias.zoneId = cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
                 
                 // Set the user identifier to ensure cross-device ownership
                 newAlias.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString

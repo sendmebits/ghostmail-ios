@@ -35,6 +35,27 @@ struct EmailListView: View {
     // Filter state
     @State private var showFilterSheet = false
     @State private var destinationFilter: DestinationFilter = .all
+
+    // Helper to scope displayed aliases to the current Cloudflare zone
+    private var currentZoneId: String {
+        cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var currentZoneAliases: [EmailAlias] {
+        // Allow legacy records without a zoneId but matching the current domain
+        let domain = cloudflareClient.emailDomain
+        if currentZoneId.isEmpty {
+            // If we don't have a zone yet, show entries that match the domain
+            return emailAliases.filter { alias in
+                alias.zoneId.isEmpty && alias.emailAddress.hasSuffix("@\(domain)")
+            }
+        }
+        return emailAliases.filter { alias in
+            if alias.zoneId == currentZoneId { return true }
+            // Include legacy entries for the same domain (pre-zoneId data)
+            return alias.zoneId.isEmpty && alias.emailAddress.hasSuffix("@\(domain)")
+        }
+    }
     
     enum SortOrder: String, CaseIterable, Hashable {
         case alphabetical
@@ -108,10 +129,11 @@ struct EmailListView: View {
 
     var filteredEmails: [EmailAlias] {
         let base: [EmailAlias]
+        let source = currentZoneAliases
         if searchText.isEmpty {
-            base = emailAliases
+            base = source
         } else {
-            base = emailAliases.filter { email in
+            base = source.filter { email in
                 email.emailAddress.localizedCaseInsensitiveContains(searchText) ||
                 email.website.localizedCaseInsensitiveContains(searchText)
             }
@@ -125,7 +147,7 @@ struct EmailListView: View {
     }
 
     var allDestinationAddresses: [String] {
-        let addresses = emailAliases.map { $0.forwardTo }.filter { !$0.isEmpty }
+    let addresses = currentZoneAliases.map { $0.forwardTo }.filter { !$0.isEmpty }
         return Array(Set(addresses)).sorted()
     }
     
@@ -153,9 +175,9 @@ struct EmailListView: View {
                 uniqueKeysWithValues: cloudflareRules.map { ($0.emailAddress, $0) }
             )
             
-            // Create dictionary for existing aliases, handling potential duplicates
+            // Create dictionary for existing aliases in this zone, handling potential duplicates
             var existingAliasesMap: [String: EmailAlias] = [:]
-            for alias in emailAliases {
+            for alias in currentZoneAliases {
                 if existingAliasesMap[alias.emailAddress] == nil {
                     existingAliasesMap[alias.emailAddress] = alias
                 } else {
@@ -169,11 +191,22 @@ struct EmailListView: View {
                 }
             }
             
-            // Remove deleted aliases
+            // Remove deleted aliases, but only those that belong to the current Cloudflare zone
+            let currentZoneId = cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
             for alias in emailAliases {
+                // If alias isn't present in Cloudflare and belongs to this zone, delete it.
                 if cloudflareRulesByEmail[alias.emailAddress] == nil {
-                    print("Deleting alias: \(alias.emailAddress)")
-                    modelContext.delete(alias)
+                    if !currentZoneId.isEmpty {
+                        if alias.zoneId == currentZoneId {
+                            print("Deleting alias for current zone: \(alias.emailAddress)")
+                            modelContext.delete(alias)
+                        } else {
+                            print("Preserving alias from other zone: \(alias.emailAddress) (zone: \(alias.zoneId))")
+                        }
+                    } else {
+                        // If we don't have a current zone, be conservative and don't delete anything.
+                        print("No current zoneId available. Skipping deletion for alias: \(alias.emailAddress)")
+                    }
                 }
             }
             
@@ -182,7 +215,7 @@ struct EmailListView: View {
                 let emailAddress = rule.emailAddress
                 let forwardTo = rule.forwardTo
                 
-                if let existing = existingAliasesMap[emailAddress] {
+                    if let existing = existingAliasesMap[emailAddress] {
                     // Only update if there are actual changes
                     let needsUpdate = existing.cloudflareTag != rule.cloudflareTag ||
                                     existing.isEnabled != rule.isEnabled ||
@@ -195,6 +228,8 @@ struct EmailListView: View {
                             existing.isEnabled = rule.isEnabled
                             existing.forwardTo = forwardTo
                             existing.sortIndex = index + 1
+                            // Ensure the alias is marked as belonging to the current zone
+                            existing.zoneId = cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
                         }
                     }
                 } else {
@@ -202,6 +237,7 @@ struct EmailListView: View {
                     let newAlias = EmailAlias(
                         emailAddress: emailAddress,
                         forwardTo: forwardTo
+                        , zoneId: cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
                     )
                     newAlias.cloudflareTag = rule.cloudflareTag
                     newAlias.isEnabled = rule.isEnabled

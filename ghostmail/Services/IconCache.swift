@@ -109,10 +109,22 @@ final class IconCache {
             // site crawl failed
         }
 
-        // Attempt network fetchs in order: DuckDuckGo then Google Favicons
+        // Attempt network fetches in order: prefer DuckDuckGo (try ip2 then ip3) then Google Favicons.
+        // Percent-encode the host to be safe when inserted into the URL.
+        let encodedHost = host.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? host
+        var googleURLString: String = "https://www.google.com/s2/favicons?sz=64"
+        if var comps = URLComponents(string: "https://www.google.com/s2/favicons") {
+            comps.queryItems = [
+                URLQueryItem(name: "domain", value: host),
+                URLQueryItem(name: "sz", value: "64")
+            ]
+            googleURLString = comps.url?.absoluteString ?? googleURLString
+        }
+
         let endpoints = [
-            "https://icons.duckduckgo.com/ip3/\(host).ico",
-            "https://www.google.com/s2/favicons?domain=\(host)&sz=64"
+            "https://icons.duckduckgo.com/ip2/\(encodedHost).ico",
+            "https://icons.duckduckgo.com/ip3/\(encodedHost).ico",
+            googleURLString
         ]
         let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15"
 
@@ -186,10 +198,21 @@ final class IconCache {
             // ignore and fall back to other endpoints
         }
 
-        // Same endpoints as the regular fetch path
+        // Same endpoints as the regular fetch path. Try DuckDuckGo ip2 first, then ip3.
+        let encodedHost = host.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? host
+        var googleURLString: String = "https://www.google.com/s2/favicons?sz=64"
+        if var comps = URLComponents(string: "https://www.google.com/s2/favicons") {
+            comps.queryItems = [
+                URLQueryItem(name: "domain", value: host),
+                URLQueryItem(name: "sz", value: "64")
+            ]
+            googleURLString = comps.url?.absoluteString ?? googleURLString
+        }
+
         let endpoints = [
-            "https://icons.duckduckgo.com/ip3/\(host).ico",
-            "https://www.google.com/s2/favicons?domain=\(host)&sz=64"
+            "https://icons.duckduckgo.com/ip2/\(encodedHost).ico",
+            "https://icons.duckduckgo.com/ip3/\(encodedHost).ico",
+            googleURLString
         ]
 
         for endpoint in endpoints {
@@ -437,3 +460,9 @@ final class IconCache {
         return results
     }
 }
+
+// IconCache interacts with UIKit/WebKit objects which are not Sendable. The
+// continuation/closure used for SVG rasterization executes on the main thread
+// and is safe, so declare unchecked Sendable conformance to satisfy the
+// compiler for captures inside @Sendable closures.
+extension IconCache: @unchecked Sendable {}
