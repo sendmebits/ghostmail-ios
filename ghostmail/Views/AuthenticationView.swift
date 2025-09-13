@@ -220,7 +220,8 @@ struct AuthenticationView: View {
                                         // Create a new EmailAlias instead of trying to insert the CloudflareEmailRule
                                         let newAlias = EmailAlias(
                                             emailAddress: cloudflareAlias.emailAddress,
-                                            forwardTo: cloudflareAlias.forwardTo
+                                            forwardTo: cloudflareAlias.forwardTo,
+                                            zoneId: cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
                                         )
                                         newAlias.cloudflareTag = cloudflareAlias.cloudflareTag
                                         newAlias.isEnabled = cloudflareAlias.isEnabled

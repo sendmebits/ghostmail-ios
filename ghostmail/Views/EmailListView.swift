@@ -35,27 +35,12 @@ struct EmailListView: View {
     // Filter state
     @State private var showFilterSheet = false
     @State private var destinationFilter: DestinationFilter = .all
+    // Domain filter (by Cloudflare zone)
+    enum DomainFilter: Equatable { case all, zone(String) }
+    @State private var domainFilter: DomainFilter = .all
 
-    // Helper to scope displayed aliases to the current Cloudflare zone
-    private var currentZoneId: String {
-        cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var currentZoneAliases: [EmailAlias] {
-        // Allow legacy records without a zoneId but matching the current domain
-        let domain = cloudflareClient.emailDomain
-        if currentZoneId.isEmpty {
-            // If we don't have a zone yet, show entries that match the domain
-            return emailAliases.filter { alias in
-                alias.zoneId.isEmpty && alias.emailAddress.hasSuffix("@\(domain)")
-            }
-        }
-        return emailAliases.filter { alias in
-            if alias.zoneId == currentZoneId { return true }
-            // Include legacy entries for the same domain (pre-zoneId data)
-            return alias.zoneId.isEmpty && alias.emailAddress.hasSuffix("@\(domain)")
-        }
-    }
+    // Display all aliases from all configured zones; keep legacy entries too
+    private var allAliases: [EmailAlias] { emailAliases }
     
     enum SortOrder: String, CaseIterable, Hashable {
         case alphabetical
@@ -99,6 +84,16 @@ struct EmailListView: View {
                 _destinationFilter = State(initialValue: .address(addr))
             }
         }
+        // Load persisted domain filter
+        if let domainType = UserDefaults.standard.string(forKey: "EmailListView.domainFilterType") {
+            if domainType == "all" {
+                _domainFilter = State(initialValue: .all)
+            } else if domainType == "zone",
+                      let zid = UserDefaults.standard.string(forKey: "EmailListView.domainFilterZoneId"),
+                      !zid.isEmpty {
+                _domainFilter = State(initialValue: .zone(zid))
+            }
+        }
     }
     // Persist sortOrder and destinationFilter when changed
     private func persistSortOrder(_ newValue: SortOrder) {
@@ -115,6 +110,16 @@ struct EmailListView: View {
             UserDefaults.standard.set(addr, forKey: "EmailListView.destinationFilterAddress")
         }
     }
+    private func persistDomainFilter(_ newValue: DomainFilter) {
+        switch newValue {
+        case .all:
+            UserDefaults.standard.set("all", forKey: "EmailListView.domainFilterType")
+            UserDefaults.standard.removeObject(forKey: "EmailListView.domainFilterZoneId")
+        case .zone(let zid):
+            UserDefaults.standard.set("zone", forKey: "EmailListView.domainFilterType")
+            UserDefaults.standard.set(zid, forKey: "EmailListView.domainFilterZoneId")
+        }
+    }
     
 
     var sortedEmails: [EmailAlias] {
@@ -128,8 +133,8 @@ struct EmailListView: View {
     }
 
     var filteredEmails: [EmailAlias] {
+        let source = allAliases
         let base: [EmailAlias]
-        let source = currentZoneAliases
         if searchText.isEmpty {
             base = source
         } else {
@@ -138,16 +143,30 @@ struct EmailListView: View {
                 email.website.localizedCaseInsensitiveContains(searchText)
             }
         }
+
+        // Apply destination filter
+        let destinationFiltered: [EmailAlias]
         switch destinationFilter {
         case .all:
-            return base
+            destinationFiltered = base
         case .address(let addr):
-            return base.filter { $0.forwardTo == addr }
+            destinationFiltered = base.filter { $0.forwardTo == addr }
         }
+
+        // Apply domain filter (zone)
+        let domainFiltered: [EmailAlias]
+        switch domainFilter {
+        case .all:
+            domainFiltered = destinationFiltered
+        case .zone(let zid):
+            domainFiltered = destinationFiltered.filter { $0.zoneId == zid }
+        }
+
+        return domainFiltered
     }
 
     var allDestinationAddresses: [String] {
-    let addresses = currentZoneAliases.map { $0.forwardTo }.filter { !$0.isEmpty }
+    let addresses = allAliases.map { $0.forwardTo }.filter { !$0.isEmpty }
         return Array(Set(addresses)).sorted()
     }
     
@@ -156,7 +175,7 @@ struct EmailListView: View {
         isLoading = true
         
         do {
-            var cloudflareRules = try await cloudflareClient.getEmailRules()
+            var cloudflareRules = try await cloudflareClient.getEmailRulesAllZones()
             
             // Handle potential duplicates in Cloudflare rules
             // Keep track of seen email addresses and only include the first occurrence
@@ -175,9 +194,9 @@ struct EmailListView: View {
                 uniqueKeysWithValues: cloudflareRules.map { ($0.emailAddress, $0) }
             )
             
-            // Create dictionary for existing aliases in this zone, handling potential duplicates
+            // Create dictionary for existing aliases across zones, handling potential duplicates
             var existingAliasesMap: [String: EmailAlias] = [:]
-            for alias in currentZoneAliases {
+            for alias in allAliases {
                 if existingAliasesMap[alias.emailAddress] == nil {
                     existingAliasesMap[alias.emailAddress] = alias
                 } else {
@@ -191,22 +210,15 @@ struct EmailListView: View {
                 }
             }
             
-            // Remove deleted aliases, but only those that belong to the current Cloudflare zone
-            let currentZoneId = cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Remove deleted aliases, but only those that belong to configured zones and are missing there
+            let configuredZoneIds = Set(cloudflareClient.zones.map { $0.zoneId })
             for alias in emailAliases {
-                // If alias isn't present in Cloudflare and belongs to this zone, delete it.
+                // Only consider deleting if alias has a zoneId and belongs to a configured zone
+                guard !alias.zoneId.isEmpty, configuredZoneIds.contains(alias.zoneId) else { continue }
+                // If no matching rule exists for that email in the aggregated set AND the email does not exist under any zone, delete
                 if cloudflareRulesByEmail[alias.emailAddress] == nil {
-                    if !currentZoneId.isEmpty {
-                        if alias.zoneId == currentZoneId {
-                            print("Deleting alias for current zone: \(alias.emailAddress)")
-                            modelContext.delete(alias)
-                        } else {
-                            print("Preserving alias from other zone: \(alias.emailAddress) (zone: \(alias.zoneId))")
-                        }
-                    } else {
-                        // If we don't have a current zone, be conservative and don't delete anything.
-                        print("No current zoneId available. Skipping deletion for alias: \(alias.emailAddress)")
-                    }
+                    print("Deleting alias not found in any configured zones: \(alias.emailAddress) [zone: \(alias.zoneId)]")
+                    modelContext.delete(alias)
                 }
             }
             
@@ -236,8 +248,8 @@ struct EmailListView: View {
                     // Create new alias with proper properties
                     let newAlias = EmailAlias(
                         emailAddress: emailAddress,
-                        forwardTo: forwardTo
-                        , zoneId: cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+                        forwardTo: forwardTo,
+                        zoneId: rule.zoneId
                     )
                     newAlias.cloudflareTag = rule.cloudflareTag
                     newAlias.isEnabled = rule.isEnabled
@@ -381,7 +393,13 @@ struct EmailListView: View {
                     Button {
                         showFilterSheet = true
                     } label: {
-                        Label("Filter", systemImage: destinationFilter == .all ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                        let anyFilterActive: Bool = {
+                            let destActive = destinationFilter != .all
+                            let domainActive: Bool
+                            switch domainFilter { case .all: domainActive = false; default: domainActive = true }
+                            return destActive || domainActive
+                        }()
+                        Label("Filter", systemImage: anyFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -404,6 +422,9 @@ struct EmailListView: View {
         }
         .onChange(of: destinationFilter) { _, newValue in
             persistDestinationFilter(newValue)
+        }
+        .onChange(of: domainFilter) { _, newValue in
+            persistDomainFilter(newValue)
         }
     // ...existing code...
         .sheet(isPresented: $showFilterSheet) {
@@ -434,6 +455,39 @@ struct EmailListView: View {
                                     if destinationFilter == .address(addr) {
                                         Spacer()
                                         Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Domain filter only when more than one zone exists
+                    if cloudflareClient.zones.count > 1 {
+                        Section(header: Text("Domain")) {
+                            Button(action: {
+                                domainFilter = .all
+                                showFilterSheet = false
+                                persistDomainFilter(.all)
+                            }) {
+                                HStack {
+                                    Text("All")
+                                    if domainFilter == .all {
+                                        Spacer()
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                            ForEach(cloudflareClient.zones, id: \.zoneId) { z in
+                                Button(action: {
+                                    domainFilter = .zone(z.zoneId)
+                                    showFilterSheet = false
+                                    persistDomainFilter(.zone(z.zoneId))
+                                }) {
+                                    HStack {
+                                        Text(z.domainName.isEmpty ? z.zoneId : z.domainName)
+                                        if domainFilter == .zone(z.zoneId) {
+                                            Spacer()
+                                            Image(systemName: "checkmark")
+                                        }
                                     }
                                 }
                             }

@@ -10,6 +10,15 @@ class CloudflareClient: ObservableObject {
     @Published private(set) var apiToken: String
     @Published var isAuthenticated: Bool
     @Published private(set) var accountName: String = ""
+    // Multi-zone support
+    struct CloudflareZone: Codable, Hashable {
+        var accountId: String
+        var zoneId: String
+        var apiToken: String
+        var accountName: String
+        var domainName: String
+    }
+    @Published private(set) var zones: [CloudflareZone] = []
     
     @AppStorage("forwardingEmail") private var forwardingEmail: String = ""
     @Published private(set) var forwardingAddresses: Set<String> = []
@@ -31,6 +40,20 @@ class CloudflareClient: ObservableObject {
         self.zoneId = defaults.string(forKey: "zoneId") ?? zoneId
         self.apiToken = defaults.string(forKey: "apiToken") ?? apiToken
         self.isAuthenticated = defaults.bool(forKey: "isAuthenticated")
+
+        // Load multi-zone configuration if present; migrate from single if needed
+        if let data = defaults.data(forKey: "cloudflareZones"),
+           let decoded = try? JSONDecoder().decode([CloudflareZone].self, from: data) {
+            self.zones = decoded
+        } else {
+            self.zones = []
+        }
+        // Migration: if we have single-zone credentials but no zones array, create it
+        if !self.accountId.isEmpty, !self.zoneId.isEmpty, !self.apiToken.isEmpty, self.zones.isEmpty {
+            // We'll fill accountName/domainName after fetch
+            self.zones = [CloudflareZone(accountId: self.accountId, zoneId: self.zoneId, apiToken: self.apiToken, accountName: self.accountName, domainName: self.domainName)]
+            persistZones()
+        }
     }
     
     private var headers: [String: String] {
@@ -49,9 +72,17 @@ class CloudflareClient: ObservableObject {
     }
     
     func verifyToken() async throws -> Bool {
+        try await verifyToken(using: apiToken)
+    }
+
+    // Verify an arbitrary token (used for adding additional zones)
+    func verifyToken(using token: String) async throws -> Bool {
         let url = URL(string: "\(baseURL)/user/tokens/verify")!
         var request = URLRequest(url: url)
-        request.allHTTPHeaderFields = headers
+        request.allHTTPHeaderFields = [
+            "Authorization": "Bearer \(token)",
+            "Content-Type": "application/json"
+        ]
         
         let (_, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse,
@@ -168,13 +199,72 @@ class CloudflareClient: ObservableObject {
                 emailAddress: emailAddress,
                 cloudflareTag: rule.tag,
                 isEnabled: rule.enabled,
-                forwardTo: forwardTo
+                forwardTo: forwardTo,
+                zoneId: self.zoneId
             )
             
             uniqueRules.append(alias)
         }
         
         return uniqueRules
+    }
+
+    // Fetch rules for a specific zone
+    func getEmailRules(for zone: CloudflareZone) async throws -> [CloudflareEmailRule] {
+        // Build request for that zone
+        // Fetch domain/account if needed
+        if zone.domainName.isEmpty || zone.accountName.isEmpty {
+            // Try to fetch details (not mutating self.zones here)
+            _ = try await fetchZoneDetails(accountId: zone.accountId, zoneId: zone.zoneId, token: zone.apiToken)
+        }
+
+        // Fetch all entries from Cloudflare in chunks of 100
+        var allRules: [EmailRule] = []
+        var currentPage = 1
+        let perPage = 100
+        while true {
+            let url = URL(string: "\(baseURL)/zones/\(zone.zoneId)/email/routing/rules?page=\(currentPage)&per_page=\(perPage)")!
+            var request = URLRequest(url: url)
+            request.allHTTPHeaderFields = [
+                "Authorization": "Bearer \(zone.apiToken)",
+                "Content-Type": "application/json"
+            ]
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
+                    throw CloudflareError(message: errorResponse.errors.first?.message ?? "Unknown error")
+                }
+                throw CloudflareError(message: "Failed to fetch rules for zone \(zone.zoneId)")
+            }
+            let cloudflareResponse = try JSONDecoder().decode(CloudflareResponse<[EmailRule]>.self, from: data)
+            guard cloudflareResponse.success else { break }
+            allRules.append(contentsOf: cloudflareResponse.result)
+            if let info = cloudflareResponse.result_info, allRules.count < info.total_count {
+                currentPage += 1
+            } else { break }
+        }
+
+        // Build unique rule list
+        var uniqueRules: [CloudflareEmailRule] = []
+        var seenEmailAddresses = Set<String>()
+        for rule in allRules {
+            guard let forwardAction = rule.actions.first(where: { $0.type == "forward" }), let forwardTo = forwardAction.value?.first else { continue }
+            guard let matcher = rule.matchers.first, matcher.type == "literal", matcher.field == "to", let emailAddress = matcher.value else { continue }
+            if seenEmailAddresses.contains(emailAddress) { continue }
+            seenEmailAddresses.insert(emailAddress)
+            uniqueRules.append(CloudflareEmailRule(emailAddress: emailAddress, cloudflareTag: rule.tag, isEnabled: rule.enabled, forwardTo: forwardTo, zoneId: zone.zoneId))
+        }
+        return uniqueRules
+    }
+
+    // Fetch rules across all configured zones
+    func getEmailRulesAllZones() async throws -> [CloudflareEmailRule] {
+        var aggregated: [CloudflareEmailRule] = []
+        for zone in zones {
+            let rules = try await getEmailRules(for: zone)
+            aggregated.append(contentsOf: rules)
+        }
+        return aggregated
     }
     
     func createEmailRule(emailAddress: String, forwardTo: String) async throws -> EmailRule {
@@ -207,6 +297,40 @@ class CloudflareClient: ObservableObject {
         let response = try JSONDecoder().decode(CloudflareResponse<EmailRule>.self, from: data)
         return response.result
     }
+
+    // Overload to create a rule in a specified zone using that zone's token
+    func createEmailRule(emailAddress: String, forwardTo: String, in zone: CloudflareZone) async throws -> EmailRule {
+        let url = URL(string: "\(baseURL)/zones/\(zone.zoneId)/email/routing/rules")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.allHTTPHeaderFields = [
+            "Authorization": "Bearer \(zone.apiToken)",
+            "Content-Type": "application/json"
+        ]
+
+        let rule = [
+            "matchers": [
+                [
+                    "type": "literal",
+                    "field": "to",
+                    "value": emailAddress
+                ]
+            ],
+            "actions": [
+                [
+                    "type": "forward",
+                    "value": [forwardTo]
+                ]
+            ],
+            "enabled": true,
+            "priority": 0
+        ] as [String: Any]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: rule)
+        let (data, _) = try await URLSession.shared.data(for: request)
+        let response = try JSONDecoder().decode(CloudflareResponse<EmailRule>.self, from: data)
+        return response.result
+    }
     
     @MainActor
     func updateCredentials(accountId: String, zoneId: String, apiToken: String) {
@@ -231,6 +355,15 @@ class CloudflareClient: ObservableObject {
                 print("Error fetching domain name: \(error)")
             }
         }
+
+        // Also ensure zones contains/updates primary zone
+        if let idx = zones.firstIndex(where: { $0.zoneId == zoneId }) {
+            zones[idx].accountId = accountId
+            zones[idx].apiToken = apiToken
+        } else {
+            zones.insert(CloudflareZone(accountId: accountId, zoneId: zoneId, apiToken: apiToken, accountName: accountName, domainName: domainName), at: 0)
+        }
+        persistZones()
     }
     
     @MainActor
@@ -249,6 +382,8 @@ class CloudflareClient: ObservableObject {
         defaults.removeObject(forKey: "zoneId")
         defaults.removeObject(forKey: "apiToken")
         defaults.removeObject(forKey: "isAuthenticated")
+    zones = []
+    defaults.removeObject(forKey: "cloudflareZones")
     }
     
     func updateEmailRule(tag: String, emailAddress: String, isEnabled: Bool, forwardTo: String) async throws {
@@ -428,6 +563,11 @@ class CloudflareClient: ObservableObject {
             await MainActor.run {
                 self.domainName = zoneResponse.result.name
                 self.accountName = zoneResponse.result.account.name
+                if let idx = self.zones.firstIndex(where: { $0.zoneId == self.zoneId }) {
+                    self.zones[idx].domainName = self.domainName
+                    self.zones[idx].accountName = self.accountName
+                    self.persistZones()
+                }
             }
         } else {
             throw CloudflareError(message: "Failed to get domain name from zone response")
@@ -586,6 +726,103 @@ class CloudflareClient: ObservableObject {
             throw error
         }
     }
+
+    // Fetch forwarding addresses for an arbitrary account+token
+    func fetchForwardingAddresses(accountId: String, token: String) async throws -> Set<String> {
+        let addressEndpoint = "\(baseURL)/accounts/\(accountId)/email/routing/addresses"
+        let url = URL(string: addressEndpoint)!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.allHTTPHeaderFields = [
+            "Authorization": "Bearer \(token)",
+            "Content-Type": "application/json"
+        ]
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            if let errorText = String(data: data, encoding: .utf8) { print("Error response: \(errorText)") }
+            throw CloudflareError(message: "Failed to fetch forwarding addresses for account \(accountId)")
+        }
+        let addressResponse = try JSONDecoder().decode(AddressResponse.self, from: data)
+        if !addressResponse.success { throw CloudflareError(message: addressResponse.errors.first?.message ?? "Unknown error") }
+        let verified = Set(addressResponse.result.filter { ($0.verified ?? "").isEmpty == false }.map { $0.email })
+        return verified
+    }
+
+    // Refresh forwarding addresses across all configured zones (grouped by account)
+    func refreshForwardingAddressesAllZones() async throws {
+        // Define a concrete key type to avoid tuple Hashable issues
+        struct AccountKey: Hashable { let accountId: String; let token: String }
+        var accountKeys = Set<AccountKey>()
+        for z in zones {
+            accountKeys.insert(AccountKey(accountId: z.accountId, token: z.apiToken))
+        }
+
+        // Fetch sets sequentially and collect; avoid mutating across suspension points
+        var collected: [Set<String>] = []
+        for key in accountKeys {
+            let set = try await fetchForwardingAddresses(accountId: key.accountId, token: key.token)
+            collected.append(set)
+        }
+
+        let unionAll = collected.reduce(into: Set<String>()) { partial, next in
+            partial.formUnion(next)
+        }
+
+        await MainActor.run {
+            self.forwardingAddresses = unionAll
+            self.forwardingAddressesCache = unionAll
+            self.lastForwardingAddressesFetch = Date()
+        }
+    }
+
+    // Add a new zone configuration (verifies token and fetches domain/account names)
+    func addZone(accountId: String, zoneId: String, apiToken: String) async throws {
+        // Verify token
+        guard try await verifyToken(using: apiToken) else {
+            throw CloudflareError(message: "Invalid API token")
+        }
+        // Fetch details
+        let details = try await fetchZoneDetails(accountId: accountId, zoneId: zoneId, token: apiToken)
+        let newZone = CloudflareZone(accountId: accountId, zoneId: zoneId, apiToken: apiToken, accountName: details.accountName, domainName: details.domainName)
+        await MainActor.run {
+            // Avoid duplicates
+            if !self.zones.contains(where: { $0.zoneId == zoneId }) {
+                self.zones.append(newZone)
+                self.persistZones()
+            }
+        }
+    }
+
+    // Persist zones to UserDefaults
+    private func persistZones() {
+        if let data = try? JSONEncoder().encode(zones) {
+            UserDefaults.standard.set(data, forKey: "cloudflareZones")
+        }
+    }
+
+    // Fetch zone details (domain/account names) without mutating current state
+    func fetchZoneDetails(accountId: String, zoneId: String, token: String) async throws -> (domainName: String, accountName: String) {
+        let url = URL(string: "\(baseURL)/zones/\(zoneId)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.allHTTPHeaderFields = [
+            "Authorization": "Bearer \(token)",
+            "Content-Type": "application/json"
+        ]
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw CloudflareError(message: "Failed to fetch zone details")
+        }
+        struct ZoneResponse: Codable {
+            struct Account: Codable { let id: String; let name: String }
+            struct Result: Codable { let name: String; let account: Account }
+            let result: Result
+            let success: Bool
+        }
+        let zoneResponse = try JSONDecoder().decode(ZoneResponse.self, from: data)
+        guard zoneResponse.success else { throw CloudflareError(message: "Failed to get domain name from zone response") }
+        return (domainName: zoneResponse.result.name, accountName: zoneResponse.result.account.name)
+    }
 }
 
 struct CloudflareResponse<T: Codable>: Codable {
@@ -656,6 +893,7 @@ struct CloudflareEmailRule {
     let cloudflareTag: String
     let isEnabled: Bool
     let forwardTo: String
+    let zoneId: String
     
     // Add any other properties needed for email rules
 } 
