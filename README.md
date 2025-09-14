@@ -38,3 +38,11 @@ CSV import notes:
 - On import, the app infers the target zone from the email domain in `Email Address`.
 - If no configured zone matches the email's domain, the current primary zone is used as a fallback.
 - Imports will update and overwrite existing; review after importing.
+
+# Why Use Email Aliases
+
+Email aliases protect your primary inbox from spam, phishing, and long-term exposure. Instead of handing out your real email, you give out an alias that can be turned off or deleted if abused. This helps maintain privacy and reduces the risk of account compromise.
+- CISA guidance: <a href=https://www.cisa.gov/news-events/news/reducing-spam>Reducing Spam</a> – U.S. Cybersecurity & Infrastructure Security Agency warns against exposing your primary email address publicly.
+- Expert opinion: <a href=https://krebsonsecurity.com/2022/08/the-security-pros-and-cons-of-using-email-aliases/>Brian Krebs on Email Aliases</a> – Security journalist Brian Krebs outlines the advantages and trade-offs of using aliases.
+
+Aliases act as disposable shields for your identity, keeping your real account secure while still letting you receive messages when you want.
