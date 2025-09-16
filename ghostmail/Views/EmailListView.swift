@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import SwiftData
+import Combine
 
 /// Filter option for destination address
 enum DestinationFilter: Equatable {
@@ -32,6 +33,8 @@ struct EmailListView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Binding var needsRefresh: Bool
     @State private var toastWorkItem: DispatchWorkItem?
+    @EnvironmentObject private var deepLinkRouter: DeepLinkRouter
+    @State private var deepLinkWebsite: String? = nil
 
     // Filter state
     @State private var showFilterSheet = false
@@ -560,7 +563,7 @@ struct EmailListView: View {
             }
         }
         .sheet(isPresented: $showingCreateSheet) {
-            EmailCreateView()
+            EmailCreateView(initialWebsite: deepLinkWebsite)
         }
         .alert("Error", isPresented: $showError, presenting: error) { _ in
             Button("OK", role: .cancel) { }
@@ -585,6 +588,12 @@ struct EmailListView: View {
                 // If we have existing data, just mark as loaded
                 isInitialLoad = false
             }
+        }
+        .onReceive(deepLinkRouter.$pendingWebsiteHost.compactMap { $0 }) { host in
+            deepLinkWebsite = host
+            showingCreateSheet = true
+            // Clear after presenting to avoid repeats
+            deepLinkRouter.pendingWebsiteHost = nil
         }
         .onChange(of: needsRefresh) { _, needsRefresh in
             if needsRefresh {

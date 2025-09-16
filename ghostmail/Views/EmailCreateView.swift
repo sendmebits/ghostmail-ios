@@ -18,10 +18,13 @@ struct EmailCreateView: View {
     @FocusState private var isUsernameFocused: Bool
     @State private var selectedZoneId: String = ""
     
-    init() {
+    init(initialWebsite: String? = nil) {
         // Load the default forwarding address exactly as in SettingsView
         let savedDefault = UserDefaults.standard.string(forKey: "defaultForwardingAddress") ?? ""
         _forwardTo = State(initialValue: savedDefault)
+        if let w = initialWebsite, !w.isEmpty {
+            _website = State(initialValue: w)
+        }
     }
 
     private var hasMultipleZones: Bool {
