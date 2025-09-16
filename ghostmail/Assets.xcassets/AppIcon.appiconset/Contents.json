@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "Ghostmail_gpt.png",
+      "filename" : "Ghostmail_gemini2.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -13,7 +13,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "Ghostmail_gpt_dark.png",
+      "filename" : "Ghostmail_gemini2_dark.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -25,7 +25,7 @@
           "value" : "tinted"
         }
       ],
-      "filename" : "Ghostmail_gpt 1.png",
+      "filename" : "Ghostmail_gemini2 1.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
