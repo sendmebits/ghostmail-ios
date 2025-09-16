@@ -2,7 +2,7 @@
 //  ghostmailApp.swift
 //  ghostmail
 //
-//  Created by Chris Greco on 2025-01-16.
+//  Created by sendmebits on 2025-01-16.
 //
 
 import SwiftUI
@@ -13,6 +13,7 @@ import CloudKit
 struct ghostmailApp: App {
     let modelContainer: ModelContainer
     @StateObject private var cloudflareClient = CloudflareClient(accountId: "", zoneId: "", apiToken: "")
+    @StateObject private var deepLinkRouter = DeepLinkRouter()
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
     @AppStorage("userIdentifier") private var userIdentifier: String = ""
     
@@ -173,6 +174,7 @@ struct ghostmailApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(cloudflareClient)
+                .environmentObject(deepLinkRouter)
                 .onAppear {
                     // Perform startup operations asynchronously to avoid blocking UI
                     Task {
@@ -210,6 +212,11 @@ struct ghostmailApp: App {
                             await checkCloudKitSyncStatus()
                         }
                     }
+                }
+                .onOpenURL { url in
+                    print("[GhostMail] onOpenURL received: \(url.absoluteString)")
+                    // Route custom scheme URLs like ghostmail://create?url=...
+                    deepLinkRouter.handle(url: url)
                 }
         }
         .modelContainer(modelContainer)

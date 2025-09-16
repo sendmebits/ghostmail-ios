@@ -2,7 +2,7 @@
 //  ContentView.swift
 //  ghostmail
 //
-//  Created by Chris Greco on 2025-01-16.
+//  Created by sendmebits on 2025-01-16.
 //
 
 import SwiftUI

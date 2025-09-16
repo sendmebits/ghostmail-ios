@@ -4,6 +4,17 @@
 <dict>
 	<key>aps-environment</key>
 	<string>production</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.sendmebits.ghostmail</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ghostmail</string>
+			</array>
+		</dict>
+	</array>
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
 		<string>iCloud.com.sendmebits.ghostmail</string>
