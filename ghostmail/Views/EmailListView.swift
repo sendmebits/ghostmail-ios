@@ -57,8 +57,11 @@ struct EmailListView: View {
         return destActive || domainActive
     }
 
-    // Display all aliases from all configured zones; keep legacy entries too
-    private var allAliases: [EmailAlias] { emailAliases }
+    // Only show aliases whose zoneId is in this device's configured zones
+    private var allAliases: [EmailAlias] {
+        let allowedZoneIds = Set(cloudflareClient.zones.map { $0.zoneId.trimmingCharacters(in: .whitespacesAndNewlines) })
+        return emailAliases.filter { allowedZoneIds.contains($0.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
     
     enum SortOrder: String, CaseIterable, Hashable {
         case alphabetical
@@ -392,7 +395,11 @@ struct EmailListView: View {
                 Spacer()
                 HStack {
                     Spacer()
-                    Button(action: { showingCreateSheet = true }) {
+                    Button(action: {
+                        // Ensure manual create does not carry over any deep link
+                        deepLinkWebsite = nil
+                        showingCreateSheet = true
+                    }) {
                         Image(systemName: "plus")
                             .font(.system(size: 32, weight: .medium))
                             .foregroundColor(.white)
@@ -562,8 +569,9 @@ struct EmailListView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingCreateSheet) {
+        .sheet(isPresented: $showingCreateSheet, onDismiss: { deepLinkWebsite = nil }) {
             EmailCreateView(initialWebsite: deepLinkWebsite)
+                .id(deepLinkWebsite ?? "manual-create")
         }
         .alert("Error", isPresented: $showError, presenting: error) { _ in
             Button("OK", role: .cancel) { }

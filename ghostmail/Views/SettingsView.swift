@@ -78,7 +78,9 @@ struct SettingsView: View {
     }
     
     private func exportToCSV() {
-        let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To\n" + emailAliases.map { alias in
+        let allowedZoneIds = Set(cloudflareClient.zones.map { $0.zoneId.trimmingCharacters(in: .whitespacesAndNewlines) })
+        let filtered = emailAliases.filter { allowedZoneIds.contains($0.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To\n" + filtered.map { alias in
             let createdStr = alias.created?.ISO8601Format() ?? ""
             return "\(alias.emailAddress),\(alias.website),\(alias.notes),\(createdStr),\(alias.isEnabled),\(alias.forwardTo)"
         }.joined(separator: "\n")
