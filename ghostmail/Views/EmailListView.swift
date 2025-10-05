@@ -192,6 +192,25 @@ struct EmailListView: View {
         Array(cloudflareClient.forwardingAddresses).sorted()
     }
     
+    // Computed property for empty state view to avoid complex expressions
+    private var emptyStateView: some View {
+        if allAliases.isEmpty {
+            // No aliases exist at all - show first-time user message
+            return ContentUnavailableView(
+                "No Email Aliases",
+                systemImage: "envelope.badge.shield.half.filled",
+                description: Text("Create your first email alias using the + button")
+            )
+        } else {
+            // Aliases exist but search/filter returned no results
+            return ContentUnavailableView(
+                "No Email Aliases",
+                systemImage: "magnifyingglass",
+                description: Text("No aliases match your current search or filters")
+            )
+        }
+    }
+    
     private func refreshEmailRules(showLoading: Bool = false) async {
         // Coalesce concurrent refreshes regardless of UI loading state
         guard !isNetworking else { return }
@@ -361,11 +380,7 @@ struct EmailListView: View {
                     // Wrap empty state in a ScrollView so pull-to-refresh works even when empty
                     ScrollView {
                         VStack {
-                            ContentUnavailableView(
-                                "No Email Aliases",
-                                systemImage: "envelope.badge.shield.half.filled",
-                                description: Text("Create your first email alias using the + button")
-                            )
+                            emptyStateView
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
