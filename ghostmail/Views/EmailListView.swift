@@ -783,6 +783,17 @@ private struct FilterSheetView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { showFilterSheet = false }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Clear") {
+                        // Reset filters to defaults and apply immediately
+                        destinationFilter = .all
+                        domainFilter = .all
+                        pendingDestinationFilter = .all
+                        pendingDomainFilter = .all
+                        showFilterSheet = false
+                    }
+                    .disabled(destinationFilter == .all && domainFilter == .all)
+                }
             }
             .safeAreaInset(edge: .bottom) {
                 ZStack {
