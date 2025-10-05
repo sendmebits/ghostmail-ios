@@ -116,6 +116,7 @@ struct EmailListView: View {
             }
         }
     }
+    
     // Persist sortOrder and destinationFilter when changed
     private func persistSortOrder(_ newValue: SortOrder) {
         UserDefaults.standard.set(newValue.rawValue, forKey: "EmailListView.sortOrder")
@@ -131,6 +132,7 @@ struct EmailListView: View {
             UserDefaults.standard.set(addr, forKey: "EmailListView.destinationFilterAddress")
         }
     }
+    
     private func persistDomainFilter(_ newValue: DomainFilter) {
         switch newValue {
         case .all:
@@ -142,7 +144,6 @@ struct EmailListView: View {
         }
     }
     
-
     var sortedEmails: [EmailAlias] {
         let filtered = filteredEmails
         switch sortOrder {
@@ -299,7 +300,7 @@ struct EmailListView: View {
                 print("Deduplication error: \(error)")
             }
             
-    } catch {
+        } catch {
             // Treat user-initiated cancellations (URLError.cancelled / -999) as non-fatal
             if isCancellationError(error) {
                 print("Refresh cancelled (ignored)")
@@ -309,11 +310,11 @@ struct EmailListView: View {
                 self.showError = true
             }
         }
-    if showLoading { isLoading = false }
-    isNetworking = false
+        
+        if showLoading { isLoading = false }
+        isNetworking = false
         isInitialLoad = false
     }
-
     private func isCancellationError(_ error: Error) -> Bool {
         if let urlError = error as? URLError, urlError.code == .cancelled { return true }
         let nsError = error as NSError
@@ -352,7 +353,7 @@ struct EmailListView: View {
     }
     
     var body: some View {
-    ZStack {
+        ZStack {
             Group {
                 if isLoading && isInitialLoad {
                     ProgressView()
@@ -474,100 +475,14 @@ struct EmailListView: View {
             SettingsView()
         }
         .sheet(isPresented: $showFilterSheet) {
-            NavigationView {
-                List {
-                    Section(header: Text("Destination Address")) {
-                        Button(action: {
-                            pendingDestinationFilter = .all
-                        }) {
-                            HStack {
-                                Text("All")
-                                if pendingDestinationFilter == .all {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                        ForEach(allDestinationAddresses, id: \.self) { addr in
-                            Button(action: {
-                                pendingDestinationFilter = .address(addr)
-                            }) {
-                                HStack {
-                                    Text(addr)
-                                    if pendingDestinationFilter == .address(addr) {
-                                        Spacer()
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // Domain filter only when more than one zone exists
-                    if cloudflareClient.zones.count > 1 {
-                        Section(header: Text("Domain")) {
-                            Button(action: {
-                                pendingDomainFilter = .all
-                            }) {
-                                HStack {
-                                    Text("All")
-                                    if pendingDomainFilter == .all {
-                                        Spacer()
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                            ForEach(cloudflareClient.zones, id: \.zoneId) { z in
-                                Button(action: {
-                                    pendingDomainFilter = .zone(z.zoneId)
-                                }) {
-                                    HStack {
-                                        Text(z.domainName.isEmpty ? z.zoneId : z.domainName)
-                                        if pendingDomainFilter == .zone(z.zoneId) {
-                                            Spacer()
-                                            Image(systemName: "checkmark")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                .navigationTitle("Filter")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { showFilterSheet = false }
-                    }
-                }
-                // Bottom Apply button so selections don't auto-apply until confirmed
-                .safeAreaInset(edge: .bottom) {
-                    ZStack {
-                        // subtle background to separate from list content
-                        Rectangle()
-                            .fill(Color.black.opacity(0.6))
-                            .ignoresSafeArea()
-                            .frame(height: 0)
-                        VStack {
-                            Button {
-                                // Apply staged filters and close
-                                destinationFilter = pendingDestinationFilter
-                                domainFilter = pendingDomainFilter
-                                showFilterSheet = false
-                            } label: {
-                                Text("Apply Filters")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.blue)
-                            .disabled(pendingDestinationFilter == destinationFilter && pendingDomainFilter == domainFilter)
-                            .padding(.horizontal)
-                            .padding(.top, 8)
-                            .padding(.bottom)
-                        }
-                        .background(.ultraThinMaterial)
-                    }
-                }
-            }
+            FilterSheetView(
+                pendingDestinationFilter: $pendingDestinationFilter,
+                pendingDomainFilter: $pendingDomainFilter,
+                destinationFilter: $destinationFilter,
+                domainFilter: $domainFilter,
+                showFilterSheet: $showFilterSheet,
+                allDestinationAddresses: allDestinationAddresses
+            )
         }
         .sheet(isPresented: $showingCreateSheet, onDismiss: { deepLinkWebsite = nil }) {
             EmailCreateView(initialWebsite: deepLinkWebsite)
@@ -598,7 +513,8 @@ struct EmailListView: View {
             }
         }
         .onReceive(deepLinkRouter.$pendingWebsiteHost.compactMap { $0 }) { host in
-            deepLinkWebsite = host
+            // Empty string means open create sheet without a preset website
+            deepLinkWebsite = host.isEmpty ? nil : host
             showingCreateSheet = true
             // Clear after presenting to avoid repeats
             deepLinkRouter.pendingWebsiteHost = nil
@@ -784,3 +700,100 @@ private struct EmailListRowLink: View {
 extension Color {
     static let background = Color(uiColor: .systemBackground)
 } 
+
+// Extracted filter sheet view to reduce type-check complexity in main view
+private struct FilterSheetView: View {
+    @Binding var pendingDestinationFilter: DestinationFilter
+    @Binding var pendingDomainFilter: EmailListView.DomainFilter
+    @Binding var destinationFilter: DestinationFilter
+    @Binding var domainFilter: EmailListView.DomainFilter
+    @Binding var showFilterSheet: Bool
+    let allDestinationAddresses: [String]
+
+    @EnvironmentObject private var cloudflareClient: CloudflareClient
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section(header: Text("Destination Address")) {
+                    Button(action: { pendingDestinationFilter = .all }) {
+                        HStack {
+                            Text("All")
+                            if pendingDestinationFilter == .all {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                    ForEach(allDestinationAddresses, id: \.self) { addr in
+                        Button(action: { pendingDestinationFilter = .address(addr) }) {
+                            HStack {
+                                Text(addr)
+                                if pendingDestinationFilter == .address(addr) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+                if cloudflareClient.zones.count > 1 {
+                    Section(header: Text("Domain")) {
+                        Button(action: { pendingDomainFilter = .all }) {
+                            HStack {
+                                Text("All")
+                                if pendingDomainFilter == .all {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        ForEach(cloudflareClient.zones, id: \.zoneId) { z in
+                            Button(action: { pendingDomainFilter = .zone(z.zoneId) }) {
+                                HStack {
+                                    Text(z.domainName.isEmpty ? z.zoneId : z.domainName)
+                                    if pendingDomainFilter == .zone(z.zoneId) {
+                                        Spacer()
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Filter")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showFilterSheet = false }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                ZStack {
+                    Rectangle()
+                        .fill(Color.black.opacity(0.6))
+                        .ignoresSafeArea()
+                        .frame(height: 0)
+                    VStack {
+                        Button {
+                            destinationFilter = pendingDestinationFilter
+                            domainFilter = pendingDomainFilter
+                            showFilterSheet = false
+                        } label: {
+                            Text("Apply Filters")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+                        .disabled(pendingDestinationFilter == destinationFilter && pendingDomainFilter == domainFilter)
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                        .padding(.bottom)
+                    }
+                    .background(.ultraThinMaterial)
+                }
+            }
+        }
+    }
+}

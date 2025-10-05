@@ -8,9 +8,11 @@
 import SwiftUI
 import SwiftData
 import CloudKit
+import Combine
 
 @main
 struct ghostmailApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     let modelContainer: ModelContainer
     @StateObject private var cloudflareClient = CloudflareClient(accountId: "", zoneId: "", apiToken: "")
     @StateObject private var deepLinkRouter = DeepLinkRouter()
@@ -175,9 +177,22 @@ struct ghostmailApp: App {
             ContentView()
                 .environmentObject(cloudflareClient)
                 .environmentObject(deepLinkRouter)
+                // Observe quick action notification and translate to a create action
+                .onReceive(NotificationCenter.default.publisher(for: .ghostmailOpenCreate)) { _ in
+                    if let url = URL(string: "ghostmail://create") {
+                        deepLinkRouter.handle(url: url)
+                    }
+                }
                 .onAppear {
                     // Perform startup operations asynchronously to avoid blocking UI
                     Task {
+                        // If app was launched via Create Alias quick action, route to create view now
+                        if appDelegate.pendingCreateQuickAction {
+                            if let url = URL(string: "ghostmail://create") {
+                                deepLinkRouter.handle(url: url)
+                            }
+                            appDelegate.pendingCreateQuickAction = false
+                        }
                         // If authenticated, refresh forwarding addresses and domain from Cloudflare
                         if cloudflareClient.isAuthenticated {
                             print("App startup: Refreshing forwarding addresses and domain")
