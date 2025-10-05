@@ -94,6 +94,10 @@ struct SettingsView: View {
         }
     }
     
+    private func showCSVImporter() {
+        showFileImporter = true
+    }
+    
     private func importFromCSV(url: URL) {
         do {
             let securityScoped = url.startAccessingSecurityScopedResource()
@@ -380,456 +384,211 @@ struct SettingsView: View {
         }
     }
     
+    
+    // Computed view for complex settings section to help type-checking
+    private var settingsSection: some View {
+        SettingsSectionView(
+            defaultZoneId: $defaultZoneId,
+            selectedDefaultAddress: $selectedDefaultAddress,
+            showWebsites: $showWebsites,
+            showWebsiteLogo: $showWebsiteLogo,
+            iCloudSyncEnabled: $iCloudSyncEnabled,
+            isLoading: isLoading,
+            showDeleteICloudDataConfirmation: $showDeleteICloudDataConfirmation,
+            sortedForwardingAddresses: sortedForwardingAddresses,
+            toggleICloudSync: toggleICloudSync
+        )
+    }
+    
     // (Removed debug/testing helper functions related to CloudKit testing and diagnostics)
     
+    // Isolate the complex List subtree to help the type-checker
+    private var listContent: AnyView {
+        AnyView(
+        SettingsListContentView(
+            additionalZones: additionalZones,
+            primaryEntryCount: entryCount(for: primaryZoneId),
+            zoneToRemove: $zoneToRemove,
+            showRemoveZoneAlert: $showRemoveZoneAlert,
+            showAddZoneSheet: $showAddZoneSheet,
+            defaultZoneId: $defaultZoneId,
+            selectedDefaultAddress: $selectedDefaultAddress,
+            showWebsites: $showWebsites,
+            showWebsiteLogo: $showWebsiteLogo,
+            iCloudSyncEnabled: $iCloudSyncEnabled,
+            isLoading: isLoading,
+            showDeleteICloudDataConfirmation: $showDeleteICloudDataConfirmation,
+            sortedForwardingAddresses: sortedForwardingAddresses,
+            toggleICloudSync: { (enabled: Bool) -> Void in toggleICloudSync(enabled) },
+            exportToCSV: { () -> Void in exportToCSV() },
+            showCSVImporter: { () -> Void in showCSVImporter() },
+            logout: { () -> Void in showLogoutAlert = true },
+            entryCount: { (zoneId: String) -> Int in entryCount(for: zoneId) }
+        ))
+    }
+    
     var body: some View {
-        NavigationStack {
-            List {
-                // About section (moved to top)
-                Section {
-                    InfoRow(title: "App Version") {
-                        AppVersionValueView()
-                    }
-                    InfoRow(title: "Website") {
-                        let site = "https://github.com/sendmebits/ghostmail-ios"
-                        Text(site)
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .onTapGesture {
-                                if let url = URL(string: site) {
-                                    openURL(url)
-                                }
-                            }
-                            .onLongPressGesture(minimumDuration: 0.5) {
-                                UIPasteboard.general.string = site
-                                let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
-                            }
-                            .contextMenu {
-                                Button {
-                                    if let url = URL(string: site) {
-                                        openURL(url)
-                                    }
-                                } label: {
-                                    Text("Open Website")
-                                    Image(systemName: "safari")
-                                }
+        let v0 = NavigationStack { listContent }
+        let v1 = applyNavigation(v0)
+        let v2 = applyAlerts(v1)
+        let v3 = applyFileOps(v2)
+        let v4 = applyLifecycle(v3)
+        return v4
+    }
 
-                                Button {
-                                    UIPasteboard.general.string = site
-                                } label: {
-                                    Text("Copy Website")
-                                    Image(systemName: "doc.on.doc")
-                                }
-                            }
-                    }
-                } header: {
-                    Text("About")
-                        .textCase(.uppercase)
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
-
-                // Cloudflare Account grouped as separate sections (no outer shading)
-                Section {
-                    InfoRow(title: "Account ID for \(cloudflareClient.accountName)") {
-                        Text(cloudflareClient.accountId)
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .onLongPressGesture(minimumDuration: 0.5) {
-                                if !cloudflareClient.accountId.isEmpty {
-                                    UIPasteboard.general.string = cloudflareClient.accountId
-                                    let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
-                                }
-                            }
-                            .contextMenu {
-                                Button {
-                                    UIPasteboard.general.string = cloudflareClient.accountId
-                                } label: {
-                                    Text("Copy Account ID")
-                                    Image(systemName: "doc.on.doc")
-                                }
-                            }
-                    }
-                } header: {
-                    Text("Cloudflare Account")
-                        .textCase(.uppercase)
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
-
-                // Primary zone section
-                Section {
-                    InfoRow(title: "Zone ID for \(cloudflareClient.emailDomain)") {
-                        Text(cloudflareClient.zoneId)
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .onLongPressGesture(minimumDuration: 0.5) {
-                                if !cloudflareClient.zoneId.isEmpty {
-                                    UIPasteboard.general.string = cloudflareClient.zoneId
-                                    let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
-                                }
-                            }
-                            .contextMenu {
-                                Button {
-                                    UIPasteboard.general.string = cloudflareClient.zoneId
-                                } label: {
-                                    Text("Copy Zone ID")
-                                    Image(systemName: "doc.on.doc")
-                                }
-                            }
-                    }
-                    InfoRow(title: "Entries") {
-                        let count = entryCount(for: primaryZoneId)
-                        Text("\(count) Addresses Created")
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
-                    Button(role: .destructive) {
-                        // Prepare removal of the primary zone
-                        zoneToRemove = CloudflareClient.CloudflareZone(
-                            accountId: cloudflareClient.accountId,
-                            zoneId: cloudflareClient.zoneId,
-                            apiToken: "", // token not needed for removal
-                            accountName: cloudflareClient.accountName,
-                            domainName: cloudflareClient.domainName
-                        )
-                        showRemoveZoneAlert = true
-                    } label: {
-                        Label("Remove This Zone", systemImage: "trash")
-                    }
-                }
-
-                // Additional zone sections
-                ForEach(additionalZones, id: \.zoneId) { z in
-                    Section {
-                        InfoRow(title: "Zone ID for \(zoneDisplayName(z))") {
-                            Text(z.zoneId)
-                                .font(.system(.subheadline, design: .rounded))
-                                .foregroundStyle(.secondary)
-                                .contextMenu {
-                                    Button {
-                                        UIPasteboard.general.string = z.zoneId
-                                    } label: {
-                                        Text("Copy Zone ID")
-                                        Image(systemName: "doc.on.doc")
-                                    }
-                                }
-                        }
-                        InfoRow(title: "Entries") {
-                            let count = entryCount(for: z.zoneId)
-                            Text("\(count) Addresses Created")
-                                .font(.system(.subheadline, design: .rounded))
-                                .foregroundStyle(.secondary)
-                        }
-                        Button(role: .destructive) {
-                            zoneToRemove = z
-                            showRemoveZoneAlert = true
-                        } label: {
-                            Label("Remove This Zone", systemImage: "trash")
-                        }
-                    }
-                }
-                // Add Zone entry point
-                Section {
-                    Button {
-                        showAddZoneSheet = true
-                    } label: {
-                        Label("Add Zone (Domain)", systemImage: "plus.circle")
-                    }
-                }
-                
-                // Settings section
-                Section {
-                    // Default Domain (only when multiple zones)
-                    if cloudflareClient.zones.count > 1 {
-                        Picker("Default Domain", selection: $defaultZoneId) {
-                            ForEach(cloudflareClient.zones, id: \.zoneId) { z in
-                                Text(zoneDisplayName(z)).tag(z.zoneId)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .onAppear {
-                            if defaultZoneId.isEmpty {
-                                defaultZoneId = cloudflareClient.zoneId
-                            }
-                        }
-                    }
-
-            if !cloudflareClient.forwardingAddresses.isEmpty {
-                        Picker("Default Destination", selection: $selectedDefaultAddress) {
-                ForEach(sortedForwardingAddresses, id: \.self) { address in
-                                Text(address).tag(address)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    } else {
-                        Text("No forwarding addresses available")
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    Toggle("Show Websites in List", isOn: $showWebsites)
-                        .tint(.accentColor)
-
-                    Toggle("Show Website Logo", isOn: $showWebsiteLogo)
-                        .tint(.accentColor)
-                    
-                    Toggle("Sync metadata to iCloud", isOn: $iCloudSyncEnabled)
-                        .tint(.accentColor)
-                        .onChange(of: iCloudSyncEnabled) { oldValue, newValue in
-                            if oldValue != newValue {
-                                toggleICloudSync(newValue)
-                            }
-                        }
-                        .disabled(isLoading)
-                    
-                    if !iCloudSyncEnabled {
-                        Button(role: .destructive) {
-                            showDeleteICloudDataConfirmation = true
-                        } label: {
-                            Label("Delete iCloud Data", systemImage: "trash")
-                        }
-                    }
-                    
-                    // Debug/testing buttons removed
-                } header: {
-                    Text("Settings")
-                        .textCase(.uppercase)
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
-                
-                // Backup/Restore section
-                Section {
-                    Button {
-                        exportToCSV()
-                    } label: {
-                        Label("Export to CSV", systemImage: "square.and.arrow.up")
-                    }
-                    
-                    Button {
-                        showFileImporter = true
-                    } label: {
-                        Label("Import from CSV", systemImage: "square.and.arrow.down")
-                    }
-                } header: {
-                    Text("Backup/Restore")
-                        .textCase(.uppercase)
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
-                
-                // Logout section
-                Section {
-                    Button(role: .destructive) {
-                        showLogoutAlert = true
-                    } label: {
-                        HStack {
-                            Spacer()
-                            Image(systemName: "rectangle.portrait.and.arrow.right")
-                                .foregroundStyle(.red)
-                            Text("Logout")
-                            Spacer()
-                        }
-                    }
-                }
-                
-                // App Version section
-                // ...existing code...
-            }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-            .alert("Are you sure you want to logout?", isPresented: $showLogoutAlert) {
-                Button("Cancel", role: .cancel) { }
-                Button("Logout", role: .destructive) {
-                    // Instead of deleting data, we'll mark it as inactive
-                    // This preserves the data in iCloud while hiding it from the current session
-                    for alias in emailAliases {
-                        alias.isLoggedOut = true
-                    }
-                    try? modelContext.save()
-                    
-                    // Logout from CloudflareClient
-                    cloudflareClient.logout()
-                    dismiss()
-                }
-            } message: {
-                Text("This will clear all local data and you'll need to sign in again.")
-            }
-            .alert("Remove Zone?", isPresented: $showRemoveZoneAlert) {
-                Button("Cancel", role: .cancel) { zoneToRemove = nil }
-                Button("Remove", role: .destructive) {
-                    guard let z = zoneToRemove else { return }
-                    // Do not delete anything from iCloud; just mark local aliases as logged out
-                    let targetZoneId = z.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
-                    for alias in emailAliases where alias.zoneId == targetZoneId {
-                        alias.isLoggedOut = true
-                    }
-                    try? modelContext.save()
-
-                    // Remove zone from client (and possibly promote another as primary)
-                    cloudflareClient.removeZone(zoneId: targetZoneId)
-                    // Clear default domain if it pointed to this zone
-                    if defaultZoneId == targetZoneId {
-                        defaultZoneId = cloudflareClient.zoneId
-                    }
-                    // If list filter was locked to this zone, reset it to All
-                    let ud = UserDefaults.standard
-                    if ud.string(forKey: "EmailListView.domainFilterZoneId") == targetZoneId {
-                        ud.set("all", forKey: "EmailListView.domainFilterType")
-                        ud.removeObject(forKey: "EmailListView.domainFilterZoneId")
-                    }
-                    zoneToRemove = nil
-                }
-            } message: {
-                let name = zoneToRemove?.domainName.isEmpty == false ? zoneToRemove!.domainName : (zoneToRemove?.zoneId ?? "this zone")
-                Text("This will remove \(name) from this device. Your Cloudflare configuration and iCloud data will remain intact.")
-            }
-            .alert("Import Error", isPresented: $showImportError, presenting: importError) { _ in
-                Button("OK", role: .cancel) { }
-            } message: { error in
-                Text(error.localizedDescription)
-            }
-            .fileImporter(
-                isPresented: $showFileImporter,
-                allowedContentTypes: [.plainText, .commaSeparatedText],
-                allowsMultipleSelection: false
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    guard let url = urls.first else { return }
-                    pendingImportURL = url
-                    showImportConfirmation = true
-                case .failure(let error):
-                    print("File import error: \(error)")
-                    importError = error
-                    showImportError = true
-                }
-            }
-            .alert("Import Confirmation", isPresented: $showImportConfirmation) {
-                Button("Cancel", role: .cancel) { }
-                Button("Import", role: .destructive) {
-                    if let url = pendingImportURL {
-                        importFromCSV(url: url)
-                    }
-                }
-            } message: {
-                Text("This will import \(pendingImportURL?.lastPathComponent ?? "the selected file") and may create duplicate records. Please check for duplicates after import.")
-            }
-            .fileExporter(
-                isPresented: $showExportDialog,
-                document: CSVDocument(
-                    url: FileManager.default.temporaryDirectory.appendingPathComponent("ghostmail_backup.csv")
-                ),
-                contentType: UTType.commaSeparatedText,
-                defaultFilename: "ghostmail_backup.csv"
-            ) { _ in }
-            .alert("Disable iCloud Sync?", isPresented: $showDisableSyncConfirmation) {
-                Button("Cancel", role: .cancel) {
-                    // Revert the toggle since user canceled
-                    iCloudSyncEnabled = true
-                }
-                Button("Disable", role: .destructive) {
-                    disableICloudSync()
-                }
-            } message: {
-                Text("This will stop syncing data to iCloud and remove all existing Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId).")
-            }
-            .alert("Delete iCloud Data?", isPresented: $showDeleteICloudDataConfirmation) {
-                Button("Cancel", role: .cancel) { }
-                Button("Delete", role: .destructive) {
-                    disableICloudSync()
-                }
-            } message: {
-                Text("This will permanently delete all Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId). This action cannot be undone.")
-            }
-            .alert("Restart Required", isPresented: $showRestartAlert) {
-                Button("Restart Now") {
-                    restartApp()
-                }
-                Button("Later", role: .cancel) { }
-            } message: {
-                Text("To properly enable iCloud sync, the app needs to restart. Would you like to restart now?")
-            }
-        }
-        .sheet(isPresented: $showAddZoneSheet) {
-            NavigationStack {
-                AddZoneView(onSuccess: {
-                    showAddZoneSheet = false
-                })
-                .navigationTitle("Add Zone (Domain)")
+    // MARK: - Type-erased modifier steps to ease type checking
+    private func applyNavigation<T: View>(_ content: T) -> AnyView {
+        AnyView(
+            content
+                .navigationTitle("Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { showAddZoneSheet = false }
+                        Button("Done") { dismiss() }
                     }
                 }
-            }
-        }
-        .onAppear {
-            // Force fetching addresses from Cloudflare first
-            Task {
-                do {
-                    isLoading = true
-                    print("Settings View: Fetching forwarding addresses...")
-                    
-                    // Fetch domain name first if needed
-                    if cloudflareClient.domainName.isEmpty {
-                        try await cloudflareClient.fetchDomainName()
+        )
+    }
+
+    private func applyAlerts<T: View>(_ content: T) -> AnyView {
+        AnyView(
+            content
+                .alert("Are you sure you want to logout?", isPresented: $showLogoutAlert) {
+                    Button("Cancel", role: .cancel) { }
+                    Button("Logout", role: .destructive) {
+                        for alias in emailAliases { alias.isLoggedOut = true }
+                        try? modelContext.save()
+                        cloudflareClient.logout()
+                        dismiss()
                     }
-                    // Then fetch addresses directly from Cloudflare API (all zones when available)
-                    if cloudflareClient.zones.count > 1 {
-                        try await cloudflareClient.refreshForwardingAddressesAllZones()
-                    } else {
-                        try await cloudflareClient.refreshForwardingAddresses()
-                    }
-                    
-                    // Then update the UI with the fetched addresses
-                    await MainActor.run {
-                        if !cloudflareClient.forwardingAddresses.isEmpty {
-                            // Check if the current selected address is still valid
-                            if selectedDefaultAddress.isEmpty || !cloudflareClient.forwardingAddresses.contains(selectedDefaultAddress) {
-                                // If the saved address is no longer valid, use the current default
-                                let oldDefault = selectedDefaultAddress
-                                let newDefault = cloudflareClient.currentDefaultForwardingAddress
-                                selectedDefaultAddress = newDefault
-                                print("Updated default address from '\(oldDefault)' to '\(newDefault)' (saved address no longer available)")
-                            } else {
-                                print("Preserved user's saved default address: \(selectedDefaultAddress)")
-                            }
-                        } else {
-                            print("Warning: No forwarding addresses available")
+                } message: {
+                    Text("This will clear all local data and you'll need to sign in again.")
+                }
+                .alert("Remove Zone?", isPresented: $showRemoveZoneAlert) {
+                    Button("Cancel", role: .cancel) { zoneToRemove = nil }
+                    Button("Remove", role: .destructive) {
+                        guard let z = zoneToRemove else { return }
+                        let targetZoneId = z.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+                        for alias in emailAliases where alias.zoneId == targetZoneId { alias.isLoggedOut = true }
+                        try? modelContext.save()
+                        cloudflareClient.removeZone(zoneId: targetZoneId)
+                        if defaultZoneId == targetZoneId { defaultZoneId = cloudflareClient.zoneId }
+                        let ud = UserDefaults.standard
+                        if ud.string(forKey: "EmailListView.domainFilterZoneId") == targetZoneId {
+                            ud.set("all", forKey: "EmailListView.domainFilterType")
+                            ud.removeObject(forKey: "EmailListView.domainFilterZoneId")
                         }
-                        
-                        showWebsites = cloudflareClient.shouldShowWebsitesInList
-                        showWebsiteLogo = cloudflareClient.shouldShowWebsiteLogos
-                        isLoading = false
-                        print("Settings loaded successfully")
+                        zoneToRemove = nil
                     }
-                } catch {
-                    await MainActor.run {
-                        isLoading = false
-                        print("Error fetching forwarding addresses: \(error.localizedDescription)")
-                        // Show error to user
+                } message: {
+                    let name = zoneToRemove?.domainName.isEmpty == false ? zoneToRemove!.domainName : (zoneToRemove?.zoneId ?? "this zone")
+                    Text("This will remove \(name) from this device. Your Cloudflare configuration and iCloud data will remain intact.")
+                }
+                .alert("Import Error", isPresented: $showImportError, presenting: importError) { _ in
+                    Button("OK", role: .cancel) { }
+                } message: { error in
+                    Text(error.localizedDescription)
+                }
+        )
+    }
+
+    private func applyFileOps<T: View>(_ content: T) -> AnyView {
+        AnyView(
+            content
+                .fileImporter(
+                    isPresented: $showFileImporter,
+                    allowedContentTypes: [.plainText, .commaSeparatedText],
+                    allowsMultipleSelection: false
+                ) { result in
+                    switch result {
+                    case .success(let urls):
+                        guard let url = urls.first else { return }
+                        pendingImportURL = url
+                        showImportConfirmation = true
+                    case .failure(let error):
+                        print("File import error: \(error)")
                         importError = error
                         showImportError = true
                     }
                 }
-            }
-        }
-        .onChange(of: selectedDefaultAddress) {
-            cloudflareClient.setDefaultForwardingAddress(selectedDefaultAddress)
-        }
-        .onChange(of: showWebsites) {
-            cloudflareClient.shouldShowWebsitesInList = showWebsites
-        }
+                .alert("Import Confirmation", isPresented: $showImportConfirmation) {
+                    Button("Cancel", role: .cancel) { }
+                    Button("Import", role: .destructive) {
+                        if let url = pendingImportURL { importFromCSV(url: url) }
+                    }
+                } message: {
+                    Text("This will import \(pendingImportURL?.lastPathComponent ?? "the selected file") and may create duplicate records. Please check for duplicates after import.")
+                }
+                .fileExporter(
+                    isPresented: $showExportDialog,
+                    document: CSVDocument(
+                        url: FileManager.default.temporaryDirectory.appendingPathComponent("ghostmail_backup.csv")
+                    ),
+                    contentType: UTType.commaSeparatedText,
+                    defaultFilename: "ghostmail_backup.csv"
+                ) { _ in }
+                .alert("Disable iCloud Sync?", isPresented: $showDisableSyncConfirmation) {
+                    Button("Cancel", role: .cancel) { iCloudSyncEnabled = true }
+                    Button("Disable", role: .destructive) { disableICloudSync() }
+                } message: {
+                    Text("This will stop syncing data to iCloud and remove all existing Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId).")
+                }
+                .alert("Delete iCloud Data?", isPresented: $showDeleteICloudDataConfirmation) {
+                    Button("Cancel", role: .cancel) { }
+                    Button("Delete", role: .destructive) { disableICloudSync() }
+                } message: {
+                    Text("This will permanently delete all Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId). This action cannot be undone.")
+                }
+                .alert("Restart Required", isPresented: $showRestartAlert) {
+                    Button("Restart Now") { restartApp() }
+                    Button("Later", role: .cancel) { }
+                } message: {
+                    Text("To properly enable iCloud sync, the app needs to restart. Would you like to restart now?")
+                }
+                .sheet(isPresented: $showAddZoneSheet) {
+                    NavigationStack {
+                        AddZoneView(onSuccess: { showAddZoneSheet = false })
+                            .navigationTitle("Add Zone (Domain)")
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar {
+                                ToolbarItem(placement: .cancellationAction) {
+                                    Button("Cancel") { showAddZoneSheet = false }
+                                }
+                            }
+                    }
+                }
+        )
+    }
+
+    private func applyLifecycle<T: View>(_ content: T) -> AnyView {
+        AnyView(
+            content
+                .onAppear {
+                    Task {
+                        do {
+                            isLoading = true
+                            if cloudflareClient.domainName.isEmpty {
+                                try await cloudflareClient.fetchDomainName()
+                            }
+                            if cloudflareClient.zones.count > 1 {
+                                try await cloudflareClient.refreshForwardingAddressesAllZones()
+                            } else {
+                                try await cloudflareClient.refreshForwardingAddresses()
+                            }
+                            isLoading = false
+                        } catch {
+                            print("Error fetching addresses: \(error)")
+                            isLoading = false
+                        }
+                    }
+                }
+                .onChange(of: selectedDefaultAddress) { _, _ in
+                    cloudflareClient.setDefaultForwardingAddress(selectedDefaultAddress)
+                }
+                .onChange(of: showWebsites) { _, _ in
+                    cloudflareClient.shouldShowWebsitesInList = showWebsites
+                }
+        )
     }
 }
 
@@ -874,6 +633,78 @@ struct CSVDocument: FileDocument {
 
 // ZoneCard removed; using native Section groupings
 
+// A compact subview to isolate the complex List tree and help the type-checker
+private struct SettingsListContentView: View {
+    @EnvironmentObject private var cloudflareClient: CloudflareClient
+
+    let additionalZones: [CloudflareClient.CloudflareZone]
+    let primaryEntryCount: Int
+    @Binding var zoneToRemove: CloudflareClient.CloudflareZone?
+    @Binding var showRemoveZoneAlert: Bool
+    @Binding var showAddZoneSheet: Bool
+
+    // Settings section bindings/props
+    @Binding var defaultZoneId: String
+    @Binding var selectedDefaultAddress: String
+    @Binding var showWebsites: Bool
+    @Binding var showWebsiteLogo: Bool
+    @Binding var iCloudSyncEnabled: Bool
+    let isLoading: Bool
+    @Binding var showDeleteICloudDataConfirmation: Bool
+    let sortedForwardingAddresses: [String]
+    let toggleICloudSync: (Bool) -> Void
+
+    // Backup/restore + actions
+    let exportToCSV: () -> Void
+    let showCSVImporter: () -> Void
+    let logout: () -> Void
+
+    // Utilities
+    let entryCount: (String) -> Int
+
+    var body: some View {
+        List {
+            AboutSectionView()
+            CloudflareAccountSectionView()
+            PrimaryZoneSectionView(
+                zoneToRemove: $zoneToRemove,
+                showRemoveZoneAlert: $showRemoveZoneAlert,
+                entryCount: primaryEntryCount
+            )
+
+            if cloudflareClient.zones.count > 1 {
+                AdditionalZonesSectionView(
+                    additionalZones: additionalZones,
+                    zoneToRemove: $zoneToRemove,
+                    showRemoveZoneAlert: $showRemoveZoneAlert,
+                    entryCount: entryCount
+                )
+            }
+
+            AddZoneSectionView(showAddZoneSheet: $showAddZoneSheet)
+
+            SettingsSectionView(
+                defaultZoneId: $defaultZoneId,
+                selectedDefaultAddress: $selectedDefaultAddress,
+                showWebsites: $showWebsites,
+                showWebsiteLogo: $showWebsiteLogo,
+                iCloudSyncEnabled: $iCloudSyncEnabled,
+                isLoading: isLoading,
+                showDeleteICloudDataConfirmation: $showDeleteICloudDataConfirmation,
+                sortedForwardingAddresses: sortedForwardingAddresses,
+                toggleICloudSync: toggleICloudSync
+            )
+
+            BackupRestoreSectionView(
+                exportToCSV: exportToCSV,
+                importFromCSV: showCSVImporter
+            )
+
+            LogoutSectionView(logout: logout)
+        }
+    }
+}
+
 // Small helper view to show app version; keeps the main view simpler for the type-checker
 private struct AppVersionValueView: View {
     private var versionText: String {
@@ -899,5 +730,312 @@ private struct AppVersionValueView: View {
                     Image(systemName: "doc.on.doc")
                 }
             }
+    }
+}
+
+// MARK: - Section Subviews for better type-checking performance
+
+private struct AboutSectionView: View {
+    @Environment(\.openURL) private var openURL
+    
+    var body: some View {
+        Section {
+            InfoRow(title: "App Version") {
+                AppVersionValueView()
+            }
+            InfoRow(title: "Website") {
+                let site = "https://github.com/sendmebits/ghostmail-ios"
+                Text(site)
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .onTapGesture {
+                        if let url = URL(string: site) {
+                            openURL(url)
+                        }
+                    }
+                    .onLongPressGesture(minimumDuration: 0.5) {
+                        UIPasteboard.general.string = site
+                        let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
+                    }
+                    .contextMenu {
+                        Button {
+                            if let url = URL(string: site) {
+                                openURL(url)
+                            }
+                        } label: {
+                            Text("Open Website")
+                            Image(systemName: "safari")
+                        }
+
+                        Button {
+                            UIPasteboard.general.string = site
+                        } label: {
+                            Text("Copy Website")
+                            Image(systemName: "doc.on.doc")
+                        }
+                    }
+            }
+        } header: {
+            Text("About")
+                .textCase(.uppercase)
+                .font(.system(.footnote, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct CloudflareAccountSectionView: View {
+    @EnvironmentObject private var cloudflareClient: CloudflareClient
+    
+    var body: some View {
+        Section {
+            InfoRow(title: "Account ID for \(cloudflareClient.accountName)") {
+                Text(cloudflareClient.accountId)
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .onLongPressGesture(minimumDuration: 0.5) {
+                        if !cloudflareClient.accountId.isEmpty {
+                            UIPasteboard.general.string = cloudflareClient.accountId
+                            let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
+                        }
+                    }
+                    .contextMenu {
+                        Button {
+                            UIPasteboard.general.string = cloudflareClient.accountId
+                        } label: {
+                            Text("Copy Account ID")
+                            Image(systemName: "doc.on.doc")
+                        }
+                    }
+            }
+        } header: {
+            Text("Cloudflare Account")
+                .textCase(.uppercase)
+                .font(.system(.footnote, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct PrimaryZoneSectionView: View {
+    @EnvironmentObject private var cloudflareClient: CloudflareClient
+    @Binding var zoneToRemove: CloudflareClient.CloudflareZone?
+    @Binding var showRemoveZoneAlert: Bool
+    let entryCount: Int
+    
+    var body: some View {
+        Section {
+            InfoRow(title: "Zone ID for \(cloudflareClient.emailDomain)") {
+                Text(cloudflareClient.zoneId)
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .onLongPressGesture(minimumDuration: 0.5) {
+                        if !cloudflareClient.zoneId.isEmpty {
+                            UIPasteboard.general.string = cloudflareClient.zoneId
+                            let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
+                        }
+                    }
+                    .contextMenu {
+                        Button {
+                            UIPasteboard.general.string = cloudflareClient.zoneId
+                        } label: {
+                            Text("Copy Zone ID")
+                            Image(systemName: "doc.on.doc")
+                        }
+                    }
+            }
+            InfoRow(title: "Entries") {
+                Text("\(entryCount) Addresses Created")
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+            Button(role: .destructive) {
+                // Prepare removal of the primary zone
+                zoneToRemove = CloudflareClient.CloudflareZone(
+                    accountId: cloudflareClient.accountId,
+                    zoneId: cloudflareClient.zoneId,
+                    apiToken: "", // token not needed for removal
+                    accountName: cloudflareClient.accountName,
+                    domainName: cloudflareClient.domainName
+                )
+                showRemoveZoneAlert = true
+            } label: {
+                Label("Remove This Zone", systemImage: "trash")
+            }
+        }
+    }
+}
+
+private struct AdditionalZonesSectionView: View {
+    let additionalZones: [CloudflareClient.CloudflareZone]
+    @Binding var zoneToRemove: CloudflareClient.CloudflareZone?
+    @Binding var showRemoveZoneAlert: Bool
+    let entryCount: (String) -> Int
+    
+    private func zoneDisplayName(_ zone: CloudflareClient.CloudflareZone) -> String {
+        zone.domainName.isEmpty ? zone.zoneId : zone.domainName
+    }
+    
+    var body: some View {
+        ForEach(additionalZones, id: \.zoneId) { z in
+            Section {
+                InfoRow(title: "Zone ID for \(zoneDisplayName(z))") {
+                    Text(z.zoneId)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .contextMenu {
+                            Button {
+                                UIPasteboard.general.string = z.zoneId
+                            } label: {
+                                Text("Copy Zone ID")
+                                Image(systemName: "doc.on.doc")
+                            }
+                        }
+                }
+                InfoRow(title: "Entries") {
+                    let count = entryCount(z.zoneId)
+                    Text("\(count) Addresses Created")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                Button(role: .destructive) {
+                    zoneToRemove = z
+                    showRemoveZoneAlert = true
+                } label: {
+                    Label("Remove This Zone", systemImage: "trash")
+                }
+            }
+        }
+    }
+}
+
+private struct AddZoneSectionView: View {
+    @Binding var showAddZoneSheet: Bool
+    
+    var body: some View {
+        Section {
+            Button {
+                showAddZoneSheet = true
+            } label: {
+                Label("Add Zone (Domain)", systemImage: "plus.circle")
+            }
+        }
+    }
+}
+
+private struct SettingsSectionView: View {
+    @EnvironmentObject private var cloudflareClient: CloudflareClient
+    @Binding var defaultZoneId: String
+    @Binding var selectedDefaultAddress: String
+    @Binding var showWebsites: Bool
+    @Binding var showWebsiteLogo: Bool
+    @Binding var iCloudSyncEnabled: Bool
+    let isLoading: Bool
+    @Binding var showDeleteICloudDataConfirmation: Bool
+    let sortedForwardingAddresses: [String]
+    let toggleICloudSync: (Bool) -> Void
+    
+    private func zoneDisplayName(_ zone: CloudflareClient.CloudflareZone) -> String {
+        zone.domainName.isEmpty ? zone.zoneId : zone.domainName
+    }
+    
+    var body: some View {
+        Section {
+            // Default Domain (only when multiple zones)
+            if cloudflareClient.zones.count > 1 {
+                Picker("Default Domain", selection: $defaultZoneId) {
+                    ForEach(cloudflareClient.zones, id: \.zoneId) { z in
+                        Text(zoneDisplayName(z)).tag(z.zoneId)
+                    }
+                }
+                .pickerStyle(.menu)
+                .onAppear {
+                    if defaultZoneId.isEmpty {
+                        defaultZoneId = cloudflareClient.zoneId
+                    }
+                }
+            }
+
+            if !cloudflareClient.forwardingAddresses.isEmpty {
+                Picker("Default Destination", selection: $selectedDefaultAddress) {
+                    ForEach(sortedForwardingAddresses, id: \.self) { address in
+                        Text(address).tag(address)
+                    }
+                }
+                .pickerStyle(.menu)
+            } else {
+                Text("No forwarding addresses available")
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+            
+            Toggle("Show Websites in List", isOn: $showWebsites)
+                .tint(.accentColor)
+
+            Toggle("Show Website Logo", isOn: $showWebsiteLogo)
+                .tint(.accentColor)
+            
+            Toggle("Sync metadata to iCloud", isOn: $iCloudSyncEnabled)
+                .tint(.accentColor)
+                .onChange(of: iCloudSyncEnabled) { oldValue, newValue in
+                    if oldValue != newValue {
+                        toggleICloudSync(newValue)
+                    }
+                }
+                .disabled(isLoading)
+            
+            if !iCloudSyncEnabled {
+                Button(role: .destructive) {
+                    showDeleteICloudDataConfirmation = true
+                } label: {
+                    Label("Delete iCloud Data", systemImage: "trash")
+                }
+            }
+        } header: {
+            Text("Settings")
+                .textCase(.uppercase)
+                .font(.system(.footnote, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct BackupRestoreSectionView: View {
+    let exportToCSV: () -> Void
+    let importFromCSV: () -> Void
+    
+    var body: some View {
+        Section {
+            Button {
+                exportToCSV()
+            } label: {
+                Label("Export CSV", systemImage: "square.and.arrow.up")
+            }
+            
+            Button {
+                importFromCSV()
+            } label: {
+                Label("Import CSV", systemImage: "square.and.arrow.down")
+            }
+        } header: {
+            Text("Backup & Restore")
+                .textCase(.uppercase)
+                .font(.system(.footnote, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct LogoutSectionView: View {
+    let logout: () -> Void
+    
+    var body: some View {
+        Section {
+            Button(role: .destructive) {
+                logout()
+            } label: {
+                Label("Logout", systemImage: "rectangle.portrait.and.arrow.right")
+            }
+        }
     }
 }

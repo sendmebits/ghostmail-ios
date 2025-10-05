@@ -4,6 +4,17 @@
 <dict>
 	<key>aps-environment</key>
 	<string>production</string>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.sendmebits.ghostmail.create</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Create Alias</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeAdd</string>
+		</dict>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
