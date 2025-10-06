@@ -25,6 +25,18 @@ Ghost Mail open-source email alias manager for Cloudflare hosted domains. It let
 3. At least 1 verified destination email addresses must have been created:
        <code>Cloudflare.com > <domain.com> > Email > Email Routing > Destination Addresses</code> 
 
+# How to login
+
+Log in to your Cloudflare dashboard, choose a zone/domain, and copy Account ID and Zone ID from your domain's overview page.
+
+Go to Profile > <a href="https://dash.cloudflare.com/profile/api-tokens">API Tokens</a> > Create new token (then choose Custom token)
+
+Token Permissions:
+1. Account > Email Routing Addresses > Read
+2. Zone > Email Routing Rules > Edit
+3. Zone > Zone Settings > Read
+
+
 # Use the CSV import feature to quickly bulk add new email alias entries
 
 CSV formatting is as follows, note the optional fields:
