@@ -700,6 +700,8 @@ private struct SettingsListContentView: View {
                 importFromCSV: showCSVImporter
             )
 
+            SendLogsSectionView()
+
             LogoutSectionView(logout: logout)
         }
     }
@@ -1035,6 +1037,38 @@ private struct LogoutSectionView: View {
                 logout()
             } label: {
                 Label("Logout", systemImage: "rectangle.portrait.and.arrow.right")
+            }
+        }
+    }
+}
+
+private struct SendLogsSectionView: View {
+    @State private var showCopiedToast = false
+
+    var body: some View {
+        Section {
+            Button {
+                let text = LogBuffer.shared.dumpText()
+                let logText = text.isEmpty ? "(No recent logs)" : text
+                UIPasteboard.general.string = logText
+                
+                // Haptic feedback
+                let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                impactFeedback.impactOccurred()
+                
+                // Show brief confirmation
+                showCopiedToast = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    showCopiedToast = false
+                }
+            } label: {
+                Label("Copy Logs", systemImage: "doc.on.doc")
+            }
+            
+            if showCopiedToast {
+                Text("Copied to clipboard")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
