@@ -127,15 +127,15 @@ struct AuthenticationView: View {
     
     private func authenticate() {
         if useQuickAuth {
-            let components = quickAuthString.split(separator: ":")
+            let components = quickAuthString.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ":")
             guard components.count == 3 else {
                 errorMessage = "Invalid quick auth format. Please use 'Account ID:Zone ID:Token'"
                 showError = true
                 return
             }
-            accountId = String(components[0])
-            zoneId = String(components[1])
-            apiToken = String(components[2])
+            accountId = String(components[0]).trimmingCharacters(in: .whitespacesAndNewlines)
+            zoneId = String(components[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+            apiToken = String(components[2]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         
         isLoading = true
@@ -144,9 +144,9 @@ struct AuthenticationView: View {
             do {
                 // First update the credentials
                 cloudflareClient.updateCredentials(
-                    accountId: accountId,
-                    zoneId: zoneId,
-                    apiToken: apiToken
+                    accountId: accountId.trimmingCharacters(in: .whitespacesAndNewlines),
+                    zoneId: zoneId.trimmingCharacters(in: .whitespacesAndNewlines),
+                    apiToken: apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
                 
                 // Verify the token

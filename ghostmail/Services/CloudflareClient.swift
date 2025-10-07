@@ -36,9 +36,9 @@ class CloudflareClient: ObservableObject {
     init(accountId: String = "", zoneId: String = "", apiToken: String = "") {
         // Load stored credentials
         let defaults = UserDefaults.standard
-        self.accountId = defaults.string(forKey: "accountId") ?? accountId
-        self.zoneId = defaults.string(forKey: "zoneId") ?? zoneId
-        self.apiToken = defaults.string(forKey: "apiToken") ?? apiToken
+        self.accountId = (defaults.string(forKey: "accountId") ?? accountId).trimmingCharacters(in: .whitespacesAndNewlines)
+        self.zoneId = (defaults.string(forKey: "zoneId") ?? zoneId).trimmingCharacters(in: .whitespacesAndNewlines)
+        self.apiToken = (defaults.string(forKey: "apiToken") ?? apiToken).trimmingCharacters(in: .whitespacesAndNewlines)
         self.isAuthenticated = defaults.bool(forKey: "isAuthenticated")
 
         // Load multi-zone configuration if present; migrate from single if needed
@@ -54,6 +54,20 @@ class CloudflareClient: ObservableObject {
             self.zones = [CloudflareZone(accountId: self.accountId, zoneId: self.zoneId, apiToken: self.apiToken, accountName: self.accountName, domainName: self.domainName)]
             persistZones()
         }
+    }
+
+    // MARK: - Privacy-safe logging helpers
+    private func maskId(_ value: String, first: Int = 2, last: Int = 4) -> String {
+        guard !value.isEmpty else { return "[empty]" }
+        if value.count <= first + last { return "\(value.prefix(1))…\(value.suffix(1))" }
+        return "\(value.prefix(first))…\(value.suffix(last))"
+    }
+
+    private func maskedURL(_ url: URL, accountId: String? = nil, zoneId: String? = nil) -> String {
+        var s = url.absoluteString
+        if let zid = zoneId, !zid.isEmpty { s = s.replacingOccurrences(of: zid, with: maskId(zid)) }
+        if let aid = accountId, !aid.isEmpty { s = s.replacingOccurrences(of: aid, with: maskId(aid)) }
+        return s
     }
     
     private var headers: [String: String] {
@@ -109,7 +123,8 @@ class CloudflareClient: ObservableObject {
             var request = URLRequest(url: url)
             request.allHTTPHeaderFields = headers
             
-            print("Requesting URL: \(url.absoluteString)")
+        let msg1 = "Requesting URL: \(maskedURL(url, zoneId: zoneId))"
+        print(msg1); LogBuffer.shared.add(msg1)
             
             let (data, response) = try await URLSession.shared.data(for: request)
             
@@ -234,7 +249,7 @@ class CloudflareClient: ObservableObject {
                 if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
                     throw CloudflareError(message: errorResponse.errors.first?.message ?? "Unknown error")
                 }
-                throw CloudflareError(message: "Failed to fetch rules for zone \(zone.zoneId)")
+                throw CloudflareError(message: "Failed to fetch rules for zone \(maskId(zone.zoneId))")
             }
             let cloudflareResponse = try JSONDecoder().decode(CloudflareResponse<[EmailRule]>.self, from: data)
             guard cloudflareResponse.success else { break }
@@ -334,14 +349,14 @@ class CloudflareClient: ObservableObject {
     
     @MainActor
     func updateCredentials(accountId: String, zoneId: String, apiToken: String) {
-        self.accountId = accountId
-        self.zoneId = zoneId
-        self.apiToken = apiToken
+        self.accountId = accountId.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.zoneId = zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.apiToken = apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
         
         let defaults = UserDefaults.standard
-        defaults.set(accountId, forKey: "accountId")
-        defaults.set(zoneId, forKey: "zoneId")
-        defaults.set(apiToken, forKey: "apiToken")
+    defaults.set(self.accountId, forKey: "accountId")
+    defaults.set(self.zoneId, forKey: "zoneId")
+    defaults.set(self.apiToken, forKey: "apiToken")
         
         // Clear cache when credentials change
         forwardingAddressesCache = []
@@ -597,9 +612,28 @@ class CloudflareClient: ObservableObject {
         request.httpMethod = "GET"
         request.allHTTPHeaderFields = headers
         
+        // Log request with redacted headers
+        var logHeaders = headers
+        if logHeaders["Authorization"] != nil { logHeaders["Authorization"] = "Bearer [REDACTED]" }
+    let msg2 = "[Cloudflare] GET \(maskedURL(url, zoneId: zoneId)) — headers: \(logHeaders)"
+    print(msg2); LogBuffer.shared.add(msg2)
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+
+        // Validate response and log diagnostic details on failure
+        guard let httpResponse = response as? HTTPURLResponse else {
+            let m = "[Cloudflare] Zone details: invalid HTTP response for zoneId=\(maskId(zoneId))"
+            print(m); LogBuffer.shared.add(m)
+            throw CloudflareError(message: "Failed to fetch zone details")
+        }
+        guard httpResponse.statusCode == 200 else {
+            let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
+            let m = "[Cloudflare] Zone details fetch failed — zoneId=\(maskId(zoneId)), status=\(httpResponse.statusCode), url=\(maskedURL(url, zoneId: zoneId)), body=\(body)"
+            print(m); LogBuffer.shared.add(m)
+            if let apiErr = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data), let first = apiErr.errors.first {
+                let m2 = "[Cloudflare] API error: code=\(first.code) message=\(first.message)"
+                print(m2); LogBuffer.shared.add(m2)
+            }
             throw CloudflareError(message: "Failed to fetch zone details")
         }
         
@@ -617,8 +651,10 @@ class CloudflareClient: ObservableObject {
         }
         
         let zoneResponse = try JSONDecoder().decode(ZoneResponse.self, from: data)
-        
+
         if zoneResponse.success {
+            let m3 = "[Cloudflare] Zone details OK — zoneId=\(maskId(zoneId)), domain=\(zoneResponse.result.name), account=\(zoneResponse.result.account.name)"
+            print(m3); LogBuffer.shared.add(m3)
             await MainActor.run {
                 self.domainName = zoneResponse.result.name
                 self.accountName = zoneResponse.result.account.name
@@ -629,6 +665,9 @@ class CloudflareClient: ObservableObject {
                 }
             }
         } else {
+            let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
+            let m4 = "[Cloudflare] Zone details response success=false — zoneId=\(maskId(zoneId)), body=\(body)"
+            print(m4); LogBuffer.shared.add(m4)
             throw CloudflareError(message: "Failed to get domain name from zone response")
         }
     }
@@ -696,10 +735,12 @@ class CloudflareClient: ObservableObject {
     }
     
     func fetchForwardingAddresses() async throws {
-        print("Fetching forwarding addresses directly from Cloudflare API")
+    let msgFA0 = "Fetching forwarding addresses directly from Cloudflare API"
+    print(msgFA0); LogBuffer.shared.add(msgFA0)
         // Get the full API URL with account ID
         let addressEndpoint = "\(baseURL)/accounts/\(accountId)/email/routing/addresses"
-        print("API Endpoint: \(addressEndpoint)")
+    let msgFA1 = "API Endpoint: \(maskedURL(URL(string: addressEndpoint)!, accountId: accountId))"
+    print(msgFA1); LogBuffer.shared.add(msgFA1)
         
         let url = URL(string: addressEndpoint)!
         var request = URLRequest(url: url)
@@ -711,26 +752,31 @@ class CloudflareClient: ObservableObject {
         if logHeaders["Authorization"] != nil {
             logHeaders["Authorization"] = "Bearer [REDACTED]"
         }
-        print("Request headers: \(logHeaders)")
+    let msgFA2 = "Request headers: \(logHeaders)"
+    print(msgFA2); LogBuffer.shared.add(msgFA2)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             let error = CloudflareError(message: "Invalid HTTP response")
-            print("Error: Invalid HTTP response")
+            let m = "Error: Invalid HTTP response"
+            print(m); LogBuffer.shared.add(m)
             throw error
         }
         
-        print("Response status code: \(httpResponse.statusCode)")
+    let msgFA3 = "Response status code: \(httpResponse.statusCode)"
+    print(msgFA3); LogBuffer.shared.add(msgFA3)
         
         if httpResponse.statusCode != 200 {
             // Log the response body to help diagnose issues
             if let errorText = String(data: data, encoding: .utf8) {
-                print("Error response: \(errorText)")
+                let m = "Error response: \(errorText)"
+                print(m); LogBuffer.shared.add(m)
             }
             
             let error = CloudflareError(message: "Failed to fetch forwarding addresses (HTTP \(httpResponse.statusCode))")
-            print("Error: \(error.message)")
+            let m = "Error: \(error.message)"
+            print(m); LogBuffer.shared.add(m)
             throw error
         }
         
@@ -788,7 +834,7 @@ class CloudflareClient: ObservableObject {
 
     // Fetch forwarding addresses for an arbitrary account+token
     func fetchForwardingAddresses(accountId: String, token: String) async throws -> Set<String> {
-        let addressEndpoint = "\(baseURL)/accounts/\(accountId)/email/routing/addresses"
+    let addressEndpoint = "\(baseURL)/accounts/\(accountId)/email/routing/addresses"
         let url = URL(string: addressEndpoint)!
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -799,7 +845,7 @@ class CloudflareClient: ObservableObject {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             if let errorText = String(data: data, encoding: .utf8) { print("Error response: \(errorText)") }
-            throw CloudflareError(message: "Failed to fetch forwarding addresses for account \(accountId)")
+            throw CloudflareError(message: "Failed to fetch forwarding addresses for account \(maskId(accountId))")
         }
         let addressResponse = try JSONDecoder().decode(AddressResponse.self, from: data)
         if !addressResponse.success { throw CloudflareError(message: addressResponse.errors.first?.message ?? "Unknown error") }
@@ -836,6 +882,9 @@ class CloudflareClient: ObservableObject {
 
     // Add a new zone configuration (verifies token and fetches domain/account names)
     func addZone(accountId: String, zoneId: String, apiToken: String) async throws {
+        let accountId = accountId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let zoneId = zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiToken = apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
         // Verify token
         guard try await verifyToken(using: apiToken) else {
             throw CloudflareError(message: "Invalid API token")
@@ -903,8 +952,20 @@ class CloudflareClient: ObservableObject {
             "Authorization": "Bearer \(token)",
             "Content-Type": "application/json"
         ]
+        // Log request with redacted headers
+    print("[Cloudflare] GET \(maskedURL(url, zoneId: zoneId)) — headers: [Authorization: Bearer [REDACTED], Content-Type: application/json]")
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("[Cloudflare] Zone details (add zone): invalid HTTP response for zoneId=\(maskId(zoneId))")
+            throw CloudflareError(message: "Failed to fetch zone details")
+        }
+        guard httpResponse.statusCode == 200 else {
+            let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
+            print("[Cloudflare] Zone details fetch failed (add zone) — zoneId=\(maskId(zoneId)), status=\(httpResponse.statusCode), url=\(maskedURL(url, zoneId: zoneId)), body=\(body)")
+            if let apiErr = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data), let first = apiErr.errors.first {
+                print("[Cloudflare] API error: code=\(first.code) message=\(first.message)")
+            }
             throw CloudflareError(message: "Failed to fetch zone details")
         }
         struct ZoneResponse: Codable {
@@ -914,7 +975,12 @@ class CloudflareClient: ObservableObject {
             let success: Bool
         }
         let zoneResponse = try JSONDecoder().decode(ZoneResponse.self, from: data)
-        guard zoneResponse.success else { throw CloudflareError(message: "Failed to get domain name from zone response") }
+        guard zoneResponse.success else {
+            let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
+            print("[Cloudflare] Zone details response success=false (add zone) — zoneId=\(maskId(zoneId)), body=\(body)")
+            throw CloudflareError(message: "Failed to get domain name from zone response")
+        }
+    print("[Cloudflare] Zone details OK (add zone) — zoneId=\(maskId(zoneId)), domain=\(zoneResponse.result.name), account=\(zoneResponse.result.account.name)")
         return (domainName: zoneResponse.result.name, accountName: zoneResponse.result.account.name)
     }
 }

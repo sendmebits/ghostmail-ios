@@ -129,16 +129,20 @@ struct AddZoneView: View {
 
     private func addZone() {
         if useQuickAuth {
-            let components = quickAuthString.split(separator: ":")
+            let components = quickAuthString.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ":")
             guard components.count == 3 else {
                 errorMessage = "Invalid quick auth format. Use Account ID:Zone ID:Token"
                 showError = true
                 return
             }
-            accountId = String(components[0])
-            zoneId = String(components[1])
-            apiToken = String(components[2])
+            accountId = String(components[0]).trimmingCharacters(in: .whitespacesAndNewlines)
+            zoneId = String(components[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+            apiToken = String(components[2]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        // Also trim manually entered fields to protect against paste artifacts
+        accountId = accountId.trimmingCharacters(in: .whitespacesAndNewlines)
+        zoneId = zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+        apiToken = apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !accountId.isEmpty, !zoneId.isEmpty, !apiToken.isEmpty else {
             errorMessage = "All fields are required"
             showError = true
