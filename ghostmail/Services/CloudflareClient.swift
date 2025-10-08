@@ -91,6 +91,29 @@ class CloudflareClient: ObservableObject {
 
     // Verify an arbitrary token (used for adding additional zones)
     func verifyToken(using token: String) async throws -> Bool {
+        // First try user token verification
+        let userTokenResult = await verifyUserToken(using: token)
+        if userTokenResult.isValid {
+            print("[Cloudflare] Token verified as user token")
+            return true
+        }
+        
+        // If user token verification fails, try to validate as account token
+        print("[Cloudflare] User token verification failed (\(userTokenResult.error ?? "unknown error")), attempting to validate as account token")
+        let accountTokenValid = await validateAccountToken(using: token)
+        
+        if accountTokenValid {
+            print("[Cloudflare] Token verified as account token")
+            return true
+        }
+        
+        // Both verification methods failed
+        print("[Cloudflare] Both user and account token verification failed")
+        throw CloudflareError(message: "Invalid API token. Please ensure your token has the correct permissions for Email Routing and Zone access.")
+    }
+    
+    // Helper function to verify user tokens
+    private func verifyUserToken(using token: String) async -> (isValid: Bool, error: String?) {
         let url = URL(string: "\(baseURL)/user/tokens/verify")!
         var request = URLRequest(url: url)
         request.allHTTPHeaderFields = [
@@ -98,12 +121,62 @@ class CloudflareClient: ObservableObject {
             "Content-Type": "application/json"
         ]
         
-        let (_, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
+        print("[Cloudflare] Verifying user token: GET \(url)")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("[Cloudflare] User token verification failed: Invalid HTTP response")
+                return (false, "Invalid response from server")
+            }
+            
+            if httpResponse.statusCode == 200 {
+                if let responseString = String(data: data, encoding: .utf8) {
+                    print("[Cloudflare] User token verification successful: \(responseString)")
+                }
+                return (true, nil)
+            } else {
+                let responseBody = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
+                print("[Cloudflare] User token verification failed: status=\(httpResponse.statusCode), body=\(responseBody)")
+                return (false, "User token verification failed with status \(httpResponse.statusCode)")
+            }
+        } catch {
+            print("[Cloudflare] User token verification error: \(error)")
+            return (false, error.localizedDescription)
+        }
+    }
+    
+    // Helper function to validate account tokens by attempting to use them
+    private func validateAccountToken(using token: String) async -> Bool {
+        // For account tokens, we'll try to list accounts to validate the token works
+        let url = URL(string: "\(baseURL)/accounts")!
+        var request = URLRequest(url: url)
+        request.allHTTPHeaderFields = [
+            "Authorization": "Bearer \(token)",
+            "Content-Type": "application/json"
+        ]
+        
+        print("[Cloudflare] Validating account token by listing accounts: GET \(url)")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("[Cloudflare] Account token validation failed: Invalid HTTP response")
+                return false
+            }
+            
+            if httpResponse.statusCode == 200 {
+                print("[Cloudflare] Account token validation successful")
+                return true
+            } else {
+                let responseBody = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
+                print("[Cloudflare] Account token validation failed: status=\(httpResponse.statusCode), body=\(responseBody)")
+                return false
+            }
+        } catch {
+            print("[Cloudflare] Account token validation error: \(error)")
             return false
         }
-        return true
     }
     
     // Get email rules from Cloudflare (returns custom type to avoid circular dependencies)
