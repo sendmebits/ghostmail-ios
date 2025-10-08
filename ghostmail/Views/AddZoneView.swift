@@ -179,6 +179,14 @@ struct AddZoneView: View {
                     try? modelContext.save()
                     successMessage = "Zone added and entries loaded."
                     showSuccess = true
+                    
+                    // Clear form fields after successful addition
+                    accountId = ""
+                    zoneId = ""
+                    apiToken = ""
+                    quickAuthString = ""
+                    useQuickAuth = false
+                    
                     // Notify parent to dismiss
                     onSuccess()
                 }
