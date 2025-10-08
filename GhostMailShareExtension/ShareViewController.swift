@@ -17,9 +17,18 @@ class ShareViewController: UIViewController {
     private func setupUI() {
         view.backgroundColor = UIColor.systemBackground
         
-        // Navigation bar
+        // Navigation bar with extra padding for iOS 26
         let navBar = UINavigationBar()
         navBar.translatesAutoresizingMaskIntoConstraints = false
+        navBar.prefersLargeTitles = false
+        
+        // Add extra padding to the navigation bar
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor.systemBackground
+        navBar.standardAppearance = appearance
+        navBar.scrollEdgeAppearance = appearance
+        
         let navItem = UINavigationItem(title: "Create Email Alias")
         
         cancelButton = UIButton(type: .system)
@@ -60,9 +69,10 @@ class ShareViewController: UIViewController {
         descriptionLabel.numberOfLines = 0
         stackView.addArrangedSubview(descriptionLabel)
         
-        // Constraints
+        // Constraints with extra padding for iOS 26
         NSLayoutConstraint.activate([
-            navBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            // Add more top padding to the navigation bar
+            navBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
             navBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             navBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             
