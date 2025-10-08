@@ -1,25 +1,85 @@
 import UIKit
-import Social
 import UniformTypeIdentifiers
 
-class ShareViewController: SLComposeServiceViewController {
+class ShareViewController: UIViewController {
     private var websiteDomain: String?
+    private var titleLabel: UILabel!
+    private var descriptionLabel: UILabel!
+    private var createButton: UIButton!
+    private var cancelButton: UIButton!
     
-    override func isContentValid() -> Bool { true }
-
     override func viewDidLoad() {
         super.viewDidLoad()
-        
-        // Extract and display the website domain
+        setupUI()
         extractWebsiteDomain()
     }
-
-    override func didSelectPost() {
-        print("[GhostMailShareExt] didSelectPost")
+    
+    private func setupUI() {
+        view.backgroundColor = UIColor.systemBackground
+        
+        // Navigation bar
+        let navBar = UINavigationBar()
+        navBar.translatesAutoresizingMaskIntoConstraints = false
+        let navItem = UINavigationItem(title: "Create Email Alias")
+        
+        cancelButton = UIButton(type: .system)
+        cancelButton.setTitle("Cancel", for: .normal)
+        cancelButton.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
+        navItem.leftBarButtonItem = UIBarButtonItem(customView: cancelButton)
+        
+        createButton = UIButton(type: .system)
+        createButton.setTitle("Create", for: .normal)
+        createButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 17)
+        createButton.addTarget(self, action: #selector(createTapped), for: .touchUpInside)
+        navItem.rightBarButtonItem = UIBarButtonItem(customView: createButton)
+        
+        navBar.setItems([navItem], animated: false)
+        view.addSubview(navBar)
+        
+        // Main content
+        let stackView = UIStackView()
+        stackView.axis = .vertical
+        stackView.spacing = 20
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stackView)
+        
+        // Title label
+        titleLabel = UILabel()
+        titleLabel.text = "Creating email alias..."
+        titleLabel.font = UIFont.systemFont(ofSize: 20, weight: .medium)
+        titleLabel.textAlignment = .center
+        titleLabel.numberOfLines = 0
+        stackView.addArrangedSubview(titleLabel)
+        
+        // Description label
+        descriptionLabel = UILabel()
+        descriptionLabel.text = "This will open Ghost Mail to create a new email alias."
+        descriptionLabel.font = UIFont.systemFont(ofSize: 16)
+        descriptionLabel.textColor = UIColor.secondaryLabel
+        descriptionLabel.textAlignment = .center
+        descriptionLabel.numberOfLines = 0
+        stackView.addArrangedSubview(descriptionLabel)
+        
+        // Constraints
+        NSLayoutConstraint.activate([
+            navBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            navBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            navBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            
+            stackView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            stackView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 40),
+            stackView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -40)
+        ])
+    }
+    
+    @objc private func cancelTapped() {
+        completeRequest()
+    }
+    
+    @objc private func createTapped() {
+        print("[GhostMailShareExt] createTapped")
         handleInputAndOpenHostApp()
     }
-
-    override func configurationItems() -> [Any]! { return [] }
 
     private func extractWebsiteDomain() {
         guard let extensionItem = extensionContext?.inputItems.first as? NSExtensionItem else { return }
@@ -33,20 +93,20 @@ class ShareViewController: SLComposeServiceViewController {
                     if domain.hasPrefix("www.") { domain.removeFirst(4) }
                     DispatchQueue.main.async {
                         self.websiteDomain = domain
-                        self.textView.text = "Creating email alias for: \(domain)"
-                        self.placeholder = "Creating alias for \(domain)"
+                        self.titleLabel.text = "Create alias for \(domain)"
+                        self.descriptionLabel.text = "This will create a new email alias for \(domain) in Ghost Mail."
                     }
                 } else {
                     DispatchQueue.main.async {
-                        self.textView.text = "Creating new email alias"
-                        self.placeholder = "Creating new email alias"
+                        self.titleLabel.text = "Create new email alias"
+                        self.descriptionLabel.text = "This will open Ghost Mail to create a new email alias."
                     }
                 }
             }
         } else {
             DispatchQueue.main.async {
-                self.textView.text = "Creating new email alias"
-                self.placeholder = "Creating new email alias"
+                self.titleLabel.text = "Create new email alias"
+                self.descriptionLabel.text = "This will open Ghost Mail to create a new email alias."
             }
         }
     }
