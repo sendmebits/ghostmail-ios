@@ -183,53 +183,52 @@ struct ghostmailApp: App {
                         deepLinkRouter.handle(url: url)
                     }
                 }
-                .onAppear {
+                .task {
                     // Perform startup operations asynchronously to avoid blocking UI
-                    Task {
-                        // If app was launched via Create Alias quick action, route to create view now
-                        if appDelegate.pendingCreateQuickAction {
-                            if let url = URL(string: "ghostmail://create") {
-                                deepLinkRouter.handle(url: url)
-                            }
-                            appDelegate.pendingCreateQuickAction = false
+                    // If app was launched via Create Alias quick action, route to create view now
+                    if appDelegate.pendingCreateQuickAction {
+                        // Small delay to ensure view hierarchy is ready
+                        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                        if let url = URL(string: "ghostmail://create") {
+                            deepLinkRouter.handle(url: url)
                         }
-                        // If authenticated, refresh forwarding addresses and domain from Cloudflare
-                        if cloudflareClient.isAuthenticated {
-                            print("App startup: Refreshing forwarding addresses and domain")
-                            do {
-                                // Single attempt with shorter timeout
-                                try await withTimeout(seconds: 10) {
-                                    // Fetch domain name first
-                                    if cloudflareClient.domainName.isEmpty {
-                                        try await cloudflareClient.fetchDomainName()
-                                    }
-                                    // Then refresh forwarding addresses
-                                    try await cloudflareClient.refreshForwardingAddresses()
+                        appDelegate.pendingCreateQuickAction = false
+                    }
+                    // If authenticated, refresh forwarding addresses and domain from Cloudflare
+                    if cloudflareClient.isAuthenticated {
+                        print("App startup: Refreshing forwarding addresses and domain")
+                        do {
+                            // Single attempt with shorter timeout
+                            try await withTimeout(seconds: 10) {
+                                // Fetch domain name first
+                                if cloudflareClient.domainName.isEmpty {
+                                    try await cloudflareClient.fetchDomainName()
                                 }
-                                print("App startup: Successfully refreshed forwarding addresses and domain")
-                            } catch {
-                                print("App startup: Failed to refresh forwarding addresses: \(error)")
+                                // Then refresh forwarding addresses
+                                try await cloudflareClient.refreshForwardingAddresses()
                             }
+                            print("App startup: Successfully refreshed forwarding addresses and domain")
+                        } catch {
+                            print("App startup: Failed to refresh forwarding addresses: \(error)")
                         }
-                        
-                        // Update user identifiers and trigger sync on app launch - now non-blocking
-                        if iCloudSyncEnabled {
-                            // First, clean up any duplicate records so sync doesn't propagate dups
-                            do {
-                                let deleted = try EmailAlias.deduplicate(in: modelContainer.mainContext)
-                                if deleted > 0 { print("Deduplicated \(deleted) aliases on startup") }
-                            } catch {
-                                print("Error during startup deduplication: \(error)")
-                            }
+                    }
+                    
+                    // Update user identifiers and trigger sync on app launch - now non-blocking
+                    if iCloudSyncEnabled {
+                        // First, clean up any duplicate records so sync doesn't propagate dups
+                        do {
+                            let deleted = try EmailAlias.deduplicate(in: modelContainer.mainContext)
+                            if deleted > 0 { print("Deduplicated \(deleted) aliases on startup") }
+                        } catch {
+                            print("Error during startup deduplication: \(error)")
+                        }
 
-                            await ghostmailApp.updateUserIdentifiers(modelContainer: modelContainer)
-                            await ghostmailApp.forceSyncExistingData(modelContainer: modelContainer)
-                            await checkCloudKitSyncStatus()
-                        }
+                        await ghostmailApp.updateUserIdentifiers(modelContainer: modelContainer)
+                        await ghostmailApp.forceSyncExistingData(modelContainer: modelContainer)
+                        await checkCloudKitSyncStatus()
                     }
                 }
                 .onOpenURL { url in
-                    print("[GhostMail] onOpenURL received: \(url.absoluteString)")
                     // Route custom scheme URLs like ghostmail://create?url=...
                     deepLinkRouter.handle(url: url)
                 }
