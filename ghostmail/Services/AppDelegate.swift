@@ -14,6 +14,8 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         if let shortcutItem = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem,
            shortcutItem.type == "com.sendmebits.ghostmail.create" {
             pendingCreateQuickAction = true
+            // Return false to prevent the system from calling performActionFor
+            return false
         }
         return true
     }
@@ -25,9 +27,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
     private func handle(shortcutItem: UIApplicationShortcutItem) -> Bool {
         guard shortcutItem.type == "com.sendmebits.ghostmail.create" else { return false }
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .ghostmailOpenCreate, object: nil)
-        }
+        NotificationCenter.default.post(name: .ghostmailOpenCreate, object: nil)
         return true
     }
 }

@@ -12,7 +12,6 @@ final class DeepLinkRouter: ObservableObject {
         let path = url.host?.lowercased() ?? url.path.lowercased()
         if path.contains("create") || url.path.lowercased().contains("create") {
             let website = extractWebsite(from: url)
-            print("[GhostMail] DeepLinkRouter extracted website host=\(website ?? "nil")")
             if let host = website {
                 self.pendingWebsiteHost = host
             } else {
