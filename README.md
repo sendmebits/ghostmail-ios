@@ -32,9 +32,9 @@ Log in to your Cloudflare dashboard, choose a zone/domain, and copy Account ID a
 Go to Profile > <a href="https://dash.cloudflare.com/profile/api-tokens">API Tokens</a> > Create new token (then choose Custom token)
 
 Token Permissions:
-1. Account > Email Routing Addresses > Read
-2. Zone > Email Routing Rules > Edit
-3. Zone > Zone Settings > Read
+1. Account > Email Routing Addresses > **Read**
+2. Zone > Email Routing Rules > **Edit**
+3. Zone > Zone Settings > **Read**
 
 
 # Use the CSV import feature to quickly bulk add new email alias entries
