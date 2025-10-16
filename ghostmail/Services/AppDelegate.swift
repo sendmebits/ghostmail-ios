@@ -19,6 +19,17 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         }
         return true
     }
+    
+    func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        if let shortcutItem = options.shortcutItem,
+           shortcutItem.type == "com.sendmebits.ghostmail.create" {
+            pendingCreateQuickAction = true
+        }
+        
+        let configuration = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+        configuration.delegateClass = SceneDelegate.self
+        return configuration
+    }
 
     func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
         let handled = handle(shortcutItem: shortcutItem)
@@ -26,7 +37,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     private func handle(shortcutItem: UIApplicationShortcutItem) -> Bool {
-        guard shortcutItem.type == "com.sendmebits.ghostmail.create" else { return false }
+        guard shortcutItem.type == "com.sendmebits.ghostmail.create" else { 
+            return false 
+        }
+        pendingCreateQuickAction = true
         NotificationCenter.default.post(name: .ghostmailOpenCreate, object: nil)
         return true
     }
