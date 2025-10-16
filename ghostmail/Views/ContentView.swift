@@ -16,6 +16,7 @@ struct ContentView: View {
     }
     
     @EnvironmentObject private var cloudflareClient: CloudflareClient
+    @EnvironmentObject private var deepLinkRouter: DeepLinkRouter
     @Environment(\.modelContext) private var modelContext
     @State private var searchText = ""
     @Query private var emailAliases: [EmailAlias]
@@ -25,6 +26,8 @@ struct ContentView: View {
     @State private var needsRefresh = false
     @State private var sortOrder = SortOrder.cloudflareOrder
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
+    @State private var showingCreateSheet = false
+    @State private var deepLinkWebsite: String? = nil
     
     var body: some View {
         NavigationStack {
@@ -47,6 +50,23 @@ struct ContentView: View {
                     }
             } else {
                 AuthenticationView()
+            }
+        }
+        .sheet(isPresented: $showingCreateSheet, onDismiss: { deepLinkWebsite = nil }) {
+            EmailCreateView(initialWebsite: deepLinkWebsite)
+                .id(deepLinkWebsite ?? "manual-create")
+        }
+        .onReceive(deepLinkRouter.$pendingWebsiteHost.compactMap { $0 }) { host in
+            // Empty string means open create sheet without a preset website
+            deepLinkWebsite = host.isEmpty ? nil : host
+            showingCreateSheet = true
+            // Clear after presenting to avoid repeats
+            deepLinkRouter.pendingWebsiteHost = nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .ghostmailOpenCreate)) { _ in
+            // Handle quick action notification by triggering deep link
+            if let url = URL(string: "ghostmail://create") {
+                deepLinkRouter.handle(url: url)
             }
         }
     }

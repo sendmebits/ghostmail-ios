@@ -6,7 +6,9 @@ final class DeepLinkRouter: ObservableObject {
     @Published var pendingWebsiteHost: String? = nil
 
     func handle(url: URL) {
-        guard url.scheme?.lowercased() == "ghostmail" else { return }
+        guard url.scheme?.lowercased() == "ghostmail" else { 
+            return 
+        }
 
         // Supported paths: ghostmail://create?url=<encoded>
         let path = url.host?.lowercased() ?? url.path.lowercased()

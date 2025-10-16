@@ -13,6 +13,7 @@ import Combine
 @main
 struct ghostmailApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
     let modelContainer: ModelContainer
     @StateObject private var cloudflareClient = CloudflareClient(accountId: "", zoneId: "", apiToken: "")
     @StateObject private var deepLinkRouter = DeepLinkRouter()
@@ -177,21 +178,14 @@ struct ghostmailApp: App {
             ContentView()
                 .environmentObject(cloudflareClient)
                 .environmentObject(deepLinkRouter)
-                // Observe quick action notification and translate to a create action
-                .onReceive(NotificationCenter.default.publisher(for: .ghostmailOpenCreate)) { _ in
-                    if let url = URL(string: "ghostmail://create") {
-                        deepLinkRouter.handle(url: url)
-                    }
-                }
                 .task {
                     // Perform startup operations asynchronously to avoid blocking UI
                     // If app was launched via Create Alias quick action, route to create view now
                     if appDelegate.pendingCreateQuickAction {
                         // Small delay to ensure view hierarchy is ready
-                        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-                        if let url = URL(string: "ghostmail://create") {
-                            deepLinkRouter.handle(url: url)
-                        }
+                        try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
+                        // Post notification to trigger the same flow as when app is already running
+                        NotificationCenter.default.post(name: .ghostmailOpenCreate, object: nil)
                         appDelegate.pendingCreateQuickAction = false
                     }
                     // If authenticated, refresh forwarding addresses and domain from Cloudflare
@@ -232,8 +226,23 @@ struct ghostmailApp: App {
                     // Route custom scheme URLs like ghostmail://create?url=...
                     deepLinkRouter.handle(url: url)
                 }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
+                    print("🌐 ghostmailApp: onContinueUserActivity called")
+                    if let url = userActivity.webpageURL {
+                        deepLinkRouter.handle(url: url)
+                    }
+                }
         }
         .modelContainer(modelContainer)
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            if newPhase == .active {
+                // Check if there's a pending quick action when scene becomes active
+                if appDelegate.pendingCreateQuickAction {
+                    NotificationCenter.default.post(name: .ghostmailOpenCreate, object: nil)
+                    appDelegate.pendingCreateQuickAction = false
+                }
+            }
+        }
     }
 }
 
