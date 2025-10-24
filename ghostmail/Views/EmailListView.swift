@@ -38,8 +38,8 @@ struct EmailListView: View {
     // Filter state
     @State private var showFilterSheet = false
     @State private var destinationFilter: DestinationFilter = .all
-    // Domain filter (by Cloudflare zone)
-    enum DomainFilter: Equatable { case all, zone(String) }
+    // Domain filter (by domain name - includes main domains and subdomains)
+    enum DomainFilter: Equatable { case all, domain(String) }
     @State private var domainFilter: DomainFilter = .all
     // Pending (staged) filters used inside the filter sheet
     @State private var pendingDestinationFilter: DestinationFilter = .all
@@ -108,10 +108,10 @@ struct EmailListView: View {
         if let domainType = UserDefaults.standard.string(forKey: "EmailListView.domainFilterType") {
             if domainType == "all" {
                 _domainFilter = State(initialValue: .all)
-            } else if domainType == "zone",
-                      let zid = UserDefaults.standard.string(forKey: "EmailListView.domainFilterZoneId"),
-                      !zid.isEmpty {
-                _domainFilter = State(initialValue: .zone(zid))
+            } else if domainType == "domain",
+                      let domainName = UserDefaults.standard.string(forKey: "EmailListView.domainFilterDomain"),
+                      !domainName.isEmpty {
+                _domainFilter = State(initialValue: .domain(domainName))
             }
         }
     }
@@ -136,10 +136,10 @@ struct EmailListView: View {
         switch newValue {
         case .all:
             UserDefaults.standard.set("all", forKey: "EmailListView.domainFilterType")
-            UserDefaults.standard.removeObject(forKey: "EmailListView.domainFilterZoneId")
-        case .zone(let zid):
-            UserDefaults.standard.set("zone", forKey: "EmailListView.domainFilterType")
-            UserDefaults.standard.set(zid, forKey: "EmailListView.domainFilterZoneId")
+            UserDefaults.standard.removeObject(forKey: "EmailListView.domainFilterDomain")
+        case .domain(let domainName):
+            UserDefaults.standard.set("domain", forKey: "EmailListView.domainFilterType")
+            UserDefaults.standard.set(domainName, forKey: "EmailListView.domainFilterDomain")
         }
     }
     
@@ -174,13 +174,20 @@ struct EmailListView: View {
             destinationFiltered = base.filter { $0.forwardTo == addr }
         }
 
-        // Apply domain filter (zone)
+        // Apply domain filter (by domain name)
         let domainFiltered: [EmailAlias]
         switch domainFilter {
         case .all:
             domainFiltered = destinationFiltered
-        case .zone(let zid):
-            domainFiltered = destinationFiltered.filter { $0.zoneId == zid }
+        case .domain(let domainName):
+            domainFiltered = destinationFiltered.filter { alias in
+                // Extract domain from email address
+                let parts = alias.emailAddress.split(separator: "@")
+                if parts.count == 2 {
+                    return String(parts[1]).lowercased() == domainName.lowercased()
+                }
+                return false
+            }
         }
 
         return domainFiltered
@@ -189,6 +196,25 @@ struct EmailListView: View {
     var allDestinationAddresses: [String] {
         // Use the same source as SettingsView so the filter list is consistent
         Array(cloudflareClient.forwardingAddresses).sorted()
+    }
+    
+    // Get all available domains (main domains + subdomains with subdomain feature enabled)
+    var allAvailableDomains: [String] {
+        var domains: [String] = []
+        
+        for zone in cloudflareClient.zones {
+            // Add main domain
+            if !zone.domainName.isEmpty {
+                domains.append(zone.domainName)
+            }
+            
+            // Add subdomains only if enabled for this zone
+            if zone.subdomainsEnabled {
+                domains.append(contentsOf: zone.subdomains)
+            }
+        }
+        
+        return domains.sorted()
     }
     
     // Computed property for empty state view to avoid complex expressions
@@ -493,7 +519,8 @@ struct EmailListView: View {
                 destinationFilter: $destinationFilter,
                 domainFilter: $domainFilter,
                 showFilterSheet: $showFilterSheet,
-                allDestinationAddresses: allDestinationAddresses
+                allDestinationAddresses: allDestinationAddresses,
+                allAvailableDomains: allAvailableDomains
             )
         }
         .sheet(isPresented: $showingCreateSheet) {
@@ -713,6 +740,7 @@ private struct FilterSheetView: View {
     @Binding var domainFilter: EmailListView.DomainFilter
     @Binding var showFilterSheet: Bool
     let allDestinationAddresses: [String]
+    let allAvailableDomains: [String]
 
     @EnvironmentObject private var cloudflareClient: CloudflareClient
 
@@ -741,25 +769,23 @@ private struct FilterSheetView: View {
                         }
                     }
                 }
-                if cloudflareClient.zones.count > 1 {
-                    Section(header: Text("Domain")) {
-                        Button(action: { pendingDomainFilter = .all }) {
-                            HStack {
-                                Text("All")
-                                if pendingDomainFilter == .all {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
+                Section(header: Text("Domain")) {
+                    Button(action: { pendingDomainFilter = .all }) {
+                        HStack {
+                            Text("All")
+                            if pendingDomainFilter == .all {
+                                Spacer()
+                                Image(systemName: "checkmark")
                             }
                         }
-                        ForEach(cloudflareClient.zones, id: \.zoneId) { z in
-                            Button(action: { pendingDomainFilter = .zone(z.zoneId) }) {
-                                HStack {
-                                    Text(z.domainName.isEmpty ? z.zoneId : z.domainName)
-                                    if pendingDomainFilter == .zone(z.zoneId) {
-                                        Spacer()
-                                        Image(systemName: "checkmark")
-                                    }
+                    }
+                    ForEach(allAvailableDomains, id: \.self) { domainName in
+                        Button(action: { pendingDomainFilter = .domain(domainName) }) {
+                            HStack {
+                                Text(domainName)
+                                if pendingDomainFilter == .domain(domainName) {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
                                 }
                             }
                         }

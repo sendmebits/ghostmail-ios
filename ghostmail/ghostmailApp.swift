@@ -205,6 +205,24 @@ struct ghostmailApp: App {
                         } catch {
                             print("App startup: Failed to refresh forwarding addresses: \(error)")
                         }
+                        
+                        // Background refresh of subdomains (only for zones with subdomains enabled)
+                        Task.detached(priority: .background) {
+                            // Check if any zone has subdomains enabled
+                            let hasEnabledZones = await cloudflareClient.zones.contains(where: { $0.subdomainsEnabled })
+                            
+                            if hasEnabledZones {
+                                do {
+                                    print("App startup: Refreshing subdomains in background")
+                                    try await cloudflareClient.refreshSubdomainsAllZones()
+                                    print("App startup: Successfully refreshed subdomains")
+                                } catch {
+                                    print("App startup: Failed to refresh subdomains (non-critical): \(error)")
+                                }
+                            } else {
+                                print("App startup: Skipping subdomain refresh (no zones have subdomains enabled)")
+                            }
+                        }
                     }
                     
                     // Update user identifiers and trigger sync on app launch - now non-blocking

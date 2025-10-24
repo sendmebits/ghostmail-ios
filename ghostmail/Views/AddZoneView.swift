@@ -154,6 +154,7 @@ struct AddZoneView: View {
                 try await cloudflareClient.addZone(accountId: accountId, zoneId: zoneId, apiToken: apiToken)
                 // Refresh forwarding addresses across all zones and pull rules to populate DB
                 try await cloudflareClient.refreshForwardingAddressesAllZones()
+                // Note: Subdomains are not fetched by default - user must enable them per zone
                 let allRules = try await cloudflareClient.getEmailRulesAllZones()
                 await MainActor.run {
                     // Merge basic rules into local DB; duplicate handling done elsewhere
