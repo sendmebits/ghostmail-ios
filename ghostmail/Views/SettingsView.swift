@@ -34,6 +34,7 @@ struct SettingsView: View {
         }
     }
     @AppStorage("defaultZoneId") private var defaultZoneId: String = ""
+    @AppStorage("defaultDomain") private var defaultDomain: String = ""
     @State private var zoneToRemove: CloudflareClient.CloudflareZone? = nil
     @State private var showRemoveZoneAlert: Bool = false
     
@@ -389,6 +390,7 @@ struct SettingsView: View {
     private var settingsSection: some View {
         SettingsSectionView(
             defaultZoneId: $defaultZoneId,
+            defaultDomain: $defaultDomain,
             selectedDefaultAddress: $selectedDefaultAddress,
             showWebsites: $showWebsites,
             showWebsiteLogo: $showWebsiteLogo,
@@ -412,6 +414,7 @@ struct SettingsView: View {
             showRemoveZoneAlert: $showRemoveZoneAlert,
             showAddZoneSheet: $showAddZoneSheet,
             defaultZoneId: $defaultZoneId,
+            defaultDomain: $defaultDomain,
             selectedDefaultAddress: $selectedDefaultAddress,
             showWebsites: $showWebsites,
             showWebsiteLogo: $showWebsiteLogo,
@@ -473,10 +476,16 @@ struct SettingsView: View {
                         try? modelContext.save()
                         cloudflareClient.removeZone(zoneId: targetZoneId)
                         if defaultZoneId == targetZoneId { defaultZoneId = cloudflareClient.zoneId }
+                        
+                        // Clear domain filter if it was filtering on a domain from the removed zone
                         let ud = UserDefaults.standard
-                        if ud.string(forKey: "EmailListView.domainFilterZoneId") == targetZoneId {
-                            ud.set("all", forKey: "EmailListView.domainFilterType")
-                            ud.removeObject(forKey: "EmailListView.domainFilterZoneId")
+                        if let filterDomain = ud.string(forKey: "EmailListView.domainFilterDomain") {
+                            // Check if the filtered domain belongs to the removed zone
+                            if z.domainName.lowercased() == filterDomain.lowercased() || 
+                               z.subdomains.contains(where: { $0.lowercased() == filterDomain.lowercased() }) {
+                                ud.set("all", forKey: "EmailListView.domainFilterType")
+                                ud.removeObject(forKey: "EmailListView.domainFilterDomain")
+                            }
                         }
                         zoneToRemove = nil
                     }
@@ -645,6 +654,7 @@ private struct SettingsListContentView: View {
 
     // Settings section bindings/props
     @Binding var defaultZoneId: String
+    @Binding var defaultDomain: String
     @Binding var selectedDefaultAddress: String
     @Binding var showWebsites: Bool
     @Binding var showWebsiteLogo: Bool
@@ -685,6 +695,7 @@ private struct SettingsListContentView: View {
 
             SettingsSectionView(
                 defaultZoneId: $defaultZoneId,
+                defaultDomain: $defaultDomain,
                 selectedDefaultAddress: $selectedDefaultAddress,
                 showWebsites: $showWebsites,
                 showWebsiteLogo: $showWebsiteLogo,
@@ -824,6 +835,12 @@ private struct PrimaryZoneSectionView: View {
     @Binding var zoneToRemove: CloudflareClient.CloudflareZone?
     @Binding var showRemoveZoneAlert: Bool
     let entryCount: Int
+    @State private var showSubdomainError = false
+    @State private var subdomainErrorMessage = ""
+    
+    private var primaryZone: CloudflareClient.CloudflareZone? {
+        cloudflareClient.zones.first(where: { $0.zoneId == cloudflareClient.zoneId })
+    }
     
     var body: some View {
         Section {
@@ -851,6 +868,22 @@ private struct PrimaryZoneSectionView: View {
                     .font(.system(.subheadline, design: .rounded))
                     .foregroundStyle(.secondary)
             }
+            
+            Toggle("Enable Sub-Domains for this Zone", isOn: Binding(
+                get: { primaryZone?.subdomainsEnabled ?? false },
+                set: { newValue in
+                    Task {
+                        do {
+                            try await cloudflareClient.toggleSubdomains(for: cloudflareClient.zoneId, enabled: newValue)
+                        } catch {
+                            subdomainErrorMessage = error.localizedDescription
+                            showSubdomainError = true
+                        }
+                    }
+                }
+            ))
+            .tint(.accentColor)
+            
             Button(role: .destructive) {
                 // Prepare removal of the primary zone
                 zoneToRemove = CloudflareClient.CloudflareZone(
@@ -865,14 +898,23 @@ private struct PrimaryZoneSectionView: View {
                 Label("Remove This Zone", systemImage: "trash")
             }
         }
+        .alert("Subdomain Error", isPresented: $showSubdomainError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(subdomainErrorMessage)
+        }
     }
 }
 
 private struct AdditionalZonesSectionView: View {
+    @EnvironmentObject private var cloudflareClient: CloudflareClient
     let additionalZones: [CloudflareClient.CloudflareZone]
     @Binding var zoneToRemove: CloudflareClient.CloudflareZone?
     @Binding var showRemoveZoneAlert: Bool
     let entryCount: (String) -> Int
+    @State private var showSubdomainError = false
+    @State private var subdomainErrorMessage = ""
+    @State private var errorZoneId = ""
     
     private func zoneDisplayName(_ zone: CloudflareClient.CloudflareZone) -> String {
         zone.domainName.isEmpty ? zone.zoneId : zone.domainName
@@ -900,6 +942,23 @@ private struct AdditionalZonesSectionView: View {
                         .font(.system(.subheadline, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
+                
+                Toggle("Enable Sub-Domains for this Zone", isOn: Binding(
+                    get: { z.subdomainsEnabled },
+                    set: { newValue in
+                        Task {
+                            do {
+                                try await cloudflareClient.toggleSubdomains(for: z.zoneId, enabled: newValue)
+                            } catch {
+                                errorZoneId = z.zoneId
+                                subdomainErrorMessage = error.localizedDescription
+                                showSubdomainError = true
+                            }
+                        }
+                    }
+                ))
+                .tint(.accentColor)
+                
                 Button(role: .destructive) {
                     zoneToRemove = z
                     showRemoveZoneAlert = true
@@ -908,11 +967,23 @@ private struct AdditionalZonesSectionView: View {
                 }
             }
         }
+        .alert("Subdomain Error", isPresented: $showSubdomainError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(subdomainErrorMessage)
+        }
     }
 }
 
 private struct AddZoneSectionView: View {
     @Binding var showAddZoneSheet: Bool
+    @EnvironmentObject private var cloudflareClient: CloudflareClient
+    @State private var isRefreshingDomains = false
+    
+    // Check if any zone has subdomains enabled
+    private var anyZoneHasSubdomainsEnabled: Bool {
+        cloudflareClient.zones.contains(where: { $0.subdomainsEnabled })
+    }
     
     var body: some View {
         Section {
@@ -921,6 +992,31 @@ private struct AddZoneSectionView: View {
             } label: {
                 Label("Add Zone (Domain)", systemImage: "plus.circle")
             }
+            
+            // Only show Refresh Domains button if at least one zone has subdomains enabled
+            if anyZoneHasSubdomainsEnabled {
+                Button {
+                    Task {
+                        isRefreshingDomains = true
+                        do {
+                            try await cloudflareClient.refreshSubdomainsAllZones()
+                            print("✅ Subdomains refreshed successfully")
+                        } catch {
+                            print("❌ Failed to refresh subdomains: \(error)")
+                        }
+                        isRefreshingDomains = false
+                    }
+                } label: {
+                    HStack {
+                        Label("Refresh Domains", systemImage: "arrow.clockwise")
+                        if isRefreshingDomains {
+                            Spacer()
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(isRefreshingDomains)
+            }
         }
     }
 }
@@ -928,6 +1024,7 @@ private struct AddZoneSectionView: View {
 private struct SettingsSectionView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Binding var defaultZoneId: String
+    @Binding var defaultDomain: String
     @Binding var selectedDefaultAddress: String
     @Binding var showWebsites: Bool
     @Binding var showWebsiteLogo: Bool
@@ -941,19 +1038,46 @@ private struct SettingsSectionView: View {
         zone.domainName.isEmpty ? zone.zoneId : zone.domainName
     }
     
+    // Get all available domains (main domains + subdomains) across all zones
+    private var allAvailableDomains: [(domain: String, zoneId: String)] {
+        var domains: [(domain: String, zoneId: String)] = []
+        
+        for zone in cloudflareClient.zones {
+            // Add main domain
+            if !zone.domainName.isEmpty {
+                domains.append((domain: zone.domainName, zoneId: zone.zoneId))
+            }
+            
+            // Add subdomains only if enabled for this zone
+            if zone.subdomainsEnabled {
+                for subdomain in zone.subdomains {
+                    domains.append((domain: subdomain, zoneId: zone.zoneId))
+                }
+            }
+        }
+        
+        return domains.sorted { $0.domain < $1.domain }
+    }
+    
     var body: some View {
         Section {
-            // Default Domain (only when multiple zones)
-            if cloudflareClient.zones.count > 1 {
-                Picker("Default Domain", selection: $defaultZoneId) {
-                    ForEach(cloudflareClient.zones, id: \.zoneId) { z in
-                        Text(zoneDisplayName(z)).tag(z.zoneId)
+            // Default Domain picker - shows all domains and subdomains
+            if cloudflareClient.zones.count > 1 || !(cloudflareClient.zones.first?.subdomains.isEmpty ?? true) {
+                Picker("Default Domain", selection: $defaultDomain) {
+                    ForEach(allAvailableDomains, id: \.domain) { item in
+                        Text(item.domain).tag(item.domain)
                     }
                 }
                 .pickerStyle(.menu)
                 .onAppear {
-                    if defaultZoneId.isEmpty {
-                        defaultZoneId = cloudflareClient.zoneId
+                    if defaultDomain.isEmpty {
+                        defaultDomain = cloudflareClient.emailDomain
+                    }
+                }
+                .onChange(of: defaultDomain) { _, newDomain in
+                    // Update defaultZoneId when domain changes
+                    if let item = allAvailableDomains.first(where: { $0.domain == newDomain }) {
+                        defaultZoneId = item.zoneId
                     }
                 }
             }

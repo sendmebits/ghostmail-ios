@@ -7,6 +7,7 @@ struct EmailCreateView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @AppStorage("zoneId") private var zoneId = ""
     @AppStorage("defaultZoneId") private var defaultZoneId: String = ""
+    @AppStorage("defaultDomain") private var defaultDomain: String = ""
     
     @State private var username = ""
     @State private var website = ""
@@ -17,6 +18,7 @@ struct EmailCreateView: View {
     @State private var forwardTo = ""
     @FocusState private var isUsernameFocused: Bool
     @State private var selectedZoneId: String = ""
+    @State private var selectedDomain: String = ""
     
     init(initialWebsite: String? = nil) {
         // Load the default forwarding address exactly as in SettingsView
@@ -42,6 +44,38 @@ struct EmailCreateView: View {
         return cloudflareClient.emailDomain
     }
     
+    // Get all available domains (main domains + subdomains) across all zones
+    private var availableDomains: [String] {
+        var domains: [String] = []
+        
+        for zone in cloudflareClient.zones {
+            // Add main domain
+            if !zone.domainName.isEmpty {
+                domains.append(zone.domainName)
+            }
+            
+            // Add subdomains only if enabled for this zone
+            if zone.subdomainsEnabled {
+                domains.append(contentsOf: zone.subdomains)
+            }
+        }
+        
+        return domains.isEmpty ? [cloudflareClient.emailDomain] : domains.sorted()
+    }
+    
+    // Find which zone owns the selected domain
+    private var zoneForSelectedDomain: CloudflareClient.CloudflareZone? {
+        for zone in cloudflareClient.zones {
+            if zone.domainName.lowercased() == selectedDomain.lowercased() {
+                return zone
+            }
+            if zone.subdomains.contains(where: { $0.lowercased() == selectedDomain.lowercased() }) {
+                return zone
+            }
+        }
+        return selectedZone
+    }
+    
     var body: some View {
         NavigationStack {
             Form {
@@ -52,16 +86,18 @@ struct EmailCreateView: View {
                             .autocorrectionDisabled()
                             .keyboardType(.emailAddress)
                             .focused($isUsernameFocused)
-                        if hasMultipleZones {
-                            Picker("", selection: $selectedZoneId) {
-                                ForEach(cloudflareClient.zones, id: \.zoneId) { z in
-                                    Text("@\(z.domainName.isEmpty ? "…" : z.domainName)").tag(z.zoneId)
+                        
+                        // Show domain picker if there are multiple domains available across all zones
+                        if availableDomains.count > 1 {
+                            Picker("", selection: $selectedDomain) {
+                                ForEach(availableDomains, id: \.self) { domain in
+                                    Text("@\(domain)").tag(domain)
                                 }
                             }
                             .pickerStyle(.menu)
                             .labelsHidden()
                         } else {
-                            Text("@\(cloudflareClient.emailDomain)")
+                            Text("@\(selectedDomain.isEmpty ? cloudflareClient.emailDomain : selectedDomain)")
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -143,7 +179,23 @@ struct EmailCreateView: View {
                 }
             }
 
-            // Initialize selected zone id using saved default domain when available
+            // Initialize selected domain from saved default domain
+            if selectedDomain.isEmpty {
+                if !defaultDomain.isEmpty {
+                    selectedDomain = defaultDomain
+                    // Find the zone that owns this domain
+                    for zone in cloudflareClient.zones {
+                        if zone.domainName == defaultDomain || zone.subdomains.contains(defaultDomain) {
+                            selectedZoneId = zone.zoneId
+                            break
+                        }
+                    }
+                } else {
+                    selectedDomain = selectedDomainFallback
+                }
+            }
+            
+            // Initialize selected zone id if not set (for backward compatibility)
             if selectedZoneId.isEmpty {
                 if cloudflareClient.zones.count > 1, !defaultZoneId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    cloudflareClient.zones.contains(where: { $0.zoneId == defaultZoneId }) {
@@ -159,23 +211,11 @@ struct EmailCreateView: View {
         Task {
             isLoading = true
             do {
-                // Resolve target zone
-                let zone: CloudflareClient.CloudflareZone? = cloudflareClient.zones.first(where: { $0.zoneId == selectedZoneId }) ?? cloudflareClient.zones.first(where: { $0.zoneId == cloudflareClient.zoneId })
-                // Resolve domain for the zone
-                let domain: String
-                if let z = zone {
-                    if !z.domainName.isEmpty {
-                        domain = z.domainName
-                    } else if z.zoneId == cloudflareClient.zoneId && !cloudflareClient.emailDomain.isEmpty {
-                        domain = cloudflareClient.emailDomain
-                    } else {
-                        // Fetch domain name for this zone
-                        let details = try await cloudflareClient.fetchZoneDetails(accountId: z.accountId, zoneId: z.zoneId, token: z.apiToken)
-                        domain = details.domainName
-                    }
-                } else {
-                    domain = cloudflareClient.emailDomain
-                }
+                // Use the selected domain (which could be main domain or subdomain)
+                let domain = selectedDomain.isEmpty ? selectedDomainFallback : selectedDomain
+                
+                // Resolve target zone based on the selected domain
+                let zone = zoneForSelectedDomain ?? cloudflareClient.zones.first(where: { $0.zoneId == cloudflareClient.zoneId })
 
                 let fullEmailAddress = "\(username)@\(domain)"
                 let rule: EmailRule

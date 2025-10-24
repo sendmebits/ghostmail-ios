@@ -17,6 +17,8 @@ class CloudflareClient: ObservableObject {
         var apiToken: String
         var accountName: String
         var domainName: String
+        var subdomains: [String] = []  // List of discovered subdomains with MX records
+        var subdomainsEnabled: Bool = false  // Whether to discover subdomains for this zone
     }
     @Published private(set) var zones: [CloudflareZone] = []
     
@@ -446,8 +448,13 @@ class CloudflareClient: ObservableObject {
 
         // Also ensure zones contains/updates primary zone
         if let idx = zones.firstIndex(where: { $0.zoneId == zoneId }) {
+            // Preserve existing settings when updating credentials
+            let existingSubdomainsEnabled = zones[idx].subdomainsEnabled
+            let existingSubdomains = zones[idx].subdomains
             zones[idx].accountId = accountId
             zones[idx].apiToken = apiToken
+            zones[idx].subdomainsEnabled = existingSubdomainsEnabled
+            zones[idx].subdomains = existingSubdomains
         } else {
             zones.insert(CloudflareZone(accountId: accountId, zoneId: zoneId, apiToken: apiToken, accountName: accountName, domainName: domainName), at: 0)
         }
@@ -1016,6 +1023,126 @@ class CloudflareClient: ObservableObject {
         }
     }
 
+    // Fetch subdomains with MX records for email routing
+    func fetchSubdomains(for zone: CloudflareZone) async throws -> [String] {
+        let url = URL(string: "\(baseURL)/zones/\(zone.zoneId)/dns_records?type=MX")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.allHTTPHeaderFields = [
+            "Authorization": "Bearer \(zone.apiToken)",
+            "Content-Type": "application/json"
+        ]
+        
+        print("[Cloudflare] Fetching MX records for zone \(maskId(zone.zoneId))")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
+            print("[Cloudflare] Failed to fetch DNS records: status=\(statusCode), body=\(body)")
+            
+            // Check for permissions error (403)
+            if statusCode == 403 {
+                throw CloudflareError(message: "Unable to check for subdomains\n\nEnsure the API key has permissions:\nZone > DNS > Read")
+            }
+            
+            throw CloudflareError(message: "Failed to fetch DNS records (HTTP \(statusCode))")
+        }
+        
+        struct DNSRecord: Codable {
+            let name: String
+            let type: String
+            let meta: Meta?
+            
+            struct Meta: Codable {
+                let email_routing: Bool?
+            }
+        }
+        
+        struct DNSResponse: Codable {
+            let result: [DNSRecord]
+            let success: Bool
+        }
+        
+        let dnsResponse = try JSONDecoder().decode(DNSResponse.self, from: data)
+        guard dnsResponse.success else {
+            throw CloudflareError(message: "Failed to decode DNS records")
+        }
+        
+        // Get the top-level domain name to filter it out
+        let topLevelDomain = zone.domainName.lowercased()
+        
+        // Filter for MX records with email_routing enabled, excluding the top-level domain
+        let subdomains = dnsResponse.result
+            .filter { record in
+                record.type == "MX" && 
+                (record.meta?.email_routing == true) &&
+                record.name.lowercased() != topLevelDomain  // Exclude top-level domain
+            }
+            .map { $0.name }
+            .sorted()
+        
+        // Remove duplicates
+        let uniqueSubdomains = Array(Set(subdomains)).sorted()
+        
+        print("[Cloudflare] Found \(uniqueSubdomains.count) subdomains with email routing (excluding top-level domain): \(uniqueSubdomains)")
+        
+        return uniqueSubdomains
+    }
+    
+    // Refresh subdomains for all zones (only for zones with subdomainsEnabled)
+    @MainActor
+    func refreshSubdomainsAllZones() async throws {
+        print("[Cloudflare] Refreshing subdomains for enabled zones")
+        
+        for (index, zone) in zones.enumerated() {
+            // Skip zones that don't have subdomains enabled
+            guard zone.subdomainsEnabled else {
+                print("[Cloudflare] Skipping subdomain fetch for zone \(maskId(zone.zoneId)) (disabled)")
+                continue
+            }
+            
+            do {
+                let subdomains = try await fetchSubdomains(for: zone)
+                zones[index].subdomains = subdomains
+            } catch {
+                print("[Cloudflare] Failed to fetch subdomains for zone \(maskId(zone.zoneId)): \(error)")
+                // Continue with other zones even if one fails
+            }
+        }
+        
+        persistZones()
+        print("[Cloudflare] Subdomain refresh complete")
+    }
+    
+    // Toggle subdomain discovery for a specific zone
+    // Returns an error if enabling fails, nil on success
+    @MainActor
+    func toggleSubdomains(for zoneId: String, enabled: Bool) async throws {
+        guard let index = zones.firstIndex(where: { $0.zoneId == zoneId }) else { return }
+        
+        // If disabling, just clear and persist
+        if !enabled {
+            zones[index].subdomainsEnabled = false
+            zones[index].subdomains = []
+            persistZones()
+            return
+        }
+        
+        // If enabling, try to fetch subdomains first to validate permissions
+        do {
+            let subdomains = try await fetchSubdomains(for: zones[index])
+            // Success - now enable and save
+            zones[index].subdomainsEnabled = true
+            zones[index].subdomains = subdomains
+            persistZones()
+        } catch {
+            // Failed - don't enable, re-throw the error (already formatted in fetchSubdomains)
+            print("[Cloudflare] Failed to fetch subdomains after enabling: \(error)")
+            throw error
+        }
+    }
+    
     // Fetch zone details (domain/account names) without mutating current state
     func fetchZoneDetails(accountId: String, zoneId: String, token: String) async throws -> (domainName: String, accountName: String) {
         let url = URL(string: "\(baseURL)/zones/\(zoneId)")!
