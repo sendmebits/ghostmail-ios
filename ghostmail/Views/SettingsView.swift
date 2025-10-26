@@ -431,12 +431,13 @@ struct SettingsView: View {
     }
     
     var body: some View {
-        let v0 = NavigationStack { listContent }
-        let v1 = applyNavigation(v0)
-        let v2 = applyAlerts(v1)
-        let v3 = applyFileOps(v2)
-        let v4 = applyLifecycle(v3)
-        return v4
+        NavigationStack {
+            let v1 = applyNavigation(listContent)
+            let v2 = applyAlerts(v1)
+            let v3 = applyFileOps(v2)
+            let v4 = applyLifecycle(v3)
+            v4
+        }
     }
 
     // MARK: - Type-erased modifier steps to ease type checking
@@ -446,8 +447,15 @@ struct SettingsView: View {
                 .navigationTitle("Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { dismiss() }
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .buttonStyle(.borderless)
+                        .buttonBorderShape(.circle)
+                        .tint(.primary)
                     }
                 }
         )
