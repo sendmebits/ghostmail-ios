@@ -1,4 +1,4 @@
-# Ghost Mail for iPhone
+# <img width="32" height="32" alt="Ghostmail_gpt_dark_FULL" src="https://github.com/user-attachments/assets/9bae55b4-3201-47a8-b801-33123aa86b4d" />  Ghost Mail for iPhone
 
 Ghost Mail open-source email alias manager for Cloudflare hosted domains. It lets you quickly create disposable email addresses on the fly, shielding your main email from unwanted messages, data breaches, tracking and targeted ads. With full open-source transparency enjoy peace of mind knowing that your primary email address is being kept private!
 
