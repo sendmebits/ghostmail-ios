@@ -35,6 +35,7 @@ Token Permissions:
 1. Account > Email Routing Addresses > **Read**
 2. Zone > Email Routing Rules > **Edit**
 3. Zone > Zone Settings > **Read**
+4. Zone > DNS > **Read**  _(OPTIONAL: Only required subdomains are going to be used)_
 
 
 # Use the CSV import feature to quickly bulk add new email alias entries
