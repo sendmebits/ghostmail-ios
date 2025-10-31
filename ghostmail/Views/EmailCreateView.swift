@@ -9,6 +9,7 @@ struct EmailCreateView: View {
     @AppStorage("zoneId") private var zoneId = ""
     @AppStorage("defaultZoneId") private var defaultZoneId: String = ""
     @AppStorage("defaultDomain") private var defaultDomain: String = ""
+    @AppStorage("themePreference") private var themePreferenceRaw: String = "Auto"
     
     @State private var username = ""
     @State private var website = ""
@@ -78,6 +79,14 @@ struct EmailCreateView: View {
             }
         }
         return selectedZone
+    }
+    
+    private var themeColorScheme: ColorScheme? {
+        switch themePreferenceRaw {
+        case "Light": return .light
+        case "Dark": return .dark
+        default: return nil
+        }
     }
     
     var body: some View {
@@ -162,6 +171,7 @@ struct EmailCreateView: View {
                 Text(error.localizedDescription)
             }
         }
+        .preferredColorScheme(themeColorScheme)
         .task {
             isUsernameFocused = true
 

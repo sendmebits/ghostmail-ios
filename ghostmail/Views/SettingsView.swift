@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var showWebsites: Bool = true
     @AppStorage("showWebsiteLogo") private var showWebsiteLogo: Bool = true
     @State private var showLogoutAlert: Bool = false
+    @AppStorage("themePreference") private var themePreferenceRaw: String = "Auto"
     @State private var showFileImporter = false
     @State private var showExportDialog = false
     @State private var importError: Error?
@@ -430,6 +431,14 @@ struct SettingsView: View {
         ))
     }
     
+    private var themeColorScheme: ColorScheme? {
+        switch themePreferenceRaw {
+        case "Light": return .light
+        case "Dark": return .dark
+        default: return nil
+        }
+    }
+    
     var body: some View {
         NavigationStack {
             let v1 = applyNavigation(listContent)
@@ -438,6 +447,7 @@ struct SettingsView: View {
             let v4 = applyLifecycle(v3)
             v4
         }
+        .preferredColorScheme(themeColorScheme)
     }
 
     // MARK: - Type-erased modifier steps to ease type checking
@@ -1029,6 +1039,20 @@ private struct AddZoneSectionView: View {
     }
 }
 
+enum ThemePreference: String, CaseIterable {
+    case auto = "Auto"
+    case light = "Light"
+    case dark = "Dark"
+    
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .auto: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
 private struct SettingsSectionView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Binding var defaultZoneId: String
@@ -1041,6 +1065,11 @@ private struct SettingsSectionView: View {
     @Binding var showDeleteICloudDataConfirmation: Bool
     let sortedForwardingAddresses: [String]
     let toggleICloudSync: (Bool) -> Void
+    @AppStorage("themePreference") private var themePreferenceRaw: String = ThemePreference.auto.rawValue
+    
+    private var themePreference: ThemePreference {
+        ThemePreference(rawValue: themePreferenceRaw) ?? .auto
+    }
     
     private func zoneDisplayName(_ zone: CloudflareClient.CloudflareZone) -> String {
         zone.domainName.isEmpty ? zone.zoneId : zone.domainName
@@ -1069,6 +1098,14 @@ private struct SettingsSectionView: View {
     
     var body: some View {
         Section {
+            // Theme picker
+            Picker("Theme", selection: $themePreferenceRaw) {
+                ForEach(ThemePreference.allCases, id: \.rawValue) { theme in
+                    Text(theme.rawValue).tag(theme.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+            
             // Default Domain picker - shows all domains and subdomains
             if cloudflareClient.zones.count > 1 || !(cloudflareClient.zones.first?.subdomains.isEmpty ?? true) {
                 Picker("Default Domain", selection: $defaultDomain) {

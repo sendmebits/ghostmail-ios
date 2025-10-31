@@ -34,6 +34,7 @@ struct EmailListView: View {
     @Binding var needsRefresh: Bool
     @State private var toastWorkItem: DispatchWorkItem?
     @EnvironmentObject private var deepLinkRouter: DeepLinkRouter
+    @AppStorage("themePreference") private var themePreferenceRaw: String = "Auto"
 
     // Filter state
     @State private var showFilterSheet = false
@@ -60,6 +61,14 @@ struct EmailListView: View {
     private var allAliases: [EmailAlias] {
         let allowedZoneIds = Set(cloudflareClient.zones.map { $0.zoneId.trimmingCharacters(in: .whitespacesAndNewlines) })
         return emailAliases.filter { allowedZoneIds.contains($0.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+    
+    private var themeColorScheme: ColorScheme? {
+        switch themePreferenceRaw {
+        case "Light": return .light
+        case "Dark": return .dark
+        default: return nil
+        }
     }
     
     enum SortOrder: String, CaseIterable, Hashable {
@@ -422,7 +431,6 @@ struct EmailListView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .listRowBackground(Color.black)
                     .navigationDestination(for: EmailAlias.self) { email in
                         EmailDetailView(email: email, needsRefresh: $needsRefresh)
                     }
@@ -456,16 +464,15 @@ struct EmailListView: View {
                     Spacer()
                     Text("\(copiedEmail) copied!")
                         .padding()
-                        .background(.black.opacity(0.7))
-                        .foregroundColor(.white)
+                        .background(.ultraThinMaterial)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .padding(.bottom, 32)
                         .transition(.move(edge: .bottom))
                 }
             }
         }
-    .background(Color.black.ignoresSafeArea())
-    .preferredColorScheme(.dark)
+    .background(Color(.systemBackground).ignoresSafeArea())
+    .preferredColorScheme(themeColorScheme)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 Menu {
@@ -814,10 +821,6 @@ private struct FilterSheetView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 ZStack {
-                    Rectangle()
-                        .fill(Color.black.opacity(0.6))
-                        .ignoresSafeArea()
-                        .frame(height: 0)
                     VStack {
                         Button {
                             destinationFilter = pendingDestinationFilter
