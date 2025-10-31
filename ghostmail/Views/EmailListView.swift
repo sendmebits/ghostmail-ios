@@ -524,7 +524,9 @@ struct EmailListView: View {
             )
         }
         .sheet(isPresented: $showingCreateSheet) {
-            EmailCreateView()
+            EmailCreateView { createdEmail in
+                showToastWithTimer(createdEmail)
+            }
         }
         .alert("Error", isPresented: $showError, presenting: error) { _ in
             Button("OK", role: .cancel) { }
