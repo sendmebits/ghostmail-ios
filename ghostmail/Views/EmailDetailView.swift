@@ -16,6 +16,7 @@ struct EmailDetailView: View {
     @State private var isLoadingIcon = false
     @Bindable private var email: EmailAlias
     @Binding var needsRefresh: Bool
+    @AppStorage("themePreference") private var themePreferenceRaw: String = "Auto"
     
     // Use @State for temporary edits
     @State private var tempWebsite: String
@@ -491,6 +492,15 @@ struct EmailDetailView: View {
             }
         } message: {
             Text("Are you sure you want to delete this email alias?")
+        }
+        .preferredColorScheme(themeColorScheme)
+    }
+    
+    private var themeColorScheme: ColorScheme? {
+        switch themePreferenceRaw {
+        case "Light": return .light
+        case "Dark": return .dark
+        default: return nil
         }
     }
     

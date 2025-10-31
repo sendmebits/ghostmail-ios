@@ -28,6 +28,15 @@ struct ContentView: View {
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
     @State private var showingCreateSheet = false
     @State private var deepLinkWebsite: String? = nil
+    @AppStorage("themePreference") private var themePreferenceRaw: String = "Auto"
+    
+    private var themeColorScheme: ColorScheme? {
+        switch themePreferenceRaw {
+        case "Light": return .light
+        case "Dark": return .dark
+        default: return nil
+        }
+    }
     
     var body: some View {
         NavigationStack {
@@ -52,6 +61,7 @@ struct ContentView: View {
                 AuthenticationView()
             }
         }
+        .preferredColorScheme(themeColorScheme)
         .sheet(isPresented: $showingCreateSheet, onDismiss: { deepLinkWebsite = nil }) {
             EmailCreateView(initialWebsite: deepLinkWebsite)
                 .id(deepLinkWebsite ?? "manual-create")

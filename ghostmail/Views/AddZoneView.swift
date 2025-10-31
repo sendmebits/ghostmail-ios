@@ -15,6 +15,15 @@ struct AddZoneView: View {
     @State private var errorMessage = ""
     @State private var successMessage = ""
     @State private var showSuccess = false
+    @AppStorage("themePreference") private var themePreferenceRaw: String = "Auto"
+    
+    private var themeColorScheme: ColorScheme? {
+        switch themePreferenceRaw {
+        case "Light": return .light
+        case "Dark": return .dark
+        default: return nil
+        }
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -120,6 +129,7 @@ struct AddZoneView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .preferredColorScheme(themeColorScheme)
         .alert("Add Zone Failed", isPresented: $showError) {
             Button("OK", role: .cancel) { }
         } message: {
