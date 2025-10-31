@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct EmailCreateView: View {
     @Environment(\.modelContext) private var modelContext
@@ -20,7 +21,10 @@ struct EmailCreateView: View {
     @State private var selectedZoneId: String = ""
     @State private var selectedDomain: String = ""
     
-    init(initialWebsite: String? = nil) {
+    var onEmailCreated: ((String) -> Void)?
+    
+    init(initialWebsite: String? = nil, onEmailCreated: ((String) -> Void)? = nil) {
+        self.onEmailCreated = onEmailCreated
         // Load the default forwarding address exactly as in SettingsView
         let savedDefault = UserDefaults.standard.string(forKey: "defaultForwardingAddress") ?? ""
         _forwardTo = State(initialValue: savedDefault)
@@ -104,14 +108,7 @@ struct EmailCreateView: View {
                 }
                 
                 Section("Destination Email") {
-                    if isLoading {
-                        HStack {
-                            ProgressView()
-                                .padding(.trailing, 8)
-                            Text("Loading forwarding addresses...")
-                                .foregroundStyle(.secondary)
-                        }
-                    } else if !cloudflareClient.forwardingAddresses.isEmpty {
+                    if !cloudflareClient.forwardingAddresses.isEmpty {
                         Picker("", selection: $forwardTo) {
                             ForEach(Array(cloudflareClient.forwardingAddresses).sorted(), id: \.self) { address in
                                 Text(address).tag(address)
@@ -242,7 +239,18 @@ struct EmailCreateView: View {
                 
                 modelContext.insert(newAlias)
                 try modelContext.save()
+                
+                // Notify parent view and dismiss
                 dismiss()
+                
+                // Copy to clipboard and show toast in parent view after dismissal
+                // Wait for sheet dismissal animation to complete before showing toast
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    let generator = UIImpactFeedbackGenerator(style: .heavy)
+                    generator.impactOccurred()
+                    UIPasteboard.general.string = fullEmailAddress
+                    onEmailCreated?(fullEmailAddress)
+                }
             } catch {
                 self.error = error
                 self.showError = true
