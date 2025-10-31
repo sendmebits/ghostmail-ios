@@ -80,7 +80,10 @@ final class IconCache {
 
         let fileURL = fileURL(for: host)
         if fileManager.fileExists(atPath: fileURL.path) {
-            if let data = try? Data(contentsOf: fileURL), let img = UIImage(data: data) {
+            if let data = try? Data(contentsOf: fileURL), var img = UIImage(data: data) {
+                // Ensure the image renders with proper alpha channel
+                // Force the rendering mode to be consistent with fresh downloads
+                img = img.withRenderingMode(.alwaysOriginal)
                 // loaded icon from disk
                 memoryCache.setObject(img, forKey: host as NSString)
                 return img
@@ -96,7 +99,8 @@ final class IconCache {
             // crawling site for icons
             if let img = try await fetchBestIconFromSite(host: host) {
                 memoryCache.setObject(img, forKey: host as NSString)
-                if let data = img.pngData() {
+                // Save as JPEG with high quality to avoid alpha channel issues
+                if let data = img.jpegData(compressionQuality: 0.9) {
                     try? data.write(to: fileURL, options: .atomic)
                 }
                 try? fileManager.removeItem(at: missingURL)
@@ -142,7 +146,10 @@ final class IconCache {
                     if http.statusCode == 200 {
                         if let img = await imageFromDownloadedData(data, url: iconURL) {
                             memoryCache.setObject(img, forKey: host as NSString)
-                            try? data.write(to: fileURL, options: .atomic)
+                            // Save as JPEG with high quality to avoid alpha channel issues
+                            if let jpegData = img.jpegData(compressionQuality: 0.9) {
+                                try? jpegData.write(to: fileURL, options: .atomic)
+                            }
                             // If we previously created a missing marker, remove it now
                             try? fileManager.removeItem(at: missingURL)
                             negativeMemoryCache.removeObject(forKey: host as NSString)
@@ -187,8 +194,9 @@ final class IconCache {
         do {
             if let img = try await fetchBestIconFromSite(host: host) {
                 memoryCache.setObject(img, forKey: host as NSString)
-                if let data = img.pngData() {
-                    try? data.write(to: fileURL, options: .atomic)
+                // Save as JPEG with high quality to avoid alpha channel issues
+                if let jpegData = img.jpegData(compressionQuality: 0.9) {
+                    try? jpegData.write(to: fileURL, options: .atomic)
                 }
                 try? fileManager.removeItem(at: missingURL)
                 negativeMemoryCache.removeObject(forKey: host as NSString)
@@ -229,7 +237,10 @@ final class IconCache {
             // refresh endpoint response \(http.statusCode) bytes=\(data.count)
             if let img = await imageFromDownloadedData(data, url: iconURL) {
                         memoryCache.setObject(img, forKey: host as NSString)
-                        try? data.write(to: fileURL, options: .atomic)
+                        // Save as JPEG with high quality to avoid alpha channel issues
+                        if let jpegData = img.jpegData(compressionQuality: 0.9) {
+                            try? jpegData.write(to: fileURL, options: .atomic)
+                        }
                         try? fileManager.removeItem(at: missingURL)
                         negativeMemoryCache.removeObject(forKey: host as NSString)
                         return img
