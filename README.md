@@ -52,6 +52,13 @@ CSV import notes:
 - If no configured zone matches the email's domain, the current primary zone is used as a fallback.
 - Imports will update and overwrite existing; review after importing.
 
+# Ghost Mail App Privacy
+
+Ghost Mail is built with your privacy as the top priority:
+- No ads, analytics, or tracking of any kind.
+- Serverless by design — the app connects directly to Cloudflare via the API, with no servers in between.
+- Any additional metadata you add to your email entries (such as website, notes, or date) is stored locally on your device. iCloud backup is optional and can be controlled in settings.
+
 # Why Use Email Aliases
 
 Email aliases protect your primary inbox from spam, phishing, and long-term exposure. Instead of handing out your real email, you give out an alias that can be turned off or deleted if abused. This helps maintain privacy and reduces the risk of account compromise.
