@@ -80,10 +80,7 @@ final class IconCache {
 
         let fileURL = fileURL(for: host)
         if fileManager.fileExists(atPath: fileURL.path) {
-            if let data = try? Data(contentsOf: fileURL), var img = UIImage(data: data) {
-                // Ensure the image renders with proper alpha channel
-                // Force the rendering mode to be consistent with fresh downloads
-                img = img.withRenderingMode(.alwaysOriginal)
+            if let data = try? Data(contentsOf: fileURL), let img = UIImage(data: data) {
                 // loaded icon from disk
                 memoryCache.setObject(img, forKey: host as NSString)
                 return img
@@ -97,12 +94,10 @@ final class IconCache {
         // First, try to crawl the site for <link rel="..."> icons and /favicon.ico.
         do {
             // crawling site for icons
-            if let img = try await fetchBestIconFromSite(host: host) {
+            if let (img, data) = try await fetchBestIconFromSite(host: host) {
                 memoryCache.setObject(img, forKey: host as NSString)
-                // Save as JPEG with high quality to avoid alpha channel issues
-                if let data = img.jpegData(compressionQuality: 0.9) {
-                    try? data.write(to: fileURL, options: .atomic)
-                }
+                // Save the original downloaded data to preserve exact encoding
+                try? data.write(to: fileURL, options: .atomic)
                 try? fileManager.removeItem(at: missingURL)
                 negativeMemoryCache.removeObject(forKey: host as NSString)
                 // fetched icon via site crawl
@@ -146,10 +141,9 @@ final class IconCache {
                     if http.statusCode == 200 {
                         if let img = await imageFromDownloadedData(data, url: iconURL) {
                             memoryCache.setObject(img, forKey: host as NSString)
-                            // Save as JPEG with high quality to avoid alpha channel issues
-                            if let jpegData = img.jpegData(compressionQuality: 0.9) {
-                                try? jpegData.write(to: fileURL, options: .atomic)
-                            }
+                            // Save the original downloaded data instead of re-encoding
+                            // This preserves the exact format and encoding from the source
+                            try? data.write(to: fileURL, options: .atomic)
                             // If we previously created a missing marker, remove it now
                             try? fileManager.removeItem(at: missingURL)
                             negativeMemoryCache.removeObject(forKey: host as NSString)
@@ -192,12 +186,10 @@ final class IconCache {
 
         // First try crawling the site for link rel icons and /favicon.ico
         do {
-            if let img = try await fetchBestIconFromSite(host: host) {
+            if let (img, data) = try await fetchBestIconFromSite(host: host) {
                 memoryCache.setObject(img, forKey: host as NSString)
-                // Save as JPEG with high quality to avoid alpha channel issues
-                if let jpegData = img.jpegData(compressionQuality: 0.9) {
-                    try? jpegData.write(to: fileURL, options: .atomic)
-                }
+                // Save the original downloaded data to preserve exact encoding
+                try? data.write(to: fileURL, options: .atomic)
                 try? fileManager.removeItem(at: missingURL)
                 negativeMemoryCache.removeObject(forKey: host as NSString)
                 return img
@@ -237,10 +229,8 @@ final class IconCache {
             // refresh endpoint response \(http.statusCode) bytes=\(data.count)
             if let img = await imageFromDownloadedData(data, url: iconURL) {
                         memoryCache.setObject(img, forKey: host as NSString)
-                        // Save as JPEG with high quality to avoid alpha channel issues
-                        if let jpegData = img.jpegData(compressionQuality: 0.9) {
-                            try? jpegData.write(to: fileURL, options: .atomic)
-                        }
+                        // Save the original downloaded data instead of re-encoding
+                        try? data.write(to: fileURL, options: .atomic)
                         try? fileManager.removeItem(at: missingURL)
                         negativeMemoryCache.removeObject(forKey: host as NSString)
                         return img
@@ -375,8 +365,8 @@ final class IconCache {
     // MARK: - Site crawling for link rel icons
 
     /// Fetch the site's root HTML and attempt to discover <link rel> icon tags and /favicon.ico.
-    /// Returns the best UIImage found (preferring larger PNG/SVG where possible), or nil.
-    private func fetchBestIconFromSite(host: String) async throws -> UIImage? {
+    /// Returns a tuple of (image, originalData) or nil. The originalData preserves the exact downloaded bytes.
+    private func fetchBestIconFromSite(host: String) async throws -> (UIImage, Data)? {
         // Build base URL
         guard let baseURL = URL(string: "https://\(host)") else { return nil }
 
@@ -415,6 +405,7 @@ final class IconCache {
 
             // Download candidates and pick best by preference: prefer PNG/SVG and larger sizes
             var bestImage: UIImage? = nil
+            var bestData: Data? = nil
             var bestScore = 0
 
             for url in candidateURLs {
@@ -429,6 +420,7 @@ final class IconCache {
                             if score > bestScore {
                                 bestScore = score
                                 bestImage = img
+                                bestData = d
                             }
                         } else {
                             continue
@@ -439,7 +431,10 @@ final class IconCache {
                 }
             }
 
-            return bestImage
+            if let img = bestImage, let data = bestData {
+                return (img, data)
+            }
+            return nil
         } catch {
             return nil
         }
