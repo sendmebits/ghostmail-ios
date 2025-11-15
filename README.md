@@ -1,4 +1,16 @@
+<div align="center">
+  
 # <img width="32" height="32" alt="Ghostmail_gpt_dark_FULL" src="https://github.com/user-attachments/assets/9bae55b4-3201-47a8-b801-33123aa86b4d" />  Ghost Mail for iPhone
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-iOS%2018%2B-blue?style=flat-square)]()
+[![Release](https://img.shields.io/github/v/release/sendmebits/ghostmail-ios.svg?style=flat-square)](https://github.com/sendmebits/ghostmail-ios/releases)
+[![Issues](https://img.shields.io/github/issues/sendmebits/ghostmail-ios?style=flat-square)](https://github.com/sendmebits/ghostmail-ios/issues)
+[![Pull Requests](https://img.shields.io/github/issues-pr/sendmebits/ghostmail-ios?style=flat-square)](https://github.com/sendmebits/ghostmail-ios/pulls)
+
+[<img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" alt="App Store Download" height="40">](https://apps.apple.com/app/ghost-mail/id6741405019)
+
+</div>
 
 Ghost Mail is a free and open-source iPhone app to manage email alias' for Cloudflare hosted domains. It lets you quickly create disposable email addresses on the fly, shielding your main email from unwanted messages, data breaches, tracking and targeted ads. With full open-source transparency enjoy peace of mind knowing that your primary email address is being kept private!
 
@@ -16,7 +28,6 @@ Ghost Mail is a free and open-source iPhone app to manage email alias' for Cloud
   <img src="https://github.com/user-attachments/assets/0e87e6e7-e419-4e3c-b69f-53957ff7ffa7" alt="Create Alias" width="250">
   <img src="https://github.com/user-attachments/assets/0bbf15cb-9b54-4337-a7fa-ff5e12e0e0a2" alt="Email Alias" width="250">
 </p>
-
 
 # Pre-requisites
 
