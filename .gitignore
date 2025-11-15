@@ -1,2 +1,15 @@
+# General
+.DS_Store
+.idea/
 build/
 .vscode/
+.build/
+.cursor/
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+
