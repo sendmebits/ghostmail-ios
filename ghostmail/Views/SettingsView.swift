@@ -9,7 +9,7 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \EmailAlias.emailAddress) private var emailAliases: [EmailAlias]
     @State private var selectedDefaultAddress: String = ""
-    @State private var showWebsites: Bool = true
+    @AppStorage("showWebsitesInList") private var showWebsites: Bool = true
     @AppStorage("showWebsiteLogo") private var showWebsiteLogo: Bool = true
     @State private var showLogoutAlert: Bool = false
     @AppStorage("themePreference") private var themePreferenceRaw: String = "Auto"
