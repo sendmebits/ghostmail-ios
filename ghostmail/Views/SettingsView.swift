@@ -32,6 +32,7 @@ struct SettingsView: View {
     @AppStorage("defaultDomain") private var defaultDomain: String = ""
     @State private var zoneToRemove: CloudflareClient.CloudflareZone? = nil
     @State private var showRemoveZoneAlert: Bool = false
+    @AppStorage("showAnalytics") private var showAnalytics: Bool = false
     
     init() {
         // Initialize selectedDefaultAddress with the current saved value
@@ -425,6 +426,7 @@ struct SettingsView: View {
             showWebsites: $showWebsites,
             showWebsiteLogo: $showWebsiteLogo,
             iCloudSyncEnabled: $iCloudSyncEnabled,
+            showAnalytics: $showAnalytics,
             isLoading: isLoading,
             showDeleteICloudDataConfirmation: $showDeleteICloudDataConfirmation,
             sortedForwardingAddresses: sortedForwardingAddresses,
@@ -449,6 +451,7 @@ struct SettingsView: View {
             showWebsites: $showWebsites,
             showWebsiteLogo: $showWebsiteLogo,
             iCloudSyncEnabled: $iCloudSyncEnabled,
+            showAnalytics: $showAnalytics,
             isLoading: isLoading,
             showDeleteICloudDataConfirmation: $showDeleteICloudDataConfirmation,
             sortedForwardingAddresses: sortedForwardingAddresses,
@@ -711,6 +714,7 @@ private struct SettingsListContentView: View {
     @Binding var showWebsites: Bool
     @Binding var showWebsiteLogo: Bool
     @Binding var iCloudSyncEnabled: Bool
+    @Binding var showAnalytics: Bool
     let isLoading: Bool
     @Binding var showDeleteICloudDataConfirmation: Bool
     let sortedForwardingAddresses: [String]
@@ -728,7 +732,9 @@ private struct SettingsListContentView: View {
         List {
             AboutSectionView()
             
-            StatisticsSectionView()
+            if showAnalytics {
+                StatisticsSectionView()
+            }
             
             CloudflareAccountSectionView()
             PrimaryZoneSectionView(
@@ -755,6 +761,7 @@ private struct SettingsListContentView: View {
                 showWebsites: $showWebsites,
                 showWebsiteLogo: $showWebsiteLogo,
                 iCloudSyncEnabled: $iCloudSyncEnabled,
+                showAnalytics: $showAnalytics,
                 isLoading: isLoading,
                 showDeleteICloudDataConfirmation: $showDeleteICloudDataConfirmation,
                 sortedForwardingAddresses: sortedForwardingAddresses,
@@ -1098,6 +1105,7 @@ private struct SettingsSectionView: View {
     @Binding var showWebsites: Bool
     @Binding var showWebsiteLogo: Bool
     @Binding var iCloudSyncEnabled: Bool
+    @Binding var showAnalytics: Bool
     let isLoading: Bool
     @Binding var showDeleteICloudDataConfirmation: Bool
     let sortedForwardingAddresses: [String]
@@ -1183,7 +1191,7 @@ private struct SettingsSectionView: View {
             Toggle("Show Website Logo", isOn: $showWebsiteLogo)
                 .tint(.accentColor)
             
-            Toggle("Sync metadata to iCloud", isOn: $iCloudSyncEnabled)
+            Toggle("Sync Metadata to iCloud", isOn: $iCloudSyncEnabled)
                 .tint(.accentColor)
                 .onChange(of: iCloudSyncEnabled) { oldValue, newValue in
                     if oldValue != newValue {
@@ -1191,6 +1199,9 @@ private struct SettingsSectionView: View {
                     }
                 }
                 .disabled(isLoading)
+            
+            Toggle("Show Analytics", isOn: $showAnalytics)
+                .tint(.accentColor)
             
             if !iCloudSyncEnabled {
                 Button(role: .destructive) {
