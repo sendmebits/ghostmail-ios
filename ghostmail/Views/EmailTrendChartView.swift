@@ -3,6 +3,7 @@ import SwiftUI
 // Beautiful chart component for email trend visualization
 struct EmailTrendChartView: View {
     let statistics: [EmailStatistic]
+    var showTotalBadge: Bool = true
     
     private var dailyCounts: [(date: Date, count: Int)] {
         let calendar = Calendar.current
@@ -35,19 +36,21 @@ struct EmailTrendChartView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Total count badge
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Total Emails")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("\(dailyCounts.reduce(0) { $0 + $1.count })")
-                        .font(.system(.title2, design: .rounded, weight: .bold))
-                        .foregroundStyle(.primary)
+            // Total count badge (optional)
+            if showTotalBadge {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Total Emails")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("\(dailyCounts.reduce(0) { $0 + $1.count })")
+                            .font(.system(.title2, design: .rounded, weight: .bold))
+                            .foregroundStyle(.primary)
+                    }
+                    Spacer()
                 }
-                Spacer()
+                .padding(.horizontal, 4)
             }
-            .padding(.horizontal, 4)
             
             // Chart
             HStack(alignment: .bottom, spacing: 8) {

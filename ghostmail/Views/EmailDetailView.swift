@@ -28,6 +28,10 @@ struct EmailDetailView: View {
     
     @State private var showDeleteConfirmation = false
     @State private var toastWorkItem: DispatchWorkItem?
+    @AppStorage("showAnalytics") private var showAnalytics: Bool = false
+    @State private var emailStatistic: EmailStatistic?
+    @State private var isLoadingStatistics = false
+    @State private var showStatisticsDetail = false
     
     init(email: EmailAlias, needsRefresh: Binding<Bool>) {
         self.email = email
@@ -241,6 +245,51 @@ struct EmailDetailView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.bottom, 10)
+                    
+                    // 7-Day Trend Chart Section
+                    if showAnalytics {
+                        if let statistic = emailStatistic, !statistic.receivedDates.isEmpty {
+                            VStack(spacing: 12) {
+                                Button {
+                                    showStatisticsDetail = true
+                                } label: {
+                                    VStack(spacing: 0) {
+                                        EmailTrendChartView(statistics: [statistic])
+                                            .frame(height: 160)
+                                            .padding(.vertical, 8)
+                                    }
+                                    .padding()
+                                    .background(.regularMaterial)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(.quaternary, lineWidth: 0.5)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal)
+                        } else if !isLoadingStatistics {
+                            VStack(spacing: 12) {
+                                Image(systemName: "chart.bar.xaxis")
+                                    .font(.system(size: 40))
+                                    .foregroundStyle(.secondary.opacity(0.5))
+                                Text("No Activity In The Last 7 Days")
+                                    .font(.system(.subheadline, design: .rounded, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 32)
+                            .padding(.horizontal)
+                            .background(.regularMaterial)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(.quaternary, lineWidth: 0.5)
+                            )
+                            .padding(.horizontal)
+                        }
+                    }
                     
                     // Content sections
                     VStack(spacing: 16) {
@@ -494,6 +543,21 @@ struct EmailDetailView: View {
             Text("Are you sure you want to delete this email alias?")
         }
         .preferredColorScheme(themeColorScheme)
+        .onChange(of: showAnalytics) { _, _ in
+            Task {
+                await loadStatistics()
+            }
+        }
+        .navigationDestination(isPresented: $showStatisticsDetail) {
+            if let statistic = emailStatistic {
+                EmailStatisticsDetailView(statistic: statistic)
+            }
+        }
+        .task {
+            if showAnalytics {
+                await loadStatistics()
+            }
+        }
     }
     
     private var themeColorScheme: ColorScheme? {
@@ -501,6 +565,32 @@ struct EmailDetailView: View {
         case "Light": return .light
         case "Dark": return .dark
         default: return nil
+        }
+    }
+    
+    private func loadStatistics() async {
+        guard showAnalytics, let zone = aliasZone else {
+            emailStatistic = nil
+            return
+        }
+        
+        isLoadingStatistics = true
+        
+        do {
+            let allStats = try await cloudflareClient.fetchEmailStatistics(for: zone)
+            // Find the statistic for this specific email
+            let stat = allStats.first { $0.emailAddress == email.emailAddress }
+            
+            await MainActor.run {
+                self.emailStatistic = stat
+                self.isLoadingStatistics = false
+            }
+        } catch {
+            print("Error loading statistics for \(email.emailAddress): \(error)")
+            await MainActor.run {
+                self.emailStatistic = nil
+                self.isLoadingStatistics = false
+            }
         }
     }
     

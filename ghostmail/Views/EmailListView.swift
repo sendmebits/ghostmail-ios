@@ -373,11 +373,21 @@ struct EmailListView: View {
                     // Chart Section
                     if showAnalytics && !emailStatistics.isEmpty {
                         Section {
-                            EmailTrendChartView(statistics: emailStatistics)
-                                .frame(height: 200)
-                                .padding(.vertical, 8)
+                            EmailTrendChartView(statistics: emailStatistics, showTotalBadge: false)
+                                .frame(height: 180)
+                                .padding(.top, -8)
                         } header: {
-                            Text("7-Day Trend")
+                            HStack {
+                                Text("7-Day Trend")
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text("Total Emails")
+                                        .font(.caption2)
+                                    Text("\(emailStatistics.reduce(0) { $0 + $1.count })")
+                                        .font(.system(.body, design: .rounded, weight: .bold))
+                                        .foregroundStyle(.white)
+                                }
+                            }
                         }
                     }
                     
