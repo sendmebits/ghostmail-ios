@@ -6,10 +6,12 @@ struct EmailStatisticsView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var selectedZoneId: String
-    @State private var statisticsCache: [String: [EmailStatistic]] = [:]
     
-    init(initialZoneId: String) {
-        _selectedZoneId = State(initialValue: initialZoneId)
+    private let allZonesIdentifier = "ALL_ZONES"
+    
+    init(initialZoneId: String? = nil) {
+        // Default to "All" if no zone specified or if multiple zones exist
+        _selectedZoneId = State(initialValue: initialZoneId ?? "ALL_ZONES")
     }
     
     var body: some View {
@@ -17,25 +19,50 @@ struct EmailStatisticsView: View {
             if cloudflareClient.zones.count > 1 {
                 Section {
                     Picker("Zone", selection: $selectedZoneId) {
+                        Text("All Zones")
+                            .tag(allZonesIdentifier)
                         ForEach(cloudflareClient.zones, id: \.zoneId) { zone in
                             Text(zone.domainName.isEmpty ? zone.zoneId : zone.domainName)
                                 .tag(zone.zoneId)
                         }
                     }
                     .onChange(of: selectedZoneId) { _, newValue in
-                        loadStatistics(zoneId: newValue, forceRefresh: false)
+                        loadStatistics(zoneId: newValue, useCache: true)
                     }
                 }
             }
             
             // Chart Section
-            if !isLoading && errorMessage == nil && !statistics.isEmpty {
+            if !statistics.isEmpty && errorMessage == nil {
                 Section {
                     EmailTrendChartView(statistics: statistics)
                         .frame(height: 200)
                         .padding(.vertical, 8)
                 } header: {
-                    Text("7-Day Trend")
+                    HStack {
+                        Text("7-Day Trend")
+                        if isLoading {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                        }
+                    }
+                }
+            } else if isLoading && statistics.isEmpty {
+                // Placeholder skeleton while loading
+                Section {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.secondary.opacity(0.1))
+                        .frame(height: 200)
+                        .overlay(
+                            ProgressView()
+                        )
+                        .padding(.vertical, 8)
+                } header: {
+                    HStack {
+                        Text("7-Day Trend")
+                        ProgressView()
+                            .scaleEffect(0.7)
+                    }
                 }
             }
             
@@ -95,25 +122,42 @@ struct EmailStatisticsView: View {
             await refreshStatistics()
         }
         .task {
-            loadStatistics(zoneId: selectedZoneId, forceRefresh: false)
+            loadStatistics(zoneId: selectedZoneId, useCache: true)
         }
     }
     
     private func refreshStatistics() async {
-        loadStatistics(zoneId: selectedZoneId, forceRefresh: true)
+        loadStatistics(zoneId: selectedZoneId, useCache: false)
         // Wait for the loading to complete
         while isLoading {
             try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
         }
     }
     
-    private func loadStatistics(zoneId: String, forceRefresh: Bool) {
+    private func loadStatistics(zoneId: String, useCache: Bool) {
+        // Handle "All Zones" option
+        if zoneId == allZonesIdentifier {
+            loadAllZonesStatistics(useCache: useCache)
+            return
+        }
+        
         guard let zone = cloudflareClient.zones.first(where: { $0.zoneId == zoneId }) else { return }
         
-        // Check cache first if not forcing refresh
-        if !forceRefresh, let cachedStats = statisticsCache[zoneId] {
-            statistics = cachedStats
-            return
+        // Try to load from shared cache first
+        if useCache, let cached = StatisticsCache.shared.load() {
+            // Filter to this zone's statistics
+            let zoneStats = cached.statistics.filter { stat in
+                // Check if this statistic belongs to this zone by matching email domain
+                let domain = stat.emailAddress.split(separator: "@").last.map(String.init) ?? ""
+                return domain == zone.domainName || zone.subdomains.contains(domain)
+            }
+            statistics = zoneStats
+            
+            // If cache is fresh, we're done
+            if !cached.isStale {
+                return
+            }
+            // If stale, continue to fetch fresh data
         }
         
         isLoading = true
@@ -122,9 +166,66 @@ struct EmailStatisticsView: View {
         Task {
             do {
                 let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
+                
+                // Update shared cache by merging with existing data
+                if !stats.isEmpty {
+                    if let existingCache = StatisticsCache.shared.load() {
+                        // Remove old stats for this zone and add new ones
+                        let otherZoneStats = existingCache.statistics.filter { stat in
+                            let domain = stat.emailAddress.split(separator: "@").last.map(String.init) ?? ""
+                            return domain != zone.domainName && !zone.subdomains.contains(domain)
+                        }
+                        StatisticsCache.shared.save(otherZoneStats + stats)
+                    } else {
+                        StatisticsCache.shared.save(stats)
+                    }
+                }
+                
                 await MainActor.run {
                     self.statistics = stats
-                    self.statisticsCache[zoneId] = stats
+                    self.isLoading = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = error.localizedDescription
+                    self.isLoading = false
+                }
+            }
+        }
+    }
+    
+    private func loadAllZonesStatistics(useCache: Bool) {
+        // Try to load from shared cache first
+        if useCache, let cached = StatisticsCache.shared.load() {
+            statistics = cached.statistics.sorted { $0.count > $1.count }
+            
+            // If cache is fresh, we're done
+            if !cached.isStale {
+                return
+            }
+            // If stale, continue to fetch fresh data
+        }
+        
+        isLoading = true
+        errorMessage = nil
+        
+        Task {
+            do {
+                var allStats: [EmailStatistic] = []
+                
+                // Fetch statistics for all zones
+                for zone in cloudflareClient.zones {
+                    let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
+                    allStats.append(contentsOf: stats)
+                }
+                
+                // Update shared cache with all statistics
+                if !allStats.isEmpty {
+                    StatisticsCache.shared.save(allStats)
+                }
+                
+                await MainActor.run {
+                    self.statistics = allStats.sorted { $0.count > $1.count }
                     self.isLoading = false
                 }
             } catch {

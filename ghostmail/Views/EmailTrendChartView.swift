@@ -46,7 +46,7 @@ struct EmailTrendChartView: View {
                             .foregroundStyle(.secondary)
                         Text("\(dailyCounts.reduce(0) { $0 + $1.count })")
                             .font(.system(.title2, design: .rounded, weight: .bold))
-                            .foregroundStyle(.primary)
+                            .foregroundColor(.primary)
                     }
                     Spacer()
                 }

@@ -1297,7 +1297,8 @@ private struct StatisticsSectionView: View {
     var body: some View {
         Section {
             NavigationLink {
-                EmailStatisticsView(initialZoneId: cloudflareClient.zoneId)
+                // Default to "All Zones" view
+                EmailStatisticsView()
             } label: {
                 Label("Email Statistics", systemImage: "chart.bar")
             }

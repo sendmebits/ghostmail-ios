@@ -34,6 +34,13 @@ Implements intelligent caching for email statistics to provide instant chart dis
 - Updates cache when fetching fresh data
 - Merges with existing cache to preserve other zones' data
 
+**Statistics View (`EmailStatisticsView`):**
+- Uses shared cache for instant display
+- Defaults to "All Zones" view showing combined statistics
+- Individual zone selection available via dropdown
+- Updates shared cache when fetching fresh data
+- Shows skeleton placeholder when loading without cache
+
 #### 3. Performance Optimizations
 
 **Efficient Filtering:**
@@ -128,6 +135,12 @@ refilterStatistics()
 **EmailDetailView:**
 ```swift
 loadStatistics(useCache: Bool = true)
+```
+
+**EmailStatisticsView:**
+```swift
+loadStatistics(zoneId: String, useCache: Bool)
+loadAllZonesStatistics(useCache: Bool)
 ```
 
 ## Future Enhancements
