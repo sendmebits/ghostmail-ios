@@ -1200,7 +1200,7 @@ private struct SettingsSectionView: View {
                 }
                 .disabled(isLoading)
             
-            Toggle("Show Analytics", isOn: $showAnalytics)
+            Toggle("Show Email Analytics", isOn: $showAnalytics)
                 .tint(.accentColor)
             
             if !iCloudSyncEnabled {
