@@ -50,6 +50,8 @@ struct EmailListView: View {
     @State private var emailStatistics: [EmailStatistic] = []
     @State private var isLoadingStatistics = false
     @AppStorage("showAnalytics") private var showAnalytics: Bool = false
+    @State private var selectedDate: Date?
+    @State private var showDailyEmails = false
 
     // Derived UI state
     private var isFilterActive: Bool {
@@ -373,9 +375,16 @@ struct EmailListView: View {
                     // Chart Section
                     if showAnalytics && !emailStatistics.isEmpty {
                         Section {
-                            EmailTrendChartView(statistics: emailStatistics, showTotalBadge: false)
-                                .frame(height: 180)
-                                .padding(.top, -8)
+                            EmailTrendChartView(
+                                statistics: emailStatistics,
+                                showTotalBadge: false,
+                                onDayTapped: { date in
+                                    selectedDate = date
+                                    showDailyEmails = true
+                                }
+                            )
+                            .frame(height: 180)
+                            .padding(.top, -8)
                         } header: {
                             HStack {
                                 Text("7-Day Trend")
@@ -401,6 +410,11 @@ struct EmailListView: View {
                 .scrollContentBackground(.hidden)
                 .navigationDestination(for: EmailAlias.self) { email in
                     EmailDetailView(email: email, needsRefresh: $needsRefresh)
+                }
+                .navigationDestination(isPresented: $showDailyEmails) {
+                    if let date = selectedDate {
+                        DailyEmailsView(date: date, statistics: emailStatistics)
+                    }
                 }
                 .refreshable {
                     await refreshAction()

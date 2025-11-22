@@ -4,6 +4,7 @@ import SwiftUI
 struct EmailTrendChartView: View {
     let statistics: [EmailStatistic]
     var showTotalBadge: Bool = true
+    var onDayTapped: ((Date) -> Void)? = nil
     
     private var dailyCounts: [(date: Date, count: Int)] {
         let calendar = Calendar.current
@@ -57,36 +58,44 @@ struct EmailTrendChartView: View {
                 ForEach(Array(dailyCounts.enumerated()), id: \.offset) { index, item in
                     VStack(spacing: 4) {
                         // Bar
-                        ZStack(alignment: .bottom) {
-                            // Background bar
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.accentColor.opacity(0.1))
-                                .frame(height: 120)
-                            
-                            // Actual value bar with gradient
-                            if item.count > 0 {
+                        Button {
+                            if item.count > 0, let onDayTapped = onDayTapped {
+                                onDayTapped(item.date)
+                            }
+                        } label: {
+                            ZStack(alignment: .bottom) {
+                                // Background bar
                                 RoundedRectangle(cornerRadius: 6)
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [
-                                                Color.accentColor,
-                                                Color.accentColor.opacity(0.7)
-                                            ],
-                                            startPoint: .top,
-                                            endPoint: .bottom
+                                    .fill(Color.accentColor.opacity(0.1))
+                                    .frame(height: 120)
+                                
+                                // Actual value bar with gradient
+                                if item.count > 0 {
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [
+                                                    Color.accentColor,
+                                                    Color.accentColor.opacity(0.7)
+                                                ],
+                                                startPoint: .top,
+                                                endPoint: .bottom
+                                            )
                                         )
-                                    )
-                                    .frame(height: max(20, CGFloat(item.count) / CGFloat(maxCount) * 120))
-                                    .overlay(
-                                        // Count label on bar
-                                        Text("\(item.count)")
-                                            .font(.system(.caption2, design: .rounded, weight: .semibold))
-                                            .foregroundStyle(.white)
-                                            .padding(.bottom, 4)
-                                        , alignment: .bottom
-                                    )
+                                        .frame(height: max(20, CGFloat(item.count) / CGFloat(maxCount) * 120))
+                                        .overlay(
+                                            // Count label on bar
+                                            Text("\(item.count)")
+                                                .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                                .foregroundStyle(.white)
+                                                .padding(.bottom, 4)
+                                            , alignment: .bottom
+                                        )
+                                }
                             }
                         }
+                        .buttonStyle(.plain)
+                        .disabled(item.count == 0 || onDayTapped == nil)
                         
                         // Day label
                         Text(dayLabel(for: item.date))
