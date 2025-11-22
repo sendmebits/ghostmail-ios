@@ -1201,6 +1201,117 @@ class CloudflareClient: ObservableObject {
     print("[Cloudflare] Zone details OK (add zone) — zoneId=\(maskId(zoneId)), domain=\(zoneResponse.result.name), account=\(zoneResponse.result.account.name)")
         return (domainName: zoneResponse.result.name, accountName: zoneResponse.result.account.name)
     }
+    
+    // MARK: - Sync Logic
+    
+    @MainActor
+    func syncEmailRules(modelContext: ModelContext) async throws {
+        var cloudflareRules = try await getEmailRulesAllZones()
+        
+        // Handle potential duplicates in Cloudflare rules
+        // Keep track of seen email addresses and only include the first occurrence
+        var seenEmails = Set<String>()
+        cloudflareRules = cloudflareRules.filter { rule in
+            guard !seenEmails.contains(rule.emailAddress) else {
+                print("⚠️ Skipping duplicate email rule for: \(rule.emailAddress)")
+                return false
+            }
+            seenEmails.insert(rule.emailAddress)
+            return true
+        }
+        
+        // Create dictionaries for lookup (now safe because we've removed duplicates)
+        let cloudflareRulesByEmail = Dictionary(
+            uniqueKeysWithValues: cloudflareRules.map { ($0.emailAddress, $0) }
+        )
+        
+        // Build dictionary for existing aliases across zones, including logged-out ones
+        // so we can reactivate instead of creating duplicates
+        var existingAliasesMap: [String: EmailAlias] = [:]
+        do {
+            let descriptor = FetchDescriptor<EmailAlias>()
+            let allExisting = try modelContext.fetch(descriptor)
+            for alias in allExisting {
+                if let current = existingAliasesMap[alias.emailAddress] {
+                    // Prefer non-logged-out entries; otherwise prefer the one with richer metadata
+                    if current.isLoggedOut && !alias.isLoggedOut {
+                        existingAliasesMap[alias.emailAddress] = alias
+                    } else if current.isLoggedOut == alias.isLoggedOut {
+                        // Tie-breaker: prefer the one with more metadata
+                        let currentMeta = (current.notes.isEmpty ? 0 : 1) + (current.website.isEmpty ? 0 : 1)
+                        let aliasMeta = (alias.notes.isEmpty ? 0 : 1) + (alias.website.isEmpty ? 0 : 1)
+                        if aliasMeta > currentMeta {
+                            existingAliasesMap[alias.emailAddress] = alias
+                        }
+                    }
+                } else {
+                    existingAliasesMap[alias.emailAddress] = alias
+                }
+            }
+        } catch {
+            print("Error fetching existing aliases for refresh: \(error)")
+        }
+        
+        // Remove deleted aliases, but only those that belong to configured zones and are missing there
+        let configuredZoneIds = Set(zones.map { $0.zoneId })
+        // We need to fetch all aliases again or use the map values to check for deletion
+        // Using a fresh fetch to be safe and iterate
+        let descriptor = FetchDescriptor<EmailAlias>()
+        if let allAliases = try? modelContext.fetch(descriptor) {
+            for alias in allAliases {
+                // Only consider deleting if alias has a zoneId and belongs to a configured zone
+                guard !alias.zoneId.isEmpty, configuredZoneIds.contains(alias.zoneId) else { continue }
+                // If no matching rule exists for that email in the aggregated set AND the email does not exist under any zone, delete
+                if cloudflareRulesByEmail[alias.emailAddress] == nil {
+                    print("Deleting alias not found in any configured zones: \(alias.emailAddress) [zone: \(alias.zoneId)]")
+                    modelContext.delete(alias)
+                }
+            }
+        }
+        
+        // Update or create aliases
+        for (index, rule) in cloudflareRules.enumerated() {
+            let emailAddress = rule.emailAddress
+            let forwardTo = rule.forwardTo
+            
+            if let existing = existingAliasesMap[emailAddress] {
+                // Reactivate if it was logged out and update fields
+                let newZoneId = rule.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Note: withAnimation is a View modifier, we shouldn't use it here in the logic layer.
+                // The View observing the data will animate changes if configured to do so.
+                existing.isLoggedOut = false
+                existing.cloudflareTag = rule.cloudflareTag
+                existing.isEnabled = rule.isEnabled
+                existing.forwardTo = forwardTo
+                existing.sortIndex = index + 1
+                existing.zoneId = newZoneId
+            } else {
+                // Create new alias with proper properties
+                let newAlias = EmailAlias(
+                    emailAddress: emailAddress,
+                    forwardTo: forwardTo,
+                    zoneId: rule.zoneId
+                )
+                newAlias.cloudflareTag = rule.cloudflareTag
+                newAlias.isEnabled = rule.isEnabled
+                newAlias.sortIndex = index + 1
+                
+                // Set the user identifier to ensure cross-device ownership
+                newAlias.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
+                
+                modelContext.insert(newAlias)
+            }
+        }
+        
+        // Save once after all updates and run a quick dedup pass to merge any stragglers
+        try modelContext.save()
+        do {
+            let removed = try EmailAlias.deduplicate(in: modelContext)
+            if removed > 0 { print("Deduplicated \(removed) aliases during refresh (post-reactivation)") }
+        } catch {
+            print("Deduplication error: \(error)")
+        }
+    }
 }
 
 struct CloudflareResponse<T: Codable>: Codable {

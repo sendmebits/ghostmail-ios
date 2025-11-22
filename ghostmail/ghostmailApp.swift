@@ -20,6 +20,11 @@ struct ghostmailApp: App {
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
     @AppStorage("userIdentifier") private var userIdentifier: String = ""
     
+    // Background update state
+    @State private var lastUpdateCheck: Date = .distantPast
+    @State private var updateTimer: Timer?
+    private let updateInterval: TimeInterval = 300 // 5 minutes
+    
     init() {
         // Read iCloud sync preference with a safe default of TRUE when unset
         // Avoid accessing self.iCloudSyncEnabled here to prevent capturing self in init
@@ -189,6 +194,16 @@ struct ghostmailApp: App {
                         NotificationCenter.default.post(name: .ghostmailOpenCreate, object: nil)
                         appDelegate.pendingCreateQuickAction = false
                     }
+                    
+                    // Schedule initial background check with a slight delay to not impact startup performance
+                    Task {
+                        try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds delay
+                        await performBackgroundUpdateIfNeeded()
+                    }
+                    
+                    // Start the periodic timer
+                    startUpdateTimer()
+                    
                     // If authenticated, refresh forwarding addresses and domain from Cloudflare
                     if cloudflareClient.isAuthenticated {
                         print("App startup: Refreshing forwarding addresses and domain")
@@ -257,12 +272,61 @@ struct ghostmailApp: App {
         .modelContainer(modelContainer)
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .active {
+                // Check for updates when app comes to foreground
+                Task {
+                    await performBackgroundUpdateIfNeeded()
+                }
+                
+                // Ensure timer is running
+                startUpdateTimer()
+                
                 // Check if there's a pending quick action when scene becomes active
                 if appDelegate.pendingCreateQuickAction {
                     NotificationCenter.default.post(name: .ghostmailOpenCreate, object: nil)
                     appDelegate.pendingCreateQuickAction = false
                 }
+            } else if newPhase == .background {
+                // Stop timer when in background to save resources
+                stopUpdateTimer()
             }
+        }
+    }
+    
+    // MARK: - Background Update Logic
+    
+    private func startUpdateTimer() {
+        stopUpdateTimer()
+        // Check every minute
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+            Task {
+                await performBackgroundUpdateIfNeeded()
+            }
+        }
+    }
+    
+    private func stopUpdateTimer() {
+        updateTimer?.invalidate()
+        updateTimer = nil
+    }
+    
+    @MainActor
+    private func performBackgroundUpdateIfNeeded() async {
+        guard cloudflareClient.isAuthenticated else { return }
+        
+        let now = Date()
+        let timeSinceLastUpdate = now.timeIntervalSince(lastUpdateCheck)
+        
+        if timeSinceLastUpdate >= updateInterval {
+            print("Background update: Starting check (last check was \(Int(timeSinceLastUpdate))s ago)")
+            do {
+                try await cloudflareClient.syncEmailRules(modelContext: modelContainer.mainContext)
+                lastUpdateCheck = now
+                print("Background update: Completed successfully")
+            } catch {
+                print("Background update: Failed with error: \(error)")
+            }
+        } else {
+            // print("Background update: Skipped (too soon, \(Int(updateInterval - timeSinceLastUpdate))s remaining)")
         }
     }
 }
