@@ -49,6 +49,7 @@ struct EmailListView: View {
     // Statistics state
     @State private var emailStatistics: [EmailStatistic] = []
     @State private var isLoadingStatistics = false
+    @State private var isUsingCachedStatistics = false
     @AppStorage("showAnalytics") private var showAnalytics: Bool = false
     @State private var selectedDate: Date?
     @State private var showDailyEmails = false
@@ -310,13 +311,33 @@ struct EmailListView: View {
             print("Error during refresh deduplication: \(error)")
         }
         await refreshEmailRules()
-        await loadStatistics()
+        // Bypass cache on manual refresh to get fresh data
+        await loadStatistics(useCache: false)
     }
     
-    private func loadStatistics() async {
+    // Store unfiltered statistics for efficient re-filtering
+    @State private var unfilteredStatistics: [EmailStatistic] = []
+    
+    private func loadStatistics(useCache: Bool = true) async {
         guard showAnalytics else {
             emailStatistics = []
+            unfilteredStatistics = []
             return
+        }
+        
+        // Try to load from cache first for instant display
+        if useCache, let cached = StatisticsCache.shared.load() {
+            await MainActor.run {
+                self.unfilteredStatistics = cached.statistics
+                self.emailStatistics = filterStatistics(cached.statistics)
+                self.isUsingCachedStatistics = true
+            }
+            
+            // If cache is fresh (< 24 hours), we're done
+            if !cached.isStale {
+                return
+            }
+            // If stale, continue to fetch fresh data in background
         }
         
         isLoadingStatistics = true
@@ -332,13 +353,29 @@ struct EmailListView: View {
             }
         }
         
+        // Cache the raw statistics before filtering
+        if !allStats.isEmpty {
+            StatisticsCache.shared.save(allStats)
+        }
+        
         // Filter statistics based on current filters
         let filteredStats = filterStatistics(allStats)
         
         await MainActor.run {
+            self.unfilteredStatistics = allStats
             self.emailStatistics = filteredStats
             self.isLoadingStatistics = false
+            self.isUsingCachedStatistics = false
         }
+    }
+    
+    /// Re-filter existing statistics without reloading from network
+    private func refilterStatistics() {
+        guard showAnalytics else {
+            emailStatistics = []
+            return
+        }
+        emailStatistics = filterStatistics(unfilteredStatistics)
     }
     
     private func filterStatistics(_ stats: [EmailStatistic]) -> [EmailStatistic] {
@@ -373,28 +410,56 @@ struct EmailListView: View {
             } else {
                 List {
                     // Chart Section
-                    if showAnalytics && !emailStatistics.isEmpty {
-                        Section {
-                            EmailTrendChartView(
-                                statistics: emailStatistics,
-                                showTotalBadge: false,
-                                onDayTapped: { date in
-                                    selectedDate = date
-                                    showDailyEmails = true
+                    if showAnalytics {
+                        if !emailStatistics.isEmpty {
+                            Section {
+                                EmailTrendChartView(
+                                    statistics: emailStatistics,
+                                    showTotalBadge: false,
+                                    onDayTapped: { date in
+                                        selectedDate = date
+                                        showDailyEmails = true
+                                    }
+                                )
+                                .frame(height: 180)
+                                .padding(.top, -8)
+                                .opacity(isLoadingStatistics && isUsingCachedStatistics ? 0.7 : 1.0)
+                            } header: {
+                                HStack {
+                                    Text("7-Day Trend")
+                                    if isLoadingStatistics && isUsingCachedStatistics {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                    }
+                                    Spacer()
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Text("Total Emails")
+                                            .font(.caption2)
+                                        Text("\(emailStatistics.reduce(0) { $0 + $1.count })")
+                                            .font(.system(.body, design: .rounded, weight: .bold))
+                                            .foregroundStyle(.white)
+                                    }
                                 }
-                            )
-                            .frame(height: 180)
-                            .padding(.top, -8)
-                        } header: {
-                            HStack {
-                                Text("7-Day Trend")
-                                Spacer()
-                                VStack(alignment: .trailing, spacing: 2) {
-                                    Text("Total Emails")
-                                        .font(.caption2)
-                                    Text("\(emailStatistics.reduce(0) { $0 + $1.count })")
-                                        .font(.system(.body, design: .rounded, weight: .bold))
-                                        .foregroundStyle(.white)
+                            }
+                        } else if isLoadingStatistics {
+                            // Placeholder skeleton while loading (only shown if no cache available)
+                            Section {
+                                VStack(spacing: 0) {
+                                    // Skeleton chart placeholder
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color.secondary.opacity(0.1))
+                                        .frame(height: 180)
+                                        .overlay(
+                                            ProgressView()
+                                        )
+                                }
+                                .padding(.top, -8)
+                            } header: {
+                                HStack {
+                                    Text("7-Day Trend")
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                    Spacer()
                                 }
                             }
                         }
@@ -497,20 +562,14 @@ struct EmailListView: View {
         }
         .onChange(of: destinationFilter) { _, newValue in
             persistDestinationFilter(newValue)
-            Task {
-                await loadStatistics()
-            }
+            refilterStatistics()
         }
         .onChange(of: domainFilter) { _, newValue in
             persistDomainFilter(newValue)
-            Task {
-                await loadStatistics()
-            }
+            refilterStatistics()
         }
         .onChange(of: searchText) { _, _ in
-            Task {
-                await loadStatistics()
-            }
+            refilterStatistics()
         }
         .onChange(of: showAnalytics) { _, _ in
             Task {
