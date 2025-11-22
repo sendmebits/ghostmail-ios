@@ -496,6 +496,7 @@ class CloudflareClient: ObservableObject {
     
     private struct EmailLogEntry: Decodable {
         let to: String
+        let from: String
         let datetime: String
     }
 
@@ -508,7 +509,7 @@ class CloudflareClient: ObservableObject {
         // We'll fetch in 24-hour chunks in parallel.
         
         let now = Date()
-        var tasks: [Task<[String: [Date]], Error>] = []
+        var tasks: [Task<[String: [EmailStatistic.EmailDetail]], Error>] = []
         
         // Limit to 7 days for performance, or use the requested days if small
         let daysToFetch = min(days, 7)
@@ -538,6 +539,7 @@ class CloudflareClient: ObservableObject {
                         limit: 10000
                       ) {
                         to
+                        from
                         datetime
                       }
                     }
@@ -559,26 +561,26 @@ class CloudflareClient: ObservableObject {
                 if let errors = graphQLResponse.errors, let firstError = errors.first {
                     // Ignore "time range too large" errors if they happen for some reason, just return empty
                     print("GraphQL Error: \(firstError.message)")
-                    return [String: [Date]]()
+                    return [String: [EmailStatistic.EmailDetail]]()
                 }
                 
                 guard let logs = graphQLResponse.data?.viewer.zones.first?.emailRoutingAdaptive else {
-                    return [String: [Date]]()
+                    return [String: [EmailStatistic.EmailDetail]]()
                 }
                 
                 // Parse dates inside the task
                 let taskIsoFormatter = ISO8601DateFormatter()
                 taskIsoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
                 
-                return logs.reduce(into: [String: [Date]]()) { result, log in
+                return logs.reduce(into: [String: [EmailStatistic.EmailDetail]]()) { result, log in
                     if let date = taskIsoFormatter.date(from: log.datetime) {
-                        result[log.to, default: []].append(date)
+                        result[log.to, default: []].append(EmailStatistic.EmailDetail(from: log.from, date: date))
                     } else {
                         // Fallback for dates without fractional seconds
                         let fallbackFormatter = ISO8601DateFormatter()
                         fallbackFormatter.formatOptions = [.withInternetDateTime]
                         if let date = fallbackFormatter.date(from: log.datetime) {
-                            result[log.to, default: []].append(date)
+                            result[log.to, default: []].append(EmailStatistic.EmailDetail(from: log.from, date: date))
                         }
                     }
                 }
@@ -586,13 +588,13 @@ class CloudflareClient: ObservableObject {
             tasks.append(task)
         }
         
-        var totalDates: [String: [Date]] = [:]
+        var totalDetails: [String: [EmailStatistic.EmailDetail]] = [:]
         
         for task in tasks {
             do {
-                let chunkDates = try await task.value
-                for (email, dates) in chunkDates {
-                    totalDates[email, default: []].append(contentsOf: dates)
+                let chunkDetails = try await task.value
+                for (email, details) in chunkDetails {
+                    totalDetails[email, default: []].append(contentsOf: details)
                 }
             } catch {
                 print("Failed to fetch chunk: \(error)")
@@ -600,8 +602,16 @@ class CloudflareClient: ObservableObject {
             }
         }
         
-        return totalDates.map { EmailStatistic(emailAddress: $0.key, count: $0.value.count, receivedDates: $0.value.sorted(by: >)) }
-            .sorted { $0.count > $1.count }
+        return totalDetails.map { 
+            let sortedDetails = $0.value.sorted { $0.date > $1.date }
+            return EmailStatistic(
+                emailAddress: $0.key, 
+                count: $0.value.count, 
+                receivedDates: sortedDetails.map { $0.date },
+                emailDetails: sortedDetails
+            )
+        }
+        .sorted { $0.count > $1.count }
     }
     
     func validateAnalyticsPermission(for zone: CloudflareZone) async throws -> Bool {

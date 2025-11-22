@@ -5,4 +5,10 @@ struct EmailStatistic: Identifiable, Hashable {
     let emailAddress: String
     let count: Int
     let receivedDates: [Date]
+    let emailDetails: [EmailDetail]
+    
+    struct EmailDetail: Hashable {
+        let from: String
+        let date: Date
+    }
 }
