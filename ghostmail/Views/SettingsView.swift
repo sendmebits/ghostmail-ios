@@ -24,6 +24,8 @@ struct SettingsView: View {
     @State private var showDisableSyncConfirmation = false
     @State private var showDeleteICloudDataConfirmation = false
     @State private var showRestartAlert = false
+    @State private var skippedDomains: [String] = []
+    @State private var showSkippedAlert = false
     @Environment(\.openURL) private var openURL
     @State private var showAddZoneSheet = false {
         didSet {
@@ -112,6 +114,25 @@ struct SettingsView: View {
             let csvString = try String(contentsOf: url, encoding: .utf8)
             let rows = csvString.components(separatedBy: .newlines)
             
+            // Build set of allowed domains (primary + additional zones + subdomains)
+            var allowedDomains = Set<String>()
+            // Add primary zone domain
+            if !cloudflareClient.domainName.isEmpty {
+                allowedDomains.insert(cloudflareClient.domainName.lowercased())
+            }
+            // Add additional zones
+            for zone in cloudflareClient.zones {
+                if !zone.domainName.isEmpty {
+                    allowedDomains.insert(zone.domainName.lowercased())
+                }
+                // Add subdomains
+                for sub in zone.subdomains {
+                    allowedDomains.insert(sub.lowercased())
+                }
+            }
+            
+            var skipped = Set<String>()
+            
             // Skip header row
             for row in rows.dropFirst() where !row.isEmpty {
                 let fields = row.components(separatedBy: ",")
@@ -123,6 +144,17 @@ struct SettingsView: View {
                 let created = ISO8601DateFormatter().date(from: fields[3].trimmingCharacters(in: .whitespacesAndNewlines))
                 let isEnabled = fields[4].trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "true"
                 let forwardTo = fields[5].trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                // Extract domain from email
+                let emailParts = emailAddress.split(separator: "@")
+                guard emailParts.count == 2 else { continue }
+                let domain = String(emailParts[1]).lowercased()
+                
+                // Check if domain is allowed
+                if !allowedDomains.contains(domain) {
+                    skipped.insert(domain)
+                    continue
+                }
                 
                 // Check if alias already exists
                 if let existingAlias = emailAliases.first(where: { $0.emailAddress == emailAddress }) {
@@ -222,6 +254,11 @@ struct SettingsView: View {
                         }
                     }
                 }
+            }
+            
+            if !skipped.isEmpty {
+                skippedDomains = Array(skipped).sorted()
+                showSkippedAlert = true
             }
             
             try modelContext.save()
@@ -515,6 +552,11 @@ struct SettingsView: View {
                     Button("OK", role: .cancel) { }
                 } message: { error in
                     Text(error.localizedDescription)
+                }
+                .alert("Skipped Entries", isPresented: $showSkippedAlert) {
+                    Button("OK", role: .cancel) { }
+                } message: {
+                    Text("Some entries were skipped because their domains are not currently added to the app:\n\n\(skippedDomains.joined(separator: ", "))")
                 }
         )
     }
