@@ -45,6 +45,11 @@ struct EmailListView: View {
     // Pending (staged) filters used inside the filter sheet
     @State private var pendingDestinationFilter: DestinationFilter = .all
     @State private var pendingDomainFilter: DomainFilter = .all
+    
+    // Statistics state
+    @State private var emailStatistics: [EmailStatistic] = []
+    @State private var isLoadingStatistics = false
+    @AppStorage("showAnalytics") private var showAnalytics: Bool = false
 
     // Derived UI state
     private var isFilterActive: Bool {
@@ -303,6 +308,49 @@ struct EmailListView: View {
             print("Error during refresh deduplication: \(error)")
         }
         await refreshEmailRules()
+        await loadStatistics()
+    }
+    
+    private func loadStatistics() async {
+        guard showAnalytics else {
+            emailStatistics = []
+            return
+        }
+        
+        isLoadingStatistics = true
+        
+        // Fetch statistics for all zones
+        var allStats: [EmailStatistic] = []
+        for zone in cloudflareClient.zones {
+            do {
+                let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
+                allStats.append(contentsOf: stats)
+            } catch {
+                print("Error fetching statistics for zone \(zone.zoneId): \(error)")
+            }
+        }
+        
+        // Filter statistics based on current filters
+        let filteredStats = filterStatistics(allStats)
+        
+        await MainActor.run {
+            self.emailStatistics = filteredStats
+            self.isLoadingStatistics = false
+        }
+    }
+    
+    private func filterStatistics(_ stats: [EmailStatistic]) -> [EmailStatistic] {
+        var filtered = stats
+        
+        // Get the email addresses from filteredEmails
+        let filteredEmailAddresses = Set(filteredEmails.map { $0.emailAddress })
+        
+        // Only include statistics for emails that pass the current filters
+        filtered = filtered.filter { stat in
+            filteredEmailAddresses.contains(stat.emailAddress)
+        }
+        
+        return filtered
     }
     
     private var content: some View {
@@ -322,6 +370,17 @@ struct EmailListView: View {
                 }
             } else {
                 List {
+                    // Chart Section
+                    if showAnalytics && !emailStatistics.isEmpty {
+                        Section {
+                            EmailTrendChartView(statistics: emailStatistics)
+                                .frame(height: 200)
+                                .padding(.vertical, 8)
+                        } header: {
+                            Text("7-Day Trend")
+                        }
+                    }
+                    
                     ForEach(sortedEmails, id: \.id) { email in
                         EmailListRowLink(email: email) { copied in
                             showToastWithTimer(copied)
@@ -414,9 +473,25 @@ struct EmailListView: View {
         }
         .onChange(of: destinationFilter) { _, newValue in
             persistDestinationFilter(newValue)
+            Task {
+                await loadStatistics()
+            }
         }
         .onChange(of: domainFilter) { _, newValue in
             persistDomainFilter(newValue)
+            Task {
+                await loadStatistics()
+            }
+        }
+        .onChange(of: searchText) { _, _ in
+            Task {
+                await loadStatistics()
+            }
+        }
+        .onChange(of: showAnalytics) { _, _ in
+            Task {
+                await loadStatistics()
+            }
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView()
@@ -460,6 +535,8 @@ struct EmailListView: View {
                 // If we have existing data, just mark as loaded
                 isInitialLoad = false
             }
+            // Load statistics on initial appear
+            await loadStatistics()
         }
         .onChange(of: needsRefresh) { _, needsRefresh in
             if needsRefresh {
