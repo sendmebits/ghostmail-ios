@@ -79,11 +79,12 @@ struct ghostmailApp: App {
         }
     }
     
-    // Function to ensure all aliases have a user identifier
-    @MainActor
+    // Function to ensure all aliases have a user identifier - optimized for background execution
     private static func updateUserIdentifiers(modelContainer: ModelContainer) async {
-        let context = modelContainer.mainContext
         let userId = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
+        
+        // Create a background context
+        let context = ModelContext(modelContainer)
         
         do {
             let descriptor = FetchDescriptor<EmailAlias>(
@@ -98,18 +99,18 @@ struct ghostmailApp: App {
                     alias.userIdentifier = userId
                 }
                 try context.save()
-                print("Updated user identifiers for \(aliasesNeedingUpdate.count) aliases")
+                print("Updated user identifiers for \(aliasesNeedingUpdate.count) aliases (background)")
             }
         } catch {
             print("Error updating user identifiers: \(error)")
         }
     }
     
-    // Function to force sync of existing data to CloudKit - now optimized
-    @MainActor
+    // Function to force sync of existing data to CloudKit - optimized for background execution
     private static func forceSyncExistingData(modelContainer: ModelContainer) async {
-        print("Checking for data that needs CloudKit sync...")
-        let context = modelContainer.mainContext
+        print("Checking for data that needs CloudKit sync (background)...")
+        // Create a background context
+        let context = ModelContext(modelContainer)
         
         do {
             // Only sync aliases that don't have a user identifier or have recent changes
@@ -235,8 +236,10 @@ struct ghostmailApp: App {
                             print("Error during startup deduplication: \(error)")
                         }
 
-                        await ghostmailApp.updateUserIdentifiers(modelContainer: modelContainer)
-                        await ghostmailApp.forceSyncExistingData(modelContainer: modelContainer)
+                        Task.detached(priority: .utility) {
+                            await ghostmailApp.updateUserIdentifiers(modelContainer: modelContainer)
+                            await ghostmailApp.forceSyncExistingData(modelContainer: modelContainer)
+                        }
                         await checkCloudKitSyncStatus()
                     }
                 }

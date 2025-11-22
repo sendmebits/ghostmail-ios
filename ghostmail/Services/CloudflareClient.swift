@@ -36,11 +36,27 @@ class CloudflareClient: ObservableObject {
     private let cacheValidityDuration: TimeInterval = 300 // 5 minutes
     
     init(accountId: String = "", zoneId: String = "", apiToken: String = "") {
-        // Load stored credentials
+        // Load stored credentials from Keychain (migrating from UserDefaults if needed)
         let defaults = UserDefaults.standard
-        self.accountId = (defaults.string(forKey: "accountId") ?? accountId).trimmingCharacters(in: .whitespacesAndNewlines)
-        self.zoneId = (defaults.string(forKey: "zoneId") ?? zoneId).trimmingCharacters(in: .whitespacesAndNewlines)
-        self.apiToken = (defaults.string(forKey: "apiToken") ?? apiToken).trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Check if we need to migrate from UserDefaults to Keychain
+        if let oldAccountId = defaults.string(forKey: "accountId"), !oldAccountId.isEmpty {
+            KeychainHelper.shared.save(oldAccountId, service: "ghostmail", account: "accountId")
+            defaults.removeObject(forKey: "accountId")
+        }
+        if let oldZoneId = defaults.string(forKey: "zoneId"), !oldZoneId.isEmpty {
+            KeychainHelper.shared.save(oldZoneId, service: "ghostmail", account: "zoneId")
+            defaults.removeObject(forKey: "zoneId")
+        }
+        if let oldApiToken = defaults.string(forKey: "apiToken"), !oldApiToken.isEmpty {
+            KeychainHelper.shared.save(oldApiToken, service: "ghostmail", account: "apiToken")
+            defaults.removeObject(forKey: "apiToken")
+        }
+        
+        // Load from Keychain
+        self.accountId = (KeychainHelper.shared.readString(service: "ghostmail", account: "accountId") ?? accountId).trimmingCharacters(in: .whitespacesAndNewlines)
+        self.zoneId = (KeychainHelper.shared.readString(service: "ghostmail", account: "zoneId") ?? zoneId).trimmingCharacters(in: .whitespacesAndNewlines)
+        self.apiToken = (KeychainHelper.shared.readString(service: "ghostmail", account: "apiToken") ?? apiToken).trimmingCharacters(in: .whitespacesAndNewlines)
         self.isAuthenticated = defaults.bool(forKey: "isAuthenticated")
 
         // Load multi-zone configuration if present; migrate from single if needed
@@ -428,10 +444,11 @@ class CloudflareClient: ObservableObject {
         self.zoneId = zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
         self.apiToken = apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        let defaults = UserDefaults.standard
-    defaults.set(self.accountId, forKey: "accountId")
-    defaults.set(self.zoneId, forKey: "zoneId")
-    defaults.set(self.apiToken, forKey: "apiToken")
+
+        // Save to Keychain
+        KeychainHelper.shared.save(self.accountId, service: "ghostmail", account: "accountId")
+        KeychainHelper.shared.save(self.zoneId, service: "ghostmail", account: "zoneId")
+        KeychainHelper.shared.save(self.apiToken, service: "ghostmail", account: "apiToken")
         
         // Clear cache when credentials change
         forwardingAddressesCache = []
@@ -473,9 +490,10 @@ class CloudflareClient: ObservableObject {
         lastForwardingAddressesFetch = .distantPast
         
         let defaults = UserDefaults.standard
-        defaults.removeObject(forKey: "accountId")
-        defaults.removeObject(forKey: "zoneId")
-        defaults.removeObject(forKey: "apiToken")
+        // Remove from Keychain
+        KeychainHelper.shared.delete(service: "ghostmail", account: "accountId")
+        KeychainHelper.shared.delete(service: "ghostmail", account: "zoneId")
+        KeychainHelper.shared.delete(service: "ghostmail", account: "apiToken")
         defaults.removeObject(forKey: "isAuthenticated")
     zones = []
     defaults.removeObject(forKey: "cloudflareZones")
@@ -1008,9 +1026,9 @@ class CloudflareClient: ObservableObject {
                 domainName = newPrimary.domainName
 
                 let defaults = UserDefaults.standard
-                defaults.set(accountId, forKey: "accountId")
-                defaults.set(zoneId, forKey: "zoneId")
-                defaults.set(apiToken, forKey: "apiToken")
+                KeychainHelper.shared.save(accountId, service: "ghostmail", account: "accountId")
+                KeychainHelper.shared.save(zoneId, service: "ghostmail", account: "zoneId")
+                KeychainHelper.shared.save(apiToken, service: "ghostmail", account: "apiToken")
                 defaults.set(true, forKey: "isAuthenticated")
 
                 // Clear forwarding cache to avoid stale state across accounts
