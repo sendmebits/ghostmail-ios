@@ -6,6 +6,7 @@ struct EmailStatisticsView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var selectedZoneId: String
+    @State private var statisticsCache: [String: [EmailStatistic]] = [:]
     
     init(initialZoneId: String) {
         _selectedZoneId = State(initialValue: initialZoneId)
@@ -22,7 +23,7 @@ struct EmailStatisticsView: View {
                         }
                     }
                     .onChange(of: selectedZoneId) { _, newValue in
-                        loadStatistics(zoneId: newValue)
+                        loadStatistics(zoneId: newValue, forceRefresh: false)
                     }
                 }
             }
@@ -90,13 +91,30 @@ struct EmailStatisticsView: View {
             }
         }
         .navigationTitle("Email Statistics")
+        .refreshable {
+            await refreshStatistics()
+        }
         .task {
-            loadStatistics(zoneId: selectedZoneId)
+            loadStatistics(zoneId: selectedZoneId, forceRefresh: false)
         }
     }
     
-    private func loadStatistics(zoneId: String) {
+    private func refreshStatistics() async {
+        loadStatistics(zoneId: selectedZoneId, forceRefresh: true)
+        // Wait for the loading to complete
+        while isLoading {
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+        }
+    }
+    
+    private func loadStatistics(zoneId: String, forceRefresh: Bool) {
         guard let zone = cloudflareClient.zones.first(where: { $0.zoneId == zoneId }) else { return }
+        
+        // Check cache first if not forcing refresh
+        if !forceRefresh, let cachedStats = statisticsCache[zoneId] {
+            statistics = cachedStats
+            return
+        }
         
         isLoading = true
         errorMessage = nil
@@ -106,6 +124,7 @@ struct EmailStatisticsView: View {
                 let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
                 await MainActor.run {
                     self.statistics = stats
+                    self.statisticsCache[zoneId] = stats
                     self.isLoading = false
                 }
             } catch {
