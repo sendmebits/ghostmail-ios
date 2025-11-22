@@ -66,6 +66,16 @@ class StatisticsCache {
         let age = Date().timeIntervalSince(timestamp)
         return age <= maxCacheAge
     }
+    
+    /// Get statistics for a specific email address from cache
+    func loadForEmail(_ emailAddress: String) -> (statistic: EmailStatistic?, isStale: Bool)? {
+        guard let cached = load() else {
+            return nil
+        }
+        
+        let statistic = cached.statistics.first { $0.emailAddress == emailAddress }
+        return (statistic, cached.isStale)
+    }
 }
 
 // MARK: - Codable wrapper for EmailStatistic

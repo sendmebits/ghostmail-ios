@@ -269,7 +269,26 @@ struct EmailDetailView: View {
                                 .buttonStyle(.plain)
                             }
                             .padding(.horizontal)
-                        } else if !isLoadingStatistics {
+                        } else if isLoadingStatistics {
+                            // Placeholder skeleton while loading
+                            VStack(spacing: 0) {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.secondary.opacity(0.1))
+                                    .frame(height: 160)
+                                    .overlay(
+                                        ProgressView()
+                                    )
+                                    .padding(.vertical, 8)
+                            }
+                            .padding()
+                            .background(.regularMaterial)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(.quaternary, lineWidth: 0.5)
+                            )
+                            .padding(.horizontal)
+                        } else {
                             VStack(spacing: 12) {
                                 Image(systemName: "chart.bar.xaxis")
                                     .font(.system(size: 40))
@@ -432,7 +451,12 @@ struct EmailDetailView: View {
                 }
             }
             .refreshable {
-                // Only refresh the website icon for this entry
+                // Refresh statistics (bypass cache for fresh data)
+                if showAnalytics {
+                    await loadStatistics(useCache: false)
+                }
+                
+                // Refresh the website icon
                 guard !email.website.isEmpty, cloudflareClient.shouldShowWebsiteLogos else { return }
                 isLoadingIcon = true
                 websiteUIImage = nil
@@ -568,16 +592,45 @@ struct EmailDetailView: View {
         }
     }
     
-    private func loadStatistics() async {
+    private func loadStatistics(useCache: Bool = true) async {
         guard showAnalytics, let zone = aliasZone else {
             emailStatistic = nil
             return
+        }
+        
+        // Try to load from cache first for instant display
+        if useCache, let cached = StatisticsCache.shared.loadForEmail(email.emailAddress) {
+            await MainActor.run {
+                self.emailStatistic = cached.statistic
+            }
+            
+            // If cache is fresh (< 24 hours), we're done
+            if !cached.isStale {
+                return
+            }
+            // If stale, continue to fetch fresh data in background
         }
         
         isLoadingStatistics = true
         
         do {
             let allStats = try await cloudflareClient.fetchEmailStatistics(for: zone)
+            
+            // Update the cache with fresh data for all emails in this zone
+            // This benefits both the list view and other detail views
+            if !allStats.isEmpty {
+                // Merge with existing cache to preserve data from other zones
+                if let existingCache = StatisticsCache.shared.load() {
+                    // Remove old stats for this zone and add new ones
+                    let otherZoneStats = existingCache.statistics.filter { stat in
+                        !allStats.contains { $0.emailAddress == stat.emailAddress }
+                    }
+                    StatisticsCache.shared.save(otherZoneStats + allStats)
+                } else {
+                    StatisticsCache.shared.save(allStats)
+                }
+            }
+            
             // Find the statistic for this specific email
             let stat = allStats.first { $0.emailAddress == email.emailAddress }
             
