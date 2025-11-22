@@ -59,13 +59,46 @@ class CloudflareClient: ObservableObject {
         self.apiToken = (KeychainHelper.shared.readString(service: "ghostmail", account: "apiToken") ?? apiToken).trimmingCharacters(in: .whitespacesAndNewlines)
         self.isAuthenticated = defaults.bool(forKey: "isAuthenticated")
 
-        // Load multi-zone configuration if present; migrate from single if needed
-        if let data = defaults.data(forKey: "cloudflareZones"),
-           let decoded = try? JSONDecoder().decode([CloudflareZone].self, from: data) {
-            self.zones = decoded
+        // Load multi-zone configuration
+        if let data = defaults.data(forKey: "cloudflareZones") {
+            // Try to decode as secure persisted zones first
+            if let persistedZones = try? JSONDecoder().decode([PersistedCloudflareZone].self, from: data) {
+                self.zones = persistedZones.map { pZone in
+                    // Load token from Keychain
+                    var token = KeychainHelper.shared.readString(service: "ghostmail", account: "apiToken_\(pZone.zoneId)") ?? ""
+                    
+                    // Fallback: If token is missing and this is the primary zone, use the primary token
+                    if token.isEmpty && pZone.zoneId == self.zoneId {
+                        token = self.apiToken
+                    }
+                    
+                    return CloudflareZone(
+                        accountId: pZone.accountId,
+                        zoneId: pZone.zoneId,
+                        apiToken: token,
+                        accountName: pZone.accountName,
+                        domainName: pZone.domainName,
+                        subdomains: pZone.subdomains,
+                        subdomainsEnabled: pZone.subdomainsEnabled
+                    )
+                }
+                // Ensure all tokens are synced to expected Keychain locations
+                // This is important for fixing any partial migration states
+                persistZones()
+            } 
+            // Fallback: Try to decode as old insecure zones (migration path)
+            else if let oldZones = try? JSONDecoder().decode([CloudflareZone].self, from: data) {
+                print("Migrating zones to secure storage...")
+                self.zones = oldZones
+                // Trigger persistence which will now save tokens to Keychain and strip them from UserDefaults
+                persistZones()
+            } else {
+                self.zones = []
+            }
         } else {
             self.zones = []
         }
+        
         // Migration: if we have single-zone credentials but no zones array, create it
         if !self.accountId.isEmpty, !self.zoneId.isEmpty, !self.apiToken.isEmpty, self.zones.isEmpty {
             // We'll fill accountName/domainName after fetch
@@ -999,10 +1032,34 @@ class CloudflareClient: ObservableObject {
         }
     }
 
-    // Persist zones to UserDefaults
+    // Persist zones to UserDefaults (excluding sensitive tokens)
     private func persistZones() {
-        if let data = try? JSONEncoder().encode(zones) {
+        // Convert to persisted format (excluding tokens)
+        let persistedZones = zones.map { zone in
+            PersistedCloudflareZone(
+                accountId: zone.accountId,
+                zoneId: zone.zoneId,
+                accountName: zone.accountName,
+                domainName: zone.domainName,
+                subdomains: zone.subdomains,
+                subdomainsEnabled: zone.subdomainsEnabled
+            )
+        }
+        
+        if let data = try? JSONEncoder().encode(persistedZones) {
             UserDefaults.standard.set(data, forKey: "cloudflareZones")
+        }
+        
+        // Save tokens to Keychain for each zone
+        for zone in zones {
+            // Skip saving if token is empty (though it shouldn't be for a valid zone)
+            guard !zone.apiToken.isEmpty else { continue }
+            KeychainHelper.shared.save(zone.apiToken, service: "ghostmail", account: "apiToken_\(zone.zoneId)")
+            
+            // If this is the primary zone, also save to the primary key
+            if zone.zoneId == self.zoneId {
+                KeychainHelper.shared.save(zone.apiToken, service: "ghostmail", account: "apiToken")
+            }
         }
     }
 
@@ -1011,6 +1068,9 @@ class CloudflareClient: ObservableObject {
     // otherwise perform a full logout.
     @MainActor
     func removeZone(zoneId removedZoneId: String) {
+        // Remove token from Keychain
+        KeychainHelper.shared.delete(service: "ghostmail", account: "apiToken_\(removedZoneId)")
+        
         // Remove from zones list first
         zones.removeAll { $0.zoneId == removedZoneId }
         persistZones()
@@ -1385,4 +1445,14 @@ struct CloudflareEmailRule {
     let zoneId: String
     
     // Add any other properties needed for email rules
+}
+
+// Internal struct for persisting zones without tokens
+struct PersistedCloudflareZone: Codable {
+    var accountId: String
+    var zoneId: String
+    var accountName: String
+    var domainName: String
+    var subdomains: [String]
+    var subdomainsEnabled: Bool
 } 

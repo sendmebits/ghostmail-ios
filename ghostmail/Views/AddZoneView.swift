@@ -5,9 +5,9 @@ struct AddZoneView: View {
     var onSuccess: () -> Void = {}
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Environment(\.modelContext) private var modelContext
-    @AppStorage("addZone.accountId") private var accountId = ""
-    @AppStorage("addZone.zoneId") private var zoneId = ""
-    @AppStorage("addZone.apiToken") private var apiToken = ""
+    @State private var accountId = ""
+    @State private var zoneId = ""
+    @State private var apiToken = ""
     @State private var useQuickAuth = false
     @State private var quickAuthString = ""
     @State private var isLoading = false

@@ -6,9 +6,9 @@ import Foundation
 struct AuthenticationView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Environment(\.modelContext) private var modelContext
-    @AppStorage("accountId") private var accountId = ""
-    @AppStorage("zoneId") private var zoneId = ""
-    @AppStorage("apiToken") private var apiToken = ""
+    @State private var accountId = ""
+    @State private var zoneId = ""
+    @State private var apiToken = ""
     @State private var useQuickAuth = false
     @State private var quickAuthString = ""
     @State private var isLoading = false

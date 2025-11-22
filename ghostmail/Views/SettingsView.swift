@@ -27,15 +27,7 @@ struct SettingsView: View {
     @State private var skippedDomains: [String] = []
     @State private var showSkippedAlert = false
     @Environment(\.openURL) private var openURL
-    @State private var showAddZoneSheet = false {
-        didSet {
-            if showAddZoneSheet {
-                UserDefaults.standard.set("", forKey: "addZone.accountId")
-                UserDefaults.standard.set("", forKey: "addZone.zoneId")
-                UserDefaults.standard.set("", forKey: "addZone.apiToken")
-            }
-        }
-    }
+    @State private var showAddZoneSheet = false
     @AppStorage("defaultZoneId") private var defaultZoneId: String = ""
     @AppStorage("defaultDomain") private var defaultDomain: String = ""
     @State private var zoneToRemove: CloudflareClient.CloudflareZone? = nil
