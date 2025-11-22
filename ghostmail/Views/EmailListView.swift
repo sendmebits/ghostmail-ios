@@ -305,38 +305,36 @@ struct EmailListView: View {
         await refreshEmailRules()
     }
     
-    var body: some View {
+    private var content: some View {
         ZStack {
-            Group {
-                if isLoading && isInitialLoad {
-                    ProgressView()
-                } else if sortedEmails.isEmpty {
-                    // Wrap empty state in a ScrollView so pull-to-refresh works even when empty
-                    ScrollView {
-                        VStack {
-                            emptyStateView
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if isLoading && isInitialLoad {
+                ProgressView()
+            } else if sortedEmails.isEmpty {
+                // Wrap empty state in a ScrollView so pull-to-refresh works even when empty
+                ScrollView {
+                    VStack {
+                        emptyStateView
                     }
-                    .refreshable {
-                        await refreshAction()
-                    }
-                } else {
-                    List {
-                        ForEach(sortedEmails, id: \.id) { email in
-                            EmailListRowLink(email: email) { copied in
-                                showToastWithTimer(copied)
-                            }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .refreshable {
+                    await refreshAction()
+                }
+            } else {
+                List {
+                    ForEach(sortedEmails, id: \.id) { email in
+                        EmailListRowLink(email: email) { copied in
+                            showToastWithTimer(copied)
                         }
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .navigationDestination(for: EmailAlias.self) { email in
-                        EmailDetailView(email: email, needsRefresh: $needsRefresh)
-                    }
-                    .refreshable {
-                        await refreshAction()
-                    }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .navigationDestination(for: EmailAlias.self) { email in
+                    EmailDetailView(email: email, needsRefresh: $needsRefresh)
+                }
+                .refreshable {
+                    await refreshAction()
                 }
             }
             // Floating Action Button
@@ -371,6 +369,10 @@ struct EmailListView: View {
                 }
             }
         }
+    }
+
+    var body: some View {
+        content
     .background(Color(.systemBackground).ignoresSafeArea())
     .preferredColorScheme(themeColorScheme)
         .toolbar {

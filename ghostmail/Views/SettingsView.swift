@@ -727,6 +727,9 @@ private struct SettingsListContentView: View {
     var body: some View {
         List {
             AboutSectionView()
+            
+            StatisticsSectionView()
+            
             CloudflareAccountSectionView()
             PrimaryZoneSectionView(
                 zoneToRemove: $zoneToRemove,
@@ -1273,6 +1276,25 @@ private struct SendLogsSectionView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+private struct StatisticsSectionView: View {
+    @EnvironmentObject private var cloudflareClient: CloudflareClient
+    
+    var body: some View {
+        Section {
+            NavigationLink {
+                EmailStatisticsView(initialZoneId: cloudflareClient.zoneId)
+            } label: {
+                Label("Email Statistics", systemImage: "chart.bar")
+            }
+        } header: {
+            Text("Analytics")
+                .textCase(.uppercase)
+                .font(.system(.footnote, design: .rounded))
+                .foregroundStyle(.secondary)
         }
     }
 }

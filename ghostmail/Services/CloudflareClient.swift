@@ -471,6 +471,180 @@ class CloudflareClient: ObservableObject {
         return response.result
     }
     
+    // MARK: - Analytics
+    
+    private struct GraphQLResponse<T: Decodable>: Decodable {
+        let data: T?
+        let errors: [GraphQLError]?
+    }
+    
+    private struct GraphQLError: Decodable {
+        let message: String
+    }
+    
+    private struct EmailRoutingAnalyticsData: Decodable {
+        let viewer: Viewer
+    }
+    
+    private struct Viewer: Decodable {
+        let zones: [ZoneAnalytics]
+    }
+    
+    private struct ZoneAnalytics: Decodable {
+        let emailRoutingAdaptive: [EmailLogEntry]
+    }
+    
+    private struct EmailLogEntry: Decodable {
+        let to: String
+        let datetime: String
+    }
+
+    func fetchEmailStatistics(for zone: CloudflareZone, days: Int = 30) async throws -> [EmailStatistic] {
+        let url = URL(string: "\(baseURL)/graphql")!
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        
+        // Cloudflare raw logs have a 24-hour limit per query.
+        // We'll fetch in 24-hour chunks in parallel.
+        
+        let now = Date()
+        var tasks: [Task<[String: [Date]], Error>] = []
+        
+        // Limit to 7 days for performance, or use the requested days if small
+        let daysToFetch = min(days, 7)
+        
+        for i in 0..<daysToFetch {
+            let endDate = Calendar.current.date(byAdding: .day, value: -i, to: now)!
+            let startDate = Calendar.current.date(byAdding: .day, value: -1, to: endDate)!
+            
+            // Format dates outside the Task to avoid capturing non-Sendable ISO8601DateFormatter
+            let startDateString = isoFormatter.string(from: startDate)
+            let endDateString = isoFormatter.string(from: endDate)
+            
+            let task = Task {
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.allHTTPHeaderFields = [
+                    "Authorization": "Bearer \(zone.apiToken)",
+                    "Content-Type": "application/json"
+                ]
+                
+                let query = """
+                query Viewer {
+                  viewer {
+                    zones(filter: {zoneTag: "\(zone.zoneId)"}) {
+                      emailRoutingAdaptive(
+                        filter: {datetime_geq: "\(startDateString)", datetime_leq: "\(endDateString)"},
+                        limit: 10000
+                      ) {
+                        to
+                        datetime
+                      }
+                    }
+                  }
+                }
+                """
+                
+                let body = ["query": query]
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                
+                let (data, response) = try await URLSession.shared.data(for: request)
+                
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    throw CloudflareError(message: "Failed to fetch analytics chunk")
+                }
+                
+                let graphQLResponse = try JSONDecoder().decode(GraphQLResponse<EmailRoutingAnalyticsData>.self, from: data)
+                
+                if let errors = graphQLResponse.errors, let firstError = errors.first {
+                    // Ignore "time range too large" errors if they happen for some reason, just return empty
+                    print("GraphQL Error: \(firstError.message)")
+                    return [String: [Date]]()
+                }
+                
+                guard let logs = graphQLResponse.data?.viewer.zones.first?.emailRoutingAdaptive else {
+                    return [String: [Date]]()
+                }
+                
+                // Parse dates inside the task
+                let taskIsoFormatter = ISO8601DateFormatter()
+                taskIsoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                
+                return logs.reduce(into: [String: [Date]]()) { result, log in
+                    if let date = taskIsoFormatter.date(from: log.datetime) {
+                        result[log.to, default: []].append(date)
+                    } else {
+                        // Fallback for dates without fractional seconds
+                        let fallbackFormatter = ISO8601DateFormatter()
+                        fallbackFormatter.formatOptions = [.withInternetDateTime]
+                        if let date = fallbackFormatter.date(from: log.datetime) {
+                            result[log.to, default: []].append(date)
+                        }
+                    }
+                }
+            }
+            tasks.append(task)
+        }
+        
+        var totalDates: [String: [Date]] = [:]
+        
+        for task in tasks {
+            do {
+                let chunkDates = try await task.value
+                for (email, dates) in chunkDates {
+                    totalDates[email, default: []].append(contentsOf: dates)
+                }
+            } catch {
+                print("Failed to fetch chunk: \(error)")
+                // Continue with other chunks
+            }
+        }
+        
+        return totalDates.map { EmailStatistic(emailAddress: $0.key, count: $0.value.count, receivedDates: $0.value.sorted(by: >)) }
+            .sorted { $0.count > $1.count }
+    }
+    
+    func validateAnalyticsPermission(for zone: CloudflareZone) async throws -> Bool {
+        let url = URL(string: "\(baseURL)/graphql")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.allHTTPHeaderFields = [
+            "Authorization": "Bearer \(zone.apiToken)",
+            "Content-Type": "application/json"
+        ]
+        
+        // Lightweight query to check permissions
+        let query = """
+        query Viewer {
+          viewer {
+            zones(filter: {zoneTag: "\(zone.zoneId)"}) {
+              emailRoutingAdaptive(limit: 1) {
+                to
+              }
+            }
+          }
+        }
+        """
+        
+        let body = ["query": query]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+             return false
+        }
+        
+        let graphQLResponse = try JSONDecoder().decode(GraphQLResponse<EmailRoutingAnalyticsData>.self, from: data)
+        
+        if let errors = graphQLResponse.errors, !errors.isEmpty {
+            // If we get errors, likely permission denied or invalid query due to permissions
+            return false
+        }
+        
+        return true
+    }
+
     @MainActor
     func updateCredentials(accountId: String, zoneId: String, apiToken: String) {
         self.accountId = accountId.trimmingCharacters(in: .whitespacesAndNewlines)
