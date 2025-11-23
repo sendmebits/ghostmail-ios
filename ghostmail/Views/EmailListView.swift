@@ -422,7 +422,8 @@ struct EmailListView: View {
                                     }
                                 )
                                 .frame(height: 180)
-                                .padding(.top, -8)
+                                .padding(.top, -28)
+                                .padding(.bottom, -8)
                                 .opacity(isLoadingStatistics && isUsingCachedStatistics ? 0.7 : 1.0)
                             } header: {
                                 HStack {
@@ -437,7 +438,7 @@ struct EmailListView: View {
                                             .font(.caption2)
                                         Text("\(emailStatistics.reduce(0) { $0 + $1.count })")
                                             .font(.system(.body, design: .rounded, weight: .bold))
-                                            .foregroundStyle(.white)
+                                            .foregroundStyle(.primary)
                                     }
                                 }
                             }
@@ -453,7 +454,7 @@ struct EmailListView: View {
                                             ProgressView()
                                         )
                                 }
-                                .padding(.top, -8)
+                                .padding(.top, -28)
                             } header: {
                                 HStack {
                                     Text("7-Day Trend")

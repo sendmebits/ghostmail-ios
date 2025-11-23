@@ -107,7 +107,8 @@ struct EmailTrendChartView: View {
             }
             .frame(height: 140)
         }
-        .padding(.vertical, 8)
+        .padding(.top, showTotalBadge ? 8 : 0)
+        .padding(.bottom, showTotalBadge ? 8 : 0)
     }
     
     private func dayLabel(for date: Date) -> String {
