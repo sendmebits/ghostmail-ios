@@ -45,6 +45,20 @@ struct EmailStatisticsDetailView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .padding(.vertical, 2)
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button {
+                                    UIPasteboard.general.string = detail.from
+                                } label: {
+                                    Text("Copy Email Address")
+                                    Image(systemName: "doc.on.doc")
+                                }
+                            }
+                            .onLongPressGesture {
+                                UIPasteboard.general.string = detail.from
+                                let generator = UIImpactFeedbackGenerator(style: .light)
+                                generator.impactOccurred()
+                            }
                         }
                     } header: {
                         Text(formatDateHeader(group.date))
