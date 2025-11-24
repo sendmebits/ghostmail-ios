@@ -1203,6 +1203,12 @@ private struct SettingsSectionView: View {
             Toggle("Show Email Analytics", isOn: $showAnalytics)
                 .tint(.accentColor)
             
+            NavigationLink {
+                SMTPSettingsView()
+            } label: {
+                Text("SMTP Server")
+            }
+            
             if !iCloudSyncEnabled {
                 Button(role: .destructive) {
                     showDeleteICloudDataConfirmation = true

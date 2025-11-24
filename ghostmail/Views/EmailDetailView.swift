@@ -32,6 +32,7 @@ struct EmailDetailView: View {
     @State private var emailStatistic: EmailStatistic?
     @State private var isLoadingStatistics = false
     @State private var showStatisticsDetail = false
+    @State private var showEmailCompose = false
     
     init(email: EmailAlias, needsRefresh: Binding<Bool>) {
         self.email = email
@@ -231,15 +232,29 @@ struct EmailDetailView: View {
                                     }
                             }
                             
-                            Button {
-                                copyToClipboard(email.emailAddress)
-                            } label: {
-                                Label("Copy Address", systemImage: "doc.on.doc")
-                                    .font(.system(.subheadline, design: .rounded))
+                            HStack(spacing: 12) {
+                                Button {
+                                    copyToClipboard(email.emailAddress)
+                                } label: {
+                                    Label("Copy Address", systemImage: "doc.on.doc")
+                                        .font(.system(.subheadline, design: .rounded))
+                                }
+                                .buttonStyle(.bordered)
+                                .buttonBorderShape(.capsule)
+                                .tint(.accentColor)
+                                
+                                if SMTPService.shared.hasSettings() {
+                                    Button {
+                                        showEmailCompose = true
+                                    } label: {
+                                        Label("Send Mail", systemImage: "paperplane.fill")
+                                            .font(.system(.subheadline, design: .rounded))
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .buttonBorderShape(.capsule)
+                                    .tint(.accentColor)
+                                }
                             }
-                            .buttonStyle(.bordered)
-                            .buttonBorderShape(.capsule)
-                            .tint(.accentColor)
                             .opacity(isEditing ? 0 : 1)
                         }
                     }
@@ -576,6 +591,9 @@ struct EmailDetailView: View {
             if let statistic = emailStatistic {
                 EmailStatisticsDetailView(statistic: statistic)
             }
+        }
+        .sheet(isPresented: $showEmailCompose) {
+            EmailComposeView(fromEmail: email.emailAddress)
         }
         .task {
             if showAnalytics {
