@@ -249,7 +249,7 @@
 				CLOUDKIT_CONTAINER_ENVIRONMENT = Production;
 				CODE_SIGN_ENTITLEMENTS = ghostmail/ghostmail.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "\"ghostmail/Preview Content\"";
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
@@ -287,7 +287,7 @@
 				CLOUDKIT_CONTAINER_ENVIRONMENT = Production;
 				CODE_SIGN_ENTITLEMENTS = ghostmail/ghostmail.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_ASSET_PATHS = "\"ghostmail/Preview Content\"";
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
@@ -445,7 +445,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = GhostMailShareExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = GhostMailShareExtension;
@@ -474,7 +474,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = GhostMailShareExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = GhostMailShareExtension;
