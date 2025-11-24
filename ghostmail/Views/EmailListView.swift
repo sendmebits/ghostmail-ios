@@ -21,6 +21,7 @@ struct EmailListView: View {
     @State private var sortOrder: SortOrder = .cloudflareOrder
     @Query private var emailAliases: [EmailAlias]
     @State private var showingCreateSheet = false
+    @State private var showingComposeSheet = false
     @State private var showingSettings = false
     @State private var isLoading = false
     @State private var isInitialLoad = true
@@ -491,9 +492,19 @@ struct EmailListView: View {
                 Spacer()
                 HStack {
                     Spacer()
-                    Button(action: {
-                        showingCreateSheet = true
-                    }) {
+                    Menu {
+                        Button {
+                            showingComposeSheet = true
+                        } label: {
+                            Label("Send Mail", systemImage: "paperplane")
+                        }
+                        
+                        Button {
+                            showingCreateSheet = true
+                        } label: {
+                            Label("Create Alias", systemImage: "plus")
+                        }
+                    } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 32, weight: .medium))
                             .foregroundColor(.white)
@@ -501,6 +512,8 @@ struct EmailListView: View {
                             .background(Color.accentColor)
                             .clipShape(Circle())
                             .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
+                    } primaryAction: {
+                        showingCreateSheet = true
                     }
                     .padding()
                 }
@@ -589,6 +602,18 @@ struct EmailListView: View {
                 showFilterSheet: $showFilterSheet,
                 allDestinationAddresses: allDestinationAddresses,
                 allAvailableDomains: allAvailableDomains
+            )
+        }
+        .sheet(isPresented: $showingComposeSheet) {
+            let enabledAliases = emailAliases.filter { $0.isEnabled }.map { $0.emailAddress }.sorted()
+            let lastUsedEmail = UserDefaults.standard.string(forKey: "lastUsedFromEmail")
+            let defaultEmail = lastUsedEmail != nil && enabledAliases.contains(lastUsedEmail!) 
+                ? lastUsedEmail! 
+                : (enabledAliases.first ?? "")
+            
+            EmailComposeView(
+                fromEmail: defaultEmail,
+                availableEmails: enabledAliases
             )
         }
         .sheet(isPresented: $showingCreateSheet) {
