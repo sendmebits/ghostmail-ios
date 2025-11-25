@@ -20,13 +20,15 @@ Ghost Mail is a free and open-source iPhone app to manage email alias' for Cloud
 - 🔒 Protects your main email from being exposed in breaches
 - 🛠️ Verifiable 100% open-source software with no paywalls
 - 📋 View all of your email aliases while offline
-- 📧 Add multiple email domains
+- 📨 Add multiple email domains
 - 💾 Sync to iCloud + CSV import/export
+- 📧 Send email from email aliases
+- 📨 Email analytics and charts
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/c1fa8003-89de-42c1-8998-117be54d11a9" alt="Alias List" width="250">
-  <img src="https://github.com/user-attachments/assets/0e87e6e7-e419-4e3c-b69f-53957ff7ffa7" alt="Create Alias" width="250">
-  <img src="https://github.com/user-attachments/assets/0bbf15cb-9b54-4337-a7fa-ff5e12e0e0a2" alt="Email Alias" width="250">
+  <img src="https://github.com/user-attachments/assets/671ba0ab-f795-44c6-8916-4c01d71585f5" alt="Alias List" width="250">
+  <img src="https://github.com/user-attachments/assets/242a78f4-5535-49da-8b1e-226bc49651b5" alt="Email Alias" width="250">
+  <img src="https://github.com/user-attachments/assets/8d748a23-ac4f-4817-8ad1-8f7ddb1ea077" alt="Create Alias" width="250">
 </p>
 
 # Pre-requisites
@@ -46,7 +48,8 @@ Token Permissions:
 1. Account > Email Routing Addresses > **Read**
 2. Zone > Email Routing Rules > **Edit**
 3. Zone > Zone Settings > **Read**
-4. Zone > DNS > **Read**  _(OPTIONAL: Only required subdomains are going to be used)_
+4. Zone > Analytics > **Read**  _(OPTIONAL but recommended: Required for email statistcs and charts)_
+5. Zone > DNS > **Read**  _(OPTIONAL: Only required subdomains are going to be used)_
 
 
 # Use the CSV import feature to quickly bulk add new email alias entries
