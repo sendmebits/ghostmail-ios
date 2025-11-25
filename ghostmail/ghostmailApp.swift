@@ -19,10 +19,12 @@ struct ghostmailApp: App {
     @StateObject private var deepLinkRouter = DeepLinkRouter()
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
     @AppStorage("userIdentifier") private var userIdentifier: String = ""
+    @AppStorage("showAnalytics") private var showAnalytics: Bool = false
     
     // Background update state
     @State private var lastUpdateCheck: Date = .distantPast
     @State private var updateTimer: Timer?
+    @State private var isUpdating: Bool = false
     private let updateInterval: TimeInterval = 300 // 5 minutes
     
     init() {
@@ -195,12 +197,6 @@ struct ghostmailApp: App {
                         appDelegate.pendingCreateQuickAction = false
                     }
                     
-                    // Schedule initial background check with a slight delay to not impact startup performance
-                    Task {
-                        try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds delay
-                        await performBackgroundUpdateIfNeeded()
-                    }
-                    
                     // Start the periodic timer
                     startUpdateTimer()
                     
@@ -311,22 +307,73 @@ struct ghostmailApp: App {
     
     @MainActor
     private func performBackgroundUpdateIfNeeded() async {
+        // Prevent concurrent executions
         guard cloudflareClient.isAuthenticated else { return }
+        guard !isUpdating else {
+            print("Background update: Skipped (already in progress)")
+            return
+        }
         
         let now = Date()
         let timeSinceLastUpdate = now.timeIntervalSince(lastUpdateCheck)
         
         if timeSinceLastUpdate >= updateInterval {
+            // Set flags immediately to prevent race conditions
+            isUpdating = true
+            lastUpdateCheck = now
+            
             print("Background update: Starting check (last check was \(Int(timeSinceLastUpdate))s ago)")
             do {
+                // Sync email rules from Cloudflare
                 try await cloudflareClient.syncEmailRules(modelContext: modelContainer.mainContext)
-                lastUpdateCheck = now
+                
+                // Also sync statistics if analytics are enabled
+                if showAnalytics {
+                    await syncEmailStatisticsInBackground()
+                }
+                
                 print("Background update: Completed successfully")
             } catch {
                 print("Background update: Failed with error: \(error)")
             }
+            
+            isUpdating = false
         } else {
             // print("Background update: Skipped (too soon, \(Int(updateInterval - timeSinceLastUpdate))s remaining)")
+        }
+    }
+    
+    // MARK: - Background Statistics Sync
+    
+    /// Sync email statistics in the background and update the cache
+    /// This is lightweight and doesn't affect the UI
+    private func syncEmailStatisticsInBackground() async {
+        print("Background update: Syncing email statistics...")
+        
+        do {
+            var allStats: [EmailStatistic] = []
+            
+            // Fetch statistics for all zones
+            for zone in cloudflareClient.zones {
+                do {
+                    let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
+                    allStats.append(contentsOf: stats)
+                } catch {
+                    print("Background update: Failed to fetch statistics for zone \(zone.zoneId): \(error)")
+                    // Continue with other zones even if one fails
+                }
+            }
+            
+            // Update the cache with fresh statistics
+            if !allStats.isEmpty {
+                StatisticsCache.shared.save(allStats)
+                print("Background update: Statistics cache updated with \(allStats.count) email addresses")
+            } else {
+                print("Background update: No statistics to cache")
+            }
+        } catch {
+            print("Background update: Statistics sync failed: \(error)")
+            // Don't throw - statistics sync is optional and shouldn't break the main update
         }
     }
 }
