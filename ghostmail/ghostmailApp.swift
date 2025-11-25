@@ -350,30 +350,25 @@ struct ghostmailApp: App {
     private func syncEmailStatisticsInBackground() async {
         print("Background update: Syncing email statistics...")
         
-        do {
-            var allStats: [EmailStatistic] = []
-            
-            // Fetch statistics for all zones
-            for zone in cloudflareClient.zones {
-                do {
-                    let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
-                    allStats.append(contentsOf: stats)
-                } catch {
-                    print("Background update: Failed to fetch statistics for zone \(zone.zoneId): \(error)")
-                    // Continue with other zones even if one fails
-                }
+        var allStats: [EmailStatistic] = []
+        
+        // Fetch statistics for all zones
+        for zone in cloudflareClient.zones {
+            do {
+                let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
+                allStats.append(contentsOf: stats)
+            } catch {
+                print("Background update: Failed to fetch statistics for zone \(zone.zoneId): \(error)")
+                // Continue with other zones even if one fails
             }
-            
-            // Update the cache with fresh statistics
-            if !allStats.isEmpty {
-                StatisticsCache.shared.save(allStats)
-                print("Background update: Statistics cache updated with \(allStats.count) email addresses")
-            } else {
-                print("Background update: No statistics to cache")
-            }
-        } catch {
-            print("Background update: Statistics sync failed: \(error)")
-            // Don't throw - statistics sync is optional and shouldn't break the main update
+        }
+        
+        // Update the cache with fresh statistics
+        if !allStats.isEmpty {
+            StatisticsCache.shared.save(allStats)
+            print("Background update: Statistics cache updated with \(allStats.count) email addresses")
+        } else {
+            print("Background update: No statistics to cache")
         }
     }
 }

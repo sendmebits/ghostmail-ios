@@ -54,6 +54,7 @@ struct EmailListView: View {
     @AppStorage("showAnalytics") private var showAnalytics: Bool = false
     @State private var selectedDate: Date?
     @State private var showDailyEmails = false
+    @State private var lastCacheCheckTime: Date = .distantPast
 
     // Derived UI state
     private var isFilterActive: Bool {
@@ -328,6 +329,11 @@ struct EmailListView: View {
         
         // Try to load from cache first for instant display
         if useCache, let cached = StatisticsCache.shared.load() {
+            // Update last check time
+            if let cacheTimestamp = UserDefaults.standard.object(forKey: "EmailStatisticsCacheTimestamp") as? Date {
+                lastCacheCheckTime = cacheTimestamp
+            }
+            
             await MainActor.run {
                 self.unfilteredStatistics = cached.statistics
                 self.emailStatistics = filterStatistics(cached.statistics)
@@ -391,6 +397,41 @@ struct EmailListView: View {
         }
         
         return filtered
+    }
+    
+    /// Check if cache has been updated since we last loaded and reload if so
+    private func checkAndReloadIfCacheUpdated() {
+        guard showAnalytics else { return }
+        
+        // Get cache timestamp
+        guard let cacheTimestamp = UserDefaults.standard.object(forKey: "EmailStatisticsCacheTimestamp") as? Date else {
+            return
+        }
+        
+        // If cache has been updated since we last checked, reload from cache
+        if cacheTimestamp > lastCacheCheckTime {
+            print("Statistics cache updated, reloading data...")
+            lastCacheCheckTime = cacheTimestamp
+            
+            Task {
+                await loadStatisticsFromCache()
+            }
+        }
+    }
+    
+    /// Load statistics from cache only (used when cache is updated by background sync)
+    private func loadStatisticsFromCache() async {
+        guard showAnalytics else { return }
+        
+        guard let cached = StatisticsCache.shared.load() else {
+            return
+        }
+        
+        await MainActor.run {
+            self.unfilteredStatistics = cached.statistics
+            self.emailStatistics = filterStatistics(cached.statistics)
+            print("Statistics refreshed from updated cache (\(cached.statistics.count) addresses)")
+        }
     }
     
     private var content: some View {
@@ -670,6 +711,10 @@ struct EmailListView: View {
                 }
                 await refreshEmailRules()
             }
+        }
+        .onAppear {
+            // Check if cache has been updated since we last loaded
+            checkAndReloadIfCacheUpdated()
         }
     }
 }
