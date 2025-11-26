@@ -716,6 +716,10 @@ struct EmailListView: View {
             // Check if cache has been updated since we last loaded
             checkAndReloadIfCacheUpdated()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .statisticsCacheUpdated)) { _ in
+            // Cache was updated by background sync, reload it immediately
+            checkAndReloadIfCacheUpdated()
+        }
     }
 }
 

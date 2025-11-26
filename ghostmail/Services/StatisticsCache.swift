@@ -1,5 +1,10 @@
 import Foundation
 
+// Notification posted when statistics cache is updated
+extension Notification.Name {
+    static let statisticsCacheUpdated = Notification.Name("statisticsCacheUpdated")
+}
+
 /// Simple cache for email statistics to improve app launch performance
 ///
 /// Caching Strategy:
@@ -25,6 +30,9 @@ class StatisticsCache {
             let data = try encoder.encode(statistics.map { CachedStatistic(from: $0) })
             UserDefaults.standard.set(data, forKey: cacheKey)
             UserDefaults.standard.set(Date(), forKey: timestampKey)
+            
+            // Post notification to inform listeners that cache has been updated
+            NotificationCenter.default.post(name: .statisticsCacheUpdated, object: nil)
         } catch {
             print("Failed to cache statistics: \(error)")
         }
