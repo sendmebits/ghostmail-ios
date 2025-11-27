@@ -556,6 +556,13 @@ struct EmailListView: View {
                     } primaryAction: {
                         showingCreateSheet = true
                     }
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 0.5)
+                            .onEnded { _ in
+                                let generator = UIImpactFeedbackGenerator(style: .medium)
+                                generator.impactOccurred()
+                            }
+                    )
                     .padding()
                 }
             }
