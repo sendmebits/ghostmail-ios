@@ -103,6 +103,19 @@ final class IconCache {
                 // fetched icon via site crawl
                 return img
             }
+
+            // Fallback: if host doesn't start with www, try adding it.
+            // Some sites (like brevo.com) don't serve favicons on the root domain and don't redirect correctly.
+            if !host.lowercased().hasPrefix("www.") {
+                let wwwHost = "www." + host
+                if let (img, data) = try await fetchBestIconFromSite(host: wwwHost) {
+                    memoryCache.setObject(img, forKey: host as NSString)
+                    try? data.write(to: fileURL, options: .atomic)
+                    try? fileManager.removeItem(at: missingURL)
+                    negativeMemoryCache.removeObject(forKey: host as NSString)
+                    return img
+                }
+            }
         } catch {
             // ignore and fall back to other endpoints
             // site crawl failed
@@ -193,6 +206,18 @@ final class IconCache {
                 try? fileManager.removeItem(at: missingURL)
                 negativeMemoryCache.removeObject(forKey: host as NSString)
                 return img
+            }
+
+            // Fallback: try www. prefix
+            if !host.lowercased().hasPrefix("www.") {
+                let wwwHost = "www." + host
+                if let (img, data) = try await fetchBestIconFromSite(host: wwwHost) {
+                    memoryCache.setObject(img, forKey: host as NSString)
+                    try? data.write(to: fileURL, options: .atomic)
+                    try? fileManager.removeItem(at: missingURL)
+                    negativeMemoryCache.removeObject(forKey: host as NSString)
+                    return img
+                }
             }
         } catch {
             // ignore and fall back to other endpoints
