@@ -972,9 +972,11 @@ private struct FilterSheetView: View {
                             showFilterSheet = false
                         } label: {
                             Text("Apply Filters")
+                                .font(.headline)
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
                         .tint(.blue)
                         .disabled(pendingDestinationFilter == destinationFilter && pendingDomainFilter == domainFilter)
                         .padding(.horizontal)
