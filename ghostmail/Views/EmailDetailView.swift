@@ -380,66 +380,66 @@ struct EmailDetailView: View {
                         
                         // Website section
                         if isEditing || !email.website.isEmpty {
-                            DetailSection(title: "Website") {
-                                Group {
-                                    if isEditing {
-                                        TextField("Website", text: $tempWebsite)
-                                            .textInputAutocapitalization(.never)
-                                            .keyboardType(.URL)
-                                    } else {
-                                        Text(email.website)
-                                            .foregroundStyle(.secondary)
-                                    }
+                            if isEditing {
+                                DetailSection(title: "Website") {
+                                    TextField("Website", text: $tempWebsite)
+                                        .textInputAutocapitalization(.never)
+                                        .keyboardType(.URL)
                                 }
-                            }
-                            .contentShape(Rectangle())
-                            .contextMenu {
-                                // Open website in Safari when possible
-                                if let url = urlFrom(email.website) {
-                                    Button {
-                                        let generator = UIImpactFeedbackGenerator(style: .medium)
-                                        generator.impactOccurred()
-                                        UIApplication.shared.open(url)
-                                    } label: {
-                                        Text("Open Website")
-                                        Image(systemName: "safari")
-                                    }
+                            } else {
+                                DetailSection(title: "Website") {
+                                    Text(email.website)
+                                        .foregroundStyle(.secondary)
                                 }
+                                .contentShape(Rectangle())
+                                .contextMenu {
+                                    // Open website in Safari when possible
+                                    if let url = urlFrom(email.website) {
+                                        Button {
+                                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                                            generator.impactOccurred()
+                                            UIApplication.shared.open(url)
+                                        } label: {
+                                            Text("Open Website")
+                                            Image(systemName: "safari")
+                                        }
+                                    }
 
-                                // Copy website to clipboard
-                                Button {
-                                    if !email.website.isEmpty {
-                                        copyToClipboard(email.website)
+                                    // Copy website to clipboard
+                                    Button {
+                                        if !email.website.isEmpty {
+                                            copyToClipboard(email.website)
+                                        }
+                                    } label: {
+                                        Text("Copy Website")
+                                        Image(systemName: "doc.on.doc")
                                     }
-                                } label: {
-                                    Text("Copy Website")
-                                    Image(systemName: "doc.on.doc")
                                 }
                             }
                         }
                         
                         // Notes section
                         if isEditing || !email.notes.isEmpty {
-                            DetailSection(title: "Notes") {
-                                Group {
-                                    if isEditing {
-                                        TextField("Notes", text: $tempNotes, axis: .vertical)
-                                            .lineLimit(3...6)
-                                    } else {
-                                        Text(email.notes)
-                                            .foregroundStyle(.secondary)
-                                    }
+                            if isEditing {
+                                DetailSection(title: "Notes") {
+                                    TextField("Notes", text: $tempNotes, axis: .vertical)
+                                        .lineLimit(3...6)
                                 }
-                            }
-                            .contentShape(Rectangle())
-                            .contextMenu {
-                                Button {
-                                    if !email.notes.isEmpty {
-                                        copyToClipboard(email.notes)
+                            } else {
+                                DetailSection(title: "Notes") {
+                                    Text(email.notes)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .contentShape(Rectangle())
+                                .contextMenu {
+                                    Button {
+                                        if !email.notes.isEmpty {
+                                            copyToClipboard(email.notes)
+                                        }
+                                    } label: {
+                                        Text("Copy Notes")
+                                        Image(systemName: "doc.on.doc")
                                     }
-                                } label: {
-                                    Text("Copy Notes")
-                                    Image(systemName: "doc.on.doc")
                                 }
                             }
                         }
