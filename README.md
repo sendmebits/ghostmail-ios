@@ -66,6 +66,20 @@ CSV import notes:
 - If no configured zone matches the email's domain, the current primary zone is used as a fallback.
 - Imports will update and overwrite existing; review after importing.
 
+# Ghost Mail Privacy
+- Ghost Mail does not have any servers or infrastructure that it connects to.
+- The iPhone app connects directly to Cloudflare using your API token with minimal permissions, no middle man.
+- Cloudflare token is stored securely in the iPhone keychain.
+- SMTP credentials (if confgiured for sending email) are also securely stored in the iPhone keychain.
+- Email aliases and metadata (website, notes, date) are optionally synced to your iCloud account for backup purposes. This can be enabled/disabled in settings.
+
+# Privacy
+- Ghost Mail does not use any servers or external infrastructure; all actions happen directly from your device.
+- The app talks directly to Cloudflare using your API token with minimal required permissions; there is no intermediary service.
+- Your Cloudflare API token is stored securely in the iOS Keychain.
+- SMTP credentials (if you configure sending email) are also stored securely in the iOS Keychain.
+- Email aliases and their metadata (website, notes, dates) can optionally sync to your iCloud account for backup; you can turn this on or off in Settings at any time.
+
 # Why Use Email Aliases
 
 Email aliases protect your primary inbox from spam, phishing, and long-term exposure. Instead of handing out your real email, you give out an alias that can be turned off or deleted if abused. This helps maintain privacy and reduces the risk of account compromise.
