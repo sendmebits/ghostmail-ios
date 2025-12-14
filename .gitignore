@@ -1,17 +1,21 @@
 # General
 .DS_Store
 .idea/
-build/
 .vscode/
 .build/
 .cursor/
 
 # Xcode
+build/
 DerivedData/
 xcuserdata/
 *.xcuserstate
 *.xccheckout
 *.xcscmblueprint
+**/xcuserdata/
+.swiftpm/xcode/xcuserdata/
+*.xcworkspace/
+
 
 # Common iOS/Swift
 *.swp
