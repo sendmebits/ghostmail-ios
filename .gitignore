@@ -13,3 +13,14 @@ xcuserdata/
 *.xccheckout
 *.xcscmblueprint
 
+# Common iOS/Swift
+*.swp
+*.moved-aside
+timeline.xctimeline
+playground.xcworkspace
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+.swiftpm/
+
