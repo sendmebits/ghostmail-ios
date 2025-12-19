@@ -1,48 +1,49 @@
 # Copilot Instructions for Ghost Mail iOS
 
-## Project Overview
-**Ghost Mail** is a SwiftUI iOS app for managing Cloudflare email aliases. It is fully open-source, privacy-focused, and designed for quick creation, disabling, and deletion of disposable email addresses for Cloudflare-hosted domains. No paywalls, tracking, or proprietary lock-in.
+## Quick summary
+Ghost Mail is a SwiftUI-first iOS app that manages Cloudflare Email Routing aliases. Key responsibilities are: UI (SwiftUI views under `ghostmail/Views/`), Cloudflare API orchestration (`ghostmail/Services/CloudflareClient.swift`), local persistence (SwiftData models under `ghostmail/Models/`), and secure credential storage via Keychain (`KeychainHelper.swift`).
 
-## Architecture & Key Components
-- **SwiftUI-first:** All UI is in SwiftUI. Main views are in `ghostmail/Views/` (e.g., `EmailListView.swift`, `EmailCreateView.swift`, `SettingsView.swift`).
-- **Cloudflare API Integration:** All network logic is in `ghostmail/Services/CloudflareClient.swift`, which handles fetching, creating, updating, and deleting aliases via Cloudflare's Email Routing API. This is the single source of truth for Cloudflare operations.
-- **Models:** Data models (e.g., `EmailAlias.swift`) are in `ghostmail/Models/`.
-- **State Management:** Uses `@State`, `@Binding`, and `@EnvironmentObject`. The `CloudflareClient` is injected as an environment object for shared data and API access.
-- **Persistence:** Uses SwiftData (or Core Data) for local alias storage and sync. User preferences (sort/filter) are stored in `UserDefaults` (e.g., `EmailListView.sortOrder`).
-- **Assets:** App icons and images are in `ghostmail/Assets.xcassets/`.
+## Architecture & important conventions
+- **SwiftUI + SwiftData (CloudKit optional):** The app uses SwiftUI for UI and SwiftData for persistence. CloudKit mirroring is enabled by default (`iCloudSyncEnabled` AppStorage). See `ghostmailApp.swift` for ModelContainer initialization and the CloudKit schema (`EmailAlias` schema is explicitly constructed when sync is enabled).
+- **Single source for Cloudflare logic:** `CloudflareClient` handles all Cloudflare interactions (pagination, token verification, multi-zone support, caching). Add/modify API interactions there and expose behavior via `@EnvironmentObject`.
+- **Multi-zone support & token storage:** Zones are represented by `CloudflareClient.CloudflareZone`. Zone tokens are stored securely in Keychain (migrated from older UserDefaults). When adding zones, store zone-specific tokens under `apiToken_<zoneId>`.
+- **Keychain-first for secrets:** Credentials (accountId, zoneId, apiToken) are persisted via `KeychainHelper`. The client performs migrations from UserDefaults to Keychain on init — preserve migration logic when changing credential handling.
+- **Background / startup flow:** On launch, app refreshes domain name, forwarding addresses and optionally subdomains. Background sync and user identifier assignment are implemented in `ghostmailApp` (`updateUserIdentifiers`, `forceSyncExistingData`). Take care to keep these operations non-blocking and error-tolerant.
 
-## Developer Workflows
-- **Build/Run:** Open `ghostmail.xcodeproj` in Xcode and build for iOS Simulator or device. No custom scripts required.
-- **Testing:** No explicit test targets; manual UI testing is expected.
-- **Debugging:** Use Xcode's debugger. API/network errors are surfaced as alerts in the UI.
-- **CSV Import:** Bulk alias creation is supported via CSV import. See [README.md](../README.md) for format:
-	```
-	Email Address,Website,Notes,Created,Enabled,Forward To
-	user@domain.com,website.com[optional],notes[optional],2025-02-07T01:39:10Z[optional],true,forwardto@domain.com
-	```
+## Developer workflows & useful commands
+- **Build & run:** Open `ghostmail.xcodeproj` in Xcode and run on a simulator or device. No custom build scripts are required.
+- **CloudKit / iCloud:** Toggle iCloud sync in app Settings (`iCloudSyncEnabled` AppStorage). The app uses `iCloud.com.sendmebits.ghostmail` container when enabled. To test CloudKit behaviors, disable/enable sync and verify `ModelContainer` initialization logs in console.
+- **Credentials for local testing:** Use the app UI to add your Account ID, Zone ID, and API Token. Tokens require permissions documented in the README (Email Routing read and Zone edit). Tokens are verified via `verifyToken()` (user token first, then account token fallback).
+- **CSV import:** The UI supports CSV import (see `README.md`). The importer infers zone from the email domain and falls back to the primary zone if none match.
+- **Debugging tips:** Use the Xcode console logs — `CloudflareClient` logs masked URLs and token verification steps. The app also uses `LogBuffer` for additional runtime logs; inspect it when diagnosing API behavior.
 
-## Project-Specific Patterns & Conventions
-- **Filter Sheets:** Filters (e.g., in `EmailListView`) use staged selection with an explicit Apply button. Do not auto-apply on tap.
-- **Cloudflare Zones:** The app supports multiple Cloudflare zones (domains). Filtering and alias creation are zone-aware.
-- **No AccentColor Asset:** Use system tints (e.g., `.tint(.blue)`) for buttons; do not add a custom AccentColor asset.
-- **Dark Mode:** The app defaults to `.preferredColorScheme(.dark)` and uses dark backgrounds.
+## Project-specific patterns (do not deviate)
+- **Filters are staged:** Filter sheets (e.g., `EmailListView`) follow a staged selection pattern and require an explicit Apply button. Avoid auto-applying selections.
+- **Don't add an AccentColor asset:** The app uses system `.tint()` for UI accents. Prefer `Color` or `.tint(.blue)` over adding an AccentColor asset.
+- **Dark-first UI:** The app assumes a dark appearance (`.preferredColorScheme(.dark)`) — verify visual changes in dark mode.
+- **API page size & deduplication:** Cloudflare calls fetch pages of 100 items (`per_page=100`) where applicable, and the code deduplicates aliases by email address. Follow this pattern to avoid duplicates and conserve API calls.
 
-## Integration & External Dependencies
-- **Cloudflare API:** All network operations are via Cloudflare's Email Routing API. See `CloudflareClient.swift` for endpoints and authentication.
-- **No 3rd-party Swift packages** are required for core functionality.
+## Where to make common changes (examples)
+- **Add/edit Cloudflare endpoints:** `ghostmail/Services/CloudflareClient.swift` — keep token handling, pagination, and error mapping consistent with existing functions (e.g., `getEmailRules`, `getEmailRulesAllZones`).
+- **Add new SwiftData model fields:** Update `ghostmail/Models/EmailAlias.swift` and ensure migration-friendly defaults; test CloudKit sync if `iCloudSyncEnabled` is true.
+- **Add UI screens:** `ghostmail/Views/` — follow existing state patterns (`@State`, `@Binding`, `@EnvironmentObject`) and preserve staged selection interactions.
 
-## Examples & Patterns
-- **Adding a new filter:** Follow the staged selection pattern in `EmailListView.swift`.
-- **Adding a Cloudflare operation:** Implement in `CloudflareClient.swift` and expose via `@EnvironmentObject`.
-- **UI changes:** Use SwiftUI and prefer state-driven updates.
+## Integration & testing notes
+- **No unit test targets:** There are no bundled unit tests. Prefer manual UI testing and integration checks against a Cloudflare test account.
+- **Token verification & migration safety:** Token verification flow prefers user tokens, then account tokens. Ensure any new verification code keeps the same user-first, account-second approach to avoid changing behavior.
 
-## Key Files/Directories
-- `ghostmail/Views/` — SwiftUI views
-- `ghostmail/Services/CloudflareClient.swift` — Cloudflare API logic
-- `ghostmail/Models/EmailAlias.swift` — Alias data model
-- `ghostmail/Assets.xcassets/` — App icons and images
-- `ghostmail.xcodeproj/` — Xcode project
+## Key files & directories (quick reference)
+- `ghostmail/Services/CloudflareClient.swift` — Cloudflare API + multi-zone logic
+- `ghostmail/Services/KeychainHelper.swift` — Keychain storage helpers
+- `ghostmail/Services/LogBuffer.swift` — logging helper used across network calls
+- `ghostmail/Models/EmailAlias.swift` — SwiftData model for aliases
+- `ghostmail/ghostmailApp.swift` — App lifecycle, ModelContainer setup, CloudKit handling
+- `ghostmail/Views/` — primary UI implementation
 
 ---
+## Agent Instructions
+When the task requires multiple steps or non-trivial changes, present a detailed plan using #planReview and wait for approval before executing.
+If the plan is rejected, incorporate the comments and submit an updated plan with #planReview.
+When the user asks for a step-by-step guide or walkthrough, present it using #walkthroughReview.
+Always use #askUser before completing any task to confirm the result matches what the user asked for.
 
-For more, see the [README.md](../README.md). If a convention or workflow is unclear, check the relevant file or ask for clarification.
