@@ -1,6 +1,14 @@
 import SwiftUI
 import SwiftData
 
+/// Filter options for email statistics action types
+enum StatisticsActionFilter: String, CaseIterable {
+    case all = "All"
+    case forwarded = "Forwarded"
+    case dropped = "Dropped"
+    case rejected = "Rejected"
+}
+
 struct EmailStatisticsView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Query private var emailAliases: [EmailAlias]
@@ -8,8 +16,11 @@ struct EmailStatisticsView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var selectedZoneId: String
+    @State private var selectedActionFilter: StatisticsActionFilter = .all
+    @State private var selectedDestination: String = "ALL_DESTINATIONS"
     
     private let allZonesIdentifier = "ALL_ZONES"
+    private let allDestinationsIdentifier = "ALL_DESTINATIONS"
     
     /// Returns the action type for a given email address by looking up in aliases
     private func actionType(for emailAddress: String) -> EmailRuleActionType {
@@ -19,6 +30,73 @@ struct EmailStatisticsView: View {
         return .forward  // Default to forward if no alias found
     }
     
+    /// Returns the destination (forwardTo) address for a given alias email address
+    private func destinationAddress(for emailAddress: String) -> String? {
+        emailAliases.first(where: { $0.emailAddress == emailAddress })?.forwardTo
+    }
+    
+    /// Get unique destination addresses (forwardTo) from aliases for the filter picker
+    private var availableDestinations: [String] {
+        let destinations = Set(emailAliases.compactMap { alias -> String? in
+            guard !alias.forwardTo.isEmpty else { return nil }
+            return alias.forwardTo
+        })
+        return Array(destinations).sorted()
+    }
+    
+    /// Get all zone options including subdomains
+    private var zoneOptions: [(id: String, name: String)] {
+        var options: [(id: String, name: String)] = []
+        
+        for zone in cloudflareClient.zones {
+            let displayName = zone.domainName.isEmpty ? zone.zoneId : zone.domainName
+            options.append((id: zone.zoneId, name: displayName))
+            
+            // Add subdomains if enabled for this zone
+            if zone.subdomainsEnabled {
+                for subdomain in zone.subdomains {
+                    let subdomainDisplay = "\(subdomain).\(zone.domainName)"
+                    // Use a composite ID for subdomains: "zoneId:subdomain"
+                    options.append((id: "\(zone.zoneId):\(subdomain)", name: subdomainDisplay))
+                }
+            }
+        }
+        
+        return options
+    }
+    
+    /// Filtered statistics based on the selected destination and action filters
+    private var filteredStatistics: [EmailStatistic] {
+        var filtered = statistics
+        
+        // Apply destination address filter
+        if selectedDestination != allDestinationsIdentifier {
+            filtered = filtered.filter { stat in
+                destinationAddress(for: stat.emailAddress) == selectedDestination
+            }
+        }
+        
+        // Apply action type filter
+        switch selectedActionFilter {
+        case .all:
+            break
+        case .forwarded:
+            filtered = filtered.filter { stat in
+                actionType(for: stat.emailAddress) == .forward
+            }
+        case .dropped:
+            filtered = filtered.filter { stat in
+                actionType(for: stat.emailAddress) == .drop
+            }
+        case .rejected:
+            filtered = filtered.filter { stat in
+                actionType(for: stat.emailAddress) == .reject
+            }
+        }
+        
+        return filtered
+    }
+    
     init(initialZoneId: String? = nil) {
         // Default to "All" if no zone specified or if multiple zones exist
         _selectedZoneId = State(initialValue: initialZoneId ?? "ALL_ZONES")
@@ -26,26 +104,45 @@ struct EmailStatisticsView: View {
     
     var body: some View {
         List {
-            if cloudflareClient.zones.count > 1 {
-                Section {
+            // Settings Section (Zone + Filters)
+            Section {
+                if cloudflareClient.zones.count > 1 || zoneOptions.count > cloudflareClient.zones.count {
                     Picker("Zone", selection: $selectedZoneId) {
                         Text("All Zones")
                             .tag(allZonesIdentifier)
-                        ForEach(cloudflareClient.zones, id: \.zoneId) { zone in
-                            Text(zone.domainName.isEmpty ? zone.zoneId : zone.domainName)
-                                .tag(zone.zoneId)
+                        ForEach(zoneOptions, id: \.id) { option in
+                            Text(option.name)
+                                .tag(option.id)
                         }
                     }
                     .onChange(of: selectedZoneId) { _, newValue in
+                        // Reset destination filter when zone changes
+                        selectedDestination = allDestinationsIdentifier
                         loadStatistics(zoneId: newValue, useCache: true)
+                    }
+                }
+                
+                Picker("Destination", selection: $selectedDestination) {
+                    Text("All Destinations")
+                        .tag(allDestinationsIdentifier)
+                    ForEach(availableDestinations, id: \.self) { destination in
+                        Text(destination)
+                            .tag(destination)
+                    }
+                }
+                
+                Picker("Status", selection: $selectedActionFilter) {
+                    ForEach(StatisticsActionFilter.allCases, id: \.self) { filter in
+                        Text(filter.rawValue)
+                            .tag(filter)
                     }
                 }
             }
             
             // Chart Section
-            if !statistics.isEmpty && errorMessage == nil {
+            if !filteredStatistics.isEmpty && errorMessage == nil {
                 Section {
-                    EmailTrendChartView(statistics: statistics)
+                    EmailTrendChartView(statistics: filteredStatistics)
                         .frame(height: 200)
                         .padding(.vertical, 8)
                 } header: {
@@ -86,11 +183,16 @@ struct EmailStatisticsView: View {
                 } else if let error = errorMessage {
                     Text(error)
                         .foregroundStyle(.red)
-                } else if statistics.isEmpty {
-                    Text("No email traffic found in the last 7 days.")
-                        .foregroundStyle(.secondary)
+                } else if filteredStatistics.isEmpty {
+                    if selectedActionFilter == .all {
+                        Text("No email traffic found in the last 7 days.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("No \(selectedActionFilter.rawValue.lowercased()) emails found in the last 7 days.")
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
-                    ForEach(statistics) { stat in
+                    ForEach(filteredStatistics) { stat in
                         NavigationLink {
                             EmailStatisticsDetailView(statistic: stat)
                         } label: {
