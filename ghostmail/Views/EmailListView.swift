@@ -685,14 +685,26 @@ struct EmailListView: View {
             } catch {
                 print("Error loading forwarding addresses for list view: \(error)")
             }
-            // Only load if we haven't loaded yet and there are no existing aliases
+            
+            // Show loading spinner only on truly empty initial load
             if isInitialLoad && emailAliases.isEmpty {
                 await refreshEmailRules(showLoading: true)
             } else {
-                // If we have existing data, just mark as loaded
+                // Mark as loaded immediately to avoid blocking UI
                 isInitialLoad = false
+                
+                // Silent background refresh to pick up any changes
+                // This keeps data fresh without blocking user interaction
+                Task.detached(priority: .utility) {
+                    await MainActor.run {
+                        Task {
+                            await refreshEmailRules(showLoading: false)
+                        }
+                    }
+                }
             }
-            // Load statistics on initial appear
+            
+            // Load statistics (uses cache for instant display, refreshes in background if stale)
             await loadStatistics()
         }
         .onChange(of: needsRefresh) { _, needsRefresh in

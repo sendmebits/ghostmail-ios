@@ -23,9 +23,11 @@ struct ghostmailApp: App {
     
     // Background update state
     @State private var lastUpdateCheck: Date = .distantPast
+    @State private var lastForegroundSync: Date = .distantPast
     @State private var updateTimer: Timer?
     @State private var isUpdating: Bool = false
-    private let updateInterval: TimeInterval = 300 // 5 minutes
+    private let updateInterval: TimeInterval = 120 // 2 minutes for background polling
+    private let foregroundCooldown: TimeInterval = 30 // 30 seconds for foreground sync
     
     init() {
         // Read iCloud sync preference with a safe default of TRUE when unset
@@ -200,41 +202,55 @@ struct ghostmailApp: App {
                     // Start the periodic timer
                     startUpdateTimer()
                     
-                    // If authenticated, refresh forwarding addresses and domain from Cloudflare
+                    // If authenticated, refresh data from Cloudflare in parallel for faster startup
                     if cloudflareClient.isAuthenticated {
-                        print("App startup: Refreshing forwarding addresses and domain")
-                        do {
-                            // Single attempt with shorter timeout
-                            try await withTimeout(seconds: 10) {
-                                // Fetch domain name first
-                                if cloudflareClient.domainName.isEmpty {
-                                    try await cloudflareClient.fetchDomainName()
+                        print("App startup: Refreshing data in parallel")
+                        
+                        // Run critical startup operations in parallel with timeout
+                        await withTaskGroup(of: Void.self) { group in
+                            // Task 1: Fetch domain name if needed
+                            group.addTask {
+                                if await cloudflareClient.domainName.isEmpty {
+                                    do {
+                                        try await withTimeout(seconds: 5) {
+                                            try await cloudflareClient.fetchDomainName()
+                                        }
+                                        print("App startup: Domain name fetched")
+                                    } catch {
+                                        print("App startup: Domain name fetch failed: \(error)")
+                                    }
                                 }
-                                // Then refresh forwarding addresses
-                                try await cloudflareClient.refreshForwardingAddresses()
                             }
-                            print("App startup: Successfully refreshed forwarding addresses and domain")
-                        } catch {
-                            print("App startup: Failed to refresh forwarding addresses: \(error)")
+                            
+                            // Task 2: Refresh forwarding addresses
+                            group.addTask {
+                                do {
+                                    try await withTimeout(seconds: 5) {
+                                        try await cloudflareClient.refreshForwardingAddresses()
+                                    }
+                                    print("App startup: Forwarding addresses refreshed")
+                                } catch {
+                                    print("App startup: Forwarding addresses refresh failed: \(error)")
+                                }
+                            }
+                            
+                            // Task 3: Refresh subdomains (only if enabled)
+                            group.addTask {
+                                let hasEnabledZones = await cloudflareClient.zones.contains(where: { $0.subdomainsEnabled })
+                                if hasEnabledZones {
+                                    do {
+                                        try await withTimeout(seconds: 8) {
+                                            try await cloudflareClient.refreshSubdomainsAllZones()
+                                        }
+                                        print("App startup: Subdomains refreshed")
+                                    } catch {
+                                        print("App startup: Subdomains refresh failed (non-critical): \(error)")
+                                    }
+                                }
+                            }
                         }
                         
-                        // Background refresh of subdomains (only for zones with subdomains enabled)
-                        Task.detached(priority: .background) {
-                            // Check if any zone has subdomains enabled
-                            let hasEnabledZones = await cloudflareClient.zones.contains(where: { $0.subdomainsEnabled })
-                            
-                            if hasEnabledZones {
-                                do {
-                                    print("App startup: Refreshing subdomains in background")
-                                    try await cloudflareClient.refreshSubdomainsAllZones()
-                                    print("App startup: Successfully refreshed subdomains")
-                                } catch {
-                                    print("App startup: Failed to refresh subdomains (non-critical): \(error)")
-                                }
-                            } else {
-                                print("App startup: Skipping subdomain refresh (no zones have subdomains enabled)")
-                            }
-                        }
+                        print("App startup: Parallel refresh completed")
                     }
                     
                     // Update user identifiers and trigger sync on app launch - now non-blocking
@@ -268,12 +284,12 @@ struct ghostmailApp: App {
         .modelContainer(modelContainer)
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .active {
-                // Check for updates when app comes to foreground
+                // Trigger immediate foreground sync for snappy data updates
                 Task {
-                    await performBackgroundUpdateIfNeeded()
+                    await performForegroundSyncIfNeeded()
                 }
                 
-                // Ensure timer is running
+                // Ensure timer is running for periodic background updates
                 startUpdateTimer()
                 
                 // Check if there's a pending quick action when scene becomes active
@@ -304,6 +320,53 @@ struct ghostmailApp: App {
         updateTimer?.invalidate()
         updateTimer = nil
     }
+    
+    // MARK: - Foreground Sync (Immediate on App Return)
+    
+    /// Performs an immediate sync when the app returns to foreground.
+    /// Uses a shorter cooldown (30s) than background polling to feel snappy without being excessive.
+    @MainActor
+    private func performForegroundSyncIfNeeded() async {
+        guard cloudflareClient.isAuthenticated else { return }
+        guard !isUpdating else {
+            print("Foreground sync: Skipped (update already in progress)")
+            return
+        }
+        
+        let now = Date()
+        let timeSinceLastForeground = now.timeIntervalSince(lastForegroundSync)
+        
+        // Use shorter cooldown for foreground returns to feel responsive
+        guard timeSinceLastForeground >= foregroundCooldown else {
+            print("Foreground sync: Skipped (cooldown, \(Int(foregroundCooldown - timeSinceLastForeground))s remaining)")
+            return
+        }
+        
+        // Update timestamps
+        lastForegroundSync = now
+        lastUpdateCheck = now // Also reset background timer to avoid double-syncing
+        isUpdating = true
+        
+        print("Foreground sync: Starting (last sync \(Int(timeSinceLastForeground))s ago)")
+        
+        do {
+            // Sync email rules - this runs in background and updates SwiftData
+            try await cloudflareClient.syncEmailRules(modelContext: modelContainer.mainContext)
+            
+            // Sync statistics if analytics are enabled
+            if showAnalytics {
+                await syncEmailStatisticsInBackground()
+            }
+            
+            print("Foreground sync: Completed successfully")
+        } catch {
+            print("Foreground sync: Failed with error: \(error)")
+        }
+        
+        isUpdating = false
+    }
+    
+    // MARK: - Background Polling (Timer-based)
     
     @MainActor
     private func performBackgroundUpdateIfNeeded() async {
