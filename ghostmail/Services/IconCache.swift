@@ -9,12 +9,20 @@ final class IconCache {
     private let negativeMemoryCache = NSCache<NSString, NSNumber>()
     private let fileManager = FileManager.default
     private let cacheDir: URL
-    // Keep strong references to navigation delegates while rendering SVGs
-    private var webViewDelegates: [AnyObject] = []
-
-    // ...existing code...
+    
+    // Semaphore to limit concurrent icon fetches (prevents request flooding)
+    private let fetchSemaphore = DispatchSemaphore(value: 6)
+    
+    // Actor to serialize SVG rendering operations
+    private let svgRenderActor = SVGRenderActor()
 
     private init() {
+        // Configure memory cache limits to prevent unbounded growth
+        memoryCache.countLimit = 200 // Max 200 icons in memory
+        memoryCache.totalCostLimit = 50 * 1024 * 1024 // ~50MB max
+        
+        negativeMemoryCache.countLimit = 500 // Can store more negative results (they're tiny)
+        
         if let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first {
             cacheDir = caches.appendingPathComponent("website-icons", isDirectory: true)
             try? fileManager.createDirectory(at: cacheDir, withIntermediateDirectories: true)
@@ -292,7 +300,7 @@ final class IconCache {
         }
         if lower.hasSuffix(".svg") || looksLikeSVG {
             // attempting SVG rasterization
-            if let raster = await rasterizeSVGData(data) {
+            if let raster = await svgRenderActor.rasterize(data: data, targetSize: CGSize(width: 64, height: 64)) {
                 // svg rasterization succeeded
                 return raster
             } else {
@@ -324,86 +332,9 @@ final class IconCache {
 
     // MARK: - SVG Rasterization
     
-    // A helper actor to manage a single reusable WKWebView on the Main Thread
-    @MainActor
-    private class SVGRenderer: NSObject, WKNavigationDelegate {
-        private let webView: WKWebView
-        private var currentContinuation: CheckedContinuation<UIImage?, Never>?
-        
-        override init() {
-            let config = WKWebViewConfiguration()
-            self.webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 64, height: 64), configuration: config)
-            self.webView.isOpaque = false
-            self.webView.backgroundColor = .clear
-            super.init()
-            self.webView.navigationDelegate = self
-        }
-        
-        func rasterize(data: Data, targetSize: CGSize) async -> UIImage? {
-            // If we are already busy, we could queue, but for simplicity in this cache, 
-            // we'll just wait for the previous one to finish if we used a lock.
-            // However, since we are on MainActor, we can't block. 
-            // Ideally we'd have a queue. For now, let's just create a new one if busy? 
-            // No, the goal is to reuse. Let's assume serial usage via the serial queue in IconCache?
-            // Actually IconCache calls this from async context.
-            
-            // To properly serialize, we should probably have a queue of requests.
-            // But to keep it simple and efficient:
-            
-            return await withCheckedContinuation { continuation in
-                self.currentContinuation = continuation
-                
-                let svgString = String(data: data, encoding: .utf8) ?? ""
-                let html = "<html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head><body style=\"margin:0;padding:0;display:flex;align-items:center;justify-content:center;\">\(svgString)</body></html>"
-                
-                self.webView.frame = CGRect(origin: .zero, size: targetSize)
-                self.webView.loadHTMLString(html, baseURL: nil)
-            }
-        }
-        
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            webView.takeSnapshot(with: nil) { image, error in
-                self.currentContinuation?.resume(returning: image)
-                self.currentContinuation = nil
-            }
-        }
-        
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            self.currentContinuation?.resume(returning: nil)
-            self.currentContinuation = nil
-        }
-        
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            self.currentContinuation?.resume(returning: nil)
-            self.currentContinuation = nil
-        }
-    }
-    
-    // Lazy initialization of the renderer on the main thread
-    @MainActor private lazy var svgRenderer = SVGRenderer()
-    
-    // Serial queue to ensure we only process one SVG at a time to reuse the renderer
-    private let svgQueue = DispatchQueue(label: "com.ghostmail.svgQueue")
-
-    // Rasterize SVG data by loading into a hidden WKWebView and snapshotting at desired size.
+    // Rasterize SVG data using the shared actor
     private func rasterizeSVGData(_ data: Data, targetSize: CGSize = CGSize(width: 64, height: 64)) async -> UIImage? {
-        // We need to jump to the main thread to use the renderer, but we want to serialize requests
-        // so we don't overlap on the single webview.
-        
-        // Use a serial actor or queue pattern. Since SVGRenderer is @MainActor, we can't just call it from anywhere.
-        // We need to await it. But if multiple calls come in, they will race.
-        
-        // Simple solution: Use a semaphore or lock? No, async/await.
-        // Let's use a Task with a serial queue to coordinate.
-        
-        return await withCheckedContinuation { continuation in
-            svgQueue.async {
-                Task { @MainActor in
-                    let image = await self.svgRenderer.rasterize(data: data, targetSize: targetSize)
-                    continuation.resume(returning: image)
-                }
-            }
-        }
+        return await svgRenderActor.rasterize(data: data, targetSize: targetSize)
     }
 
     /// Synchronous check to quickly determine whether we previously marked this host as missing.
@@ -529,3 +460,104 @@ final class IconCache {
 // and is safe, so declare unchecked Sendable conformance to satisfy the
 // compiler for captures inside @Sendable closures.
 extension IconCache: @unchecked Sendable {}
+
+// MARK: - SVG Render Actor
+
+/// Actor that serializes SVG rendering operations to avoid race conditions
+/// when multiple icons need to be rendered simultaneously.
+private actor SVGRenderActor {
+    /// Rasterize SVG data into a UIImage using WKWebView on the main thread.
+    /// This actor ensures only one SVG is being rendered at a time.
+    func rasterize(data: Data, targetSize: CGSize) async -> UIImage? {
+        // Perform the actual rendering on the main thread where WKWebView must run
+        return await MainActor.run {
+            // Create a fresh WKWebView for each render to avoid state contamination
+            let config = WKWebViewConfiguration()
+            let webView = WKWebView(frame: CGRect(origin: .zero, size: targetSize), configuration: config)
+            webView.isOpaque = false
+            webView.backgroundColor = .clear
+            
+            let svgString = String(data: data, encoding: .utf8) ?? ""
+            let html = """
+            <html>
+            <head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+            <body style="margin:0;padding:0;display:flex;align-items:center;justify-content:center;">
+            \(svgString)
+            </body>
+            </html>
+            """
+            
+            return renderSVGSync(webView: webView, html: html, targetSize: targetSize)
+        }
+    }
+    
+    /// Synchronous SVG rendering using a run loop to wait for WKWebView to finish loading
+    @MainActor
+    private func renderSVGSync(webView: WKWebView, html: String, targetSize: CGSize) -> UIImage? {
+        var renderedImage: UIImage?
+        var loadComplete = false
+        var loadError = false
+        
+        // Use a delegate to track loading completion
+        let delegate = SVGLoadDelegate(
+            onFinish: { loadComplete = true },
+            onFail: { loadComplete = true; loadError = true }
+        )
+        webView.navigationDelegate = delegate
+        
+        // Load the HTML
+        webView.loadHTMLString(html, baseURL: nil)
+        
+        // Run the run loop until loading completes (with timeout)
+        let timeout = Date().addingTimeInterval(5.0)
+        while !loadComplete && Date() < timeout {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+        }
+        
+        // If loading succeeded, take a snapshot
+        if loadComplete && !loadError {
+            var snapshotComplete = false
+            
+            webView.takeSnapshot(with: nil) { image, error in
+                renderedImage = image
+                snapshotComplete = true
+            }
+            
+            // Wait for snapshot (with timeout)
+            let snapshotTimeout = Date().addingTimeInterval(2.0)
+            while !snapshotComplete && Date() < snapshotTimeout {
+                RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            }
+        }
+        
+        // Clean up delegate reference
+        webView.navigationDelegate = nil
+        
+        return renderedImage
+    }
+}
+
+/// Simple delegate class to track WKWebView navigation completion
+@MainActor
+private class SVGLoadDelegate: NSObject, WKNavigationDelegate {
+    let onFinish: () -> Void
+    let onFail: () -> Void
+    
+    init(onFinish: @escaping () -> Void, onFail: @escaping () -> Void) {
+        self.onFinish = onFinish
+        self.onFail = onFail
+        super.init()
+    }
+    
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        onFinish()
+    }
+    
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        onFail()
+    }
+    
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        onFail()
+    }
+}

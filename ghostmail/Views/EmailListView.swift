@@ -173,43 +173,46 @@ struct EmailListView: View {
     }
 
     var filteredEmails: [EmailAlias] {
-        let source = allAliases
-        let base: [EmailAlias]
-        if searchText.isEmpty {
-            base = source
-        } else {
-            base = source.filter { email in
-                email.emailAddress.localizedCaseInsensitiveContains(searchText) ||
-                email.website.localizedCaseInsensitiveContains(searchText)
+        // Combine all filter operations into a single pass for better performance
+        // This avoids creating intermediate arrays for each filter step
+        return allAliases.filter { alias in
+            // Check search text filter
+            let matchesSearch: Bool
+            if searchText.isEmpty {
+                matchesSearch = true
+            } else {
+                matchesSearch = alias.emailAddress.localizedCaseInsensitiveContains(searchText) ||
+                    alias.website.localizedCaseInsensitiveContains(searchText)
             }
-        }
-
-        // Apply destination filter
-        let destinationFiltered: [EmailAlias]
-        switch destinationFilter {
-        case .all:
-            destinationFiltered = base
-        case .address(let addr):
-            destinationFiltered = base.filter { $0.forwardTo == addr }
-        }
-
-        // Apply domain filter (by domain name)
-        let domainFiltered: [EmailAlias]
-        switch domainFilter {
-        case .all:
-            domainFiltered = destinationFiltered
-        case .domain(let domainName):
-            domainFiltered = destinationFiltered.filter { alias in
+            guard matchesSearch else { return false }
+            
+            // Check destination filter
+            let matchesDestination: Bool
+            switch destinationFilter {
+            case .all:
+                matchesDestination = true
+            case .address(let addr):
+                matchesDestination = alias.forwardTo == addr
+            }
+            guard matchesDestination else { return false }
+            
+            // Check domain filter
+            let matchesDomain: Bool
+            switch domainFilter {
+            case .all:
+                matchesDomain = true
+            case .domain(let filterDomainName):
                 // Extract domain from email address
                 let parts = alias.emailAddress.split(separator: "@")
                 if parts.count == 2 {
-                    return String(parts[1]).lowercased() == domainName.lowercased()
+                    matchesDomain = String(parts[1]).lowercased() == filterDomainName.lowercased()
+                } else {
+                    matchesDomain = false
                 }
-                return false
             }
+            
+            return matchesDomain
         }
-
-        return domainFiltered
     }
 
     var allDestinationAddresses: [String] {
@@ -329,6 +332,12 @@ struct EmailListView: View {
         guard showAnalytics else {
             emailStatistics = []
             unfilteredStatistics = []
+            return
+        }
+        
+        // Prevent concurrent statistics loads
+        guard !isLoadingStatistics else {
+            print("Statistics load already in progress, skipping")
             return
         }
         

@@ -1,13 +1,40 @@
 import Foundation
 import Security
 
+/// Keychain error types for better error handling
+enum KeychainError: LocalizedError {
+    case saveFailed(OSStatus)
+    case updateFailed(OSStatus)
+    case deleteFailed(OSStatus)
+    case readFailed(OSStatus)
+    case dataConversionFailed
+    
+    var errorDescription: String? {
+        switch self {
+        case .saveFailed(let status):
+            return "Failed to save to Keychain (OSStatus: \(status))"
+        case .updateFailed(let status):
+            return "Failed to update Keychain item (OSStatus: \(status))"
+        case .deleteFailed(let status):
+            return "Failed to delete from Keychain (OSStatus: \(status))"
+        case .readFailed(let status):
+            return "Failed to read from Keychain (OSStatus: \(status))"
+        case .dataConversionFailed:
+            return "Failed to convert data for Keychain storage"
+        }
+    }
+}
+
 final class KeychainHelper {
     static let shared = KeychainHelper()
     private init() {}
     
-    // MARK: - Public API
+    // MARK: - Public API (with error handling)
     
-    func save(_ data: Data, service: String, account: String) {
+    /// Save data to Keychain with proper error handling
+    /// - Returns: true on success, false on failure
+    @discardableResult
+    func save(_ data: Data, service: String, account: String) -> Bool {
         let query = [
             kSecValueData: data,
             kSecClass: kSecClassGenericPassword,
@@ -19,9 +46,11 @@ final class KeychainHelper {
         // Add item to keychain
         let status = SecItemAdd(query as CFDictionary, nil)
         
-        if status == errSecDuplicateItem {
+        if status == errSecSuccess {
+            return true
+        } else if status == errSecDuplicateItem {
             // Item already exists, update it
-            let query = [
+            let searchQuery = [
                 kSecAttrService: service,
                 kSecAttrAccount: account,
                 kSecClass: kSecClassGenericPassword
@@ -32,7 +61,52 @@ final class KeychainHelper {
                 kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked
             ] as [CFString: Any]
             
-            SecItemUpdate(query as CFDictionary, attributesToUpdate as CFDictionary)
+            let updateStatus = SecItemUpdate(searchQuery as CFDictionary, attributesToUpdate as CFDictionary)
+            
+            if updateStatus != errSecSuccess {
+                print("[Keychain] Failed to update item for \(account): OSStatus \(updateStatus)")
+                return false
+            }
+            return true
+        } else {
+            print("[Keychain] Failed to save item for \(account): OSStatus \(status)")
+            return false
+        }
+    }
+    
+    /// Save data to Keychain, throwing on failure
+    func saveOrThrow(_ data: Data, service: String, account: String) throws {
+        let query = [
+            kSecValueData: data,
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked
+        ] as [CFString: Any]
+        
+        let status = SecItemAdd(query as CFDictionary, nil)
+        
+        if status == errSecSuccess {
+            return
+        } else if status == errSecDuplicateItem {
+            let searchQuery = [
+                kSecAttrService: service,
+                kSecAttrAccount: account,
+                kSecClass: kSecClassGenericPassword
+            ] as [CFString: Any]
+            
+            let attributesToUpdate = [
+                kSecValueData: data,
+                kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked
+            ] as [CFString: Any]
+            
+            let updateStatus = SecItemUpdate(searchQuery as CFDictionary, attributesToUpdate as CFDictionary)
+            
+            if updateStatus != errSecSuccess {
+                throw KeychainError.updateFailed(updateStatus)
+            }
+        } else {
+            throw KeychainError.saveFailed(status)
         }
     }
     
@@ -45,27 +119,54 @@ final class KeychainHelper {
         ] as [CFString: Any]
         
         var result: AnyObject?
-        SecItemCopyMatching(query as CFDictionary, &result)
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
         
-        return result as? Data
+        if status == errSecSuccess {
+            return result as? Data
+        } else if status != errSecItemNotFound {
+            // Log unexpected errors (not "item not found" which is expected)
+            print("[Keychain] Failed to read item for \(account): OSStatus \(status)")
+        }
+        
+        return nil
     }
     
-    func delete(service: String, account: String) {
+    /// Delete item from Keychain
+    /// - Returns: true on success or if item didn't exist, false on failure
+    @discardableResult
+    func delete(service: String, account: String) -> Bool {
         let query = [
             kSecAttrService: service,
             kSecAttrAccount: account,
             kSecClass: kSecClassGenericPassword
         ] as [CFString: Any]
         
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        
+        if status == errSecSuccess || status == errSecItemNotFound {
+            return true
+        } else {
+            print("[Keychain] Failed to delete item for \(account): OSStatus \(status)")
+            return false
+        }
     }
     
     // MARK: - String Helpers
     
-    func save(_ string: String, service: String, account: String) {
-        if let data = string.data(using: .utf8) {
-            save(data, service: service, account: account)
+    @discardableResult
+    func save(_ string: String, service: String, account: String) -> Bool {
+        guard let data = string.data(using: .utf8) else {
+            print("[Keychain] Failed to convert string to data for \(account)")
+            return false
         }
+        return save(data, service: service, account: account)
+    }
+    
+    func saveOrThrow(_ string: String, service: String, account: String) throws {
+        guard let data = string.data(using: .utf8) else {
+            throw KeychainError.dataConversionFailed
+        }
+        try saveOrThrow(data, service: service, account: account)
     }
     
     func readString(service: String, account: String) -> String? {

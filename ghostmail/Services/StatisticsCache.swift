@@ -8,7 +8,7 @@ extension Notification.Name {
 /// Simple cache for email statistics to improve app launch performance
 ///
 /// Caching Strategy:
-/// - Statistics are cached in UserDefaults with a timestamp
+/// - Statistics are cached to a file in the Caches directory (better for large data than UserDefaults)
 /// - Cache is considered "fresh" for 24 hours
 /// - On app launch, cached data is shown immediately if available
 /// - If cache is stale (>24 hours), it's still shown but fresh data is fetched in background
@@ -17,18 +17,30 @@ extension Notification.Name {
 class StatisticsCache {
     static let shared = StatisticsCache()
     
-    private let cacheKey = "EmailStatisticsCache"
     private let timestampKey = "EmailStatisticsCacheTimestamp"
     private let maxCacheAge: TimeInterval = 24 * 60 * 60 // 24 hours
+    
+    /// File URL for the statistics cache
+    private var cacheFileURL: URL? {
+        guard let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        return cachesDir.appendingPathComponent("email_statistics_cache.json")
+    }
     
     private init() {}
     
     /// Save statistics to cache with current timestamp
     func save(_ statistics: [EmailStatistic]) {
+        guard let fileURL = cacheFileURL else {
+            print("Failed to get cache file URL")
+            return
+        }
+        
         do {
             let encoder = JSONEncoder()
             let data = try encoder.encode(statistics.map { CachedStatistic(from: $0) })
-            UserDefaults.standard.set(data, forKey: cacheKey)
+            try data.write(to: fileURL, options: .atomic)
             UserDefaults.standard.set(Date(), forKey: timestampKey)
             
             // Post notification to inform listeners that cache has been updated
@@ -40,12 +52,14 @@ class StatisticsCache {
     
     /// Load cached statistics if available and not stale
     func load() -> (statistics: [EmailStatistic], isStale: Bool)? {
-        guard let data = UserDefaults.standard.data(forKey: cacheKey),
+        guard let fileURL = cacheFileURL,
+              FileManager.default.fileExists(atPath: fileURL.path),
               let timestamp = UserDefaults.standard.object(forKey: timestampKey) as? Date else {
             return nil
         }
         
         do {
+            let data = try Data(contentsOf: fileURL)
             let decoder = JSONDecoder()
             let cached = try decoder.decode([CachedStatistic].self, from: data)
             let statistics = cached.map { $0.toEmailStatistic() }
@@ -62,7 +76,9 @@ class StatisticsCache {
     
     /// Clear the cache
     func clear() {
-        UserDefaults.standard.removeObject(forKey: cacheKey)
+        if let fileURL = cacheFileURL {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
         UserDefaults.standard.removeObject(forKey: timestampKey)
     }
     
