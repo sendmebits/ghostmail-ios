@@ -306,15 +306,20 @@ struct EmailListView: View {
     
     // Unified refresh action used by both list and empty-state scroll view
     private func refreshAction() async {
+        // Fast local deduplication first
         do {
             let deleted = try EmailAlias.deduplicate(in: modelContext)
             if deleted > 0 { print("Deduplicated \(deleted) aliases during refresh") }
         } catch {
             print("Error during refresh deduplication: \(error)")
         }
-        await refreshEmailRules()
-        // Bypass cache on manual refresh to get fresh data
-        await loadStatistics(useCache: false)
+        
+        // Run alias sync and statistics fetch in parallel for faster refresh
+        async let aliasRefresh: () = refreshEmailRules()
+        async let statsRefresh: () = loadStatistics(useCache: false)
+        
+        // Wait for both to complete
+        _ = await (aliasRefresh, statsRefresh)
     }
     
     // Store unfiltered statistics for efficient re-filtering
@@ -349,14 +354,25 @@ struct EmailListView: View {
         
         isLoadingStatistics = true
         
-        // Fetch statistics for all zones
+        // Fetch statistics for all zones in parallel for faster refresh
         var allStats: [EmailStatistic] = []
-        for zone in cloudflareClient.zones {
-            do {
-                let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
-                allStats.append(contentsOf: stats)
-            } catch {
-                print("Error fetching statistics for zone \(zone.zoneId): \(error)")
+        let zones = cloudflareClient.zones
+        
+        await withTaskGroup(of: [EmailStatistic].self) { group in
+            for zone in zones {
+                group.addTask {
+                    do {
+                        return try await self.cloudflareClient.fetchEmailStatistics(for: zone)
+                    } catch {
+                        print("Error fetching statistics for zone \(zone.zoneId): \(error)")
+                        return []
+                    }
+                }
+            }
+            
+            // Collect results from all zones
+            for await zoneStats in group {
+                allStats.append(contentsOf: zoneStats)
             }
         }
         
