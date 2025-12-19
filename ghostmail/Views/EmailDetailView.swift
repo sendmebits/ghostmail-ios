@@ -384,35 +384,6 @@ struct EmailDetailView: View {
                             }
                         }
                         
-                        // Status section
-                        DetailSection(title: "Status") {
-                            if isEditing {
-                                Toggle("Enabled", isOn: $tempIsEnabled)
-                                    .tint(.accentColor)
-                                
-                                Toggle("Forward email", isOn: $tempIsForwarding)
-                                    .tint(.accentColor)
-                            } else {
-                                HStack {
-                                    Text("Enabled")
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Toggle("", isOn: .constant(email.isEnabled))
-                                        .disabled(true)
-                                        .tint(.accentColor)
-                                }
-                                
-                                HStack {
-                                    Text("Forward email")
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Toggle("", isOn: .constant(email.actionType == .forward))
-                                        .disabled(true)
-                                        .tint(.accentColor)
-                                }
-                            }
-                        }
-                        
                         // Website section
                         if isEditing || !email.website.isEmpty {
                             if isEditing {
@@ -475,6 +446,35 @@ struct EmailDetailView: View {
                                         Text("Copy Notes")
                                         Image(systemName: "doc.on.doc")
                                     }
+                                }
+                            }
+                        }
+                        
+                        // Status section
+                        DetailSection(title: "Status") {
+                            if isEditing {
+                                Toggle("Enabled", isOn: $tempIsEnabled)
+                                    .tint(.accentColor)
+                                
+                                Toggle("Forward email", isOn: $tempIsForwarding)
+                                    .tint(.accentColor)
+                            } else {
+                                HStack {
+                                    Text("Enabled")
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Toggle("", isOn: .constant(email.isEnabled))
+                                        .disabled(true)
+                                        .tint(.accentColor)
+                                }
+                                
+                                HStack {
+                                    Text("Forward email")
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Toggle("", isOn: .constant(email.actionType == .forward))
+                                        .disabled(true)
+                                        .tint(.accentColor)
                                 }
                             }
                         }
