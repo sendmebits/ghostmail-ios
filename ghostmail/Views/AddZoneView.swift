@@ -173,14 +173,16 @@ struct AddZoneView: View {
                         if existingByEmail[alias.emailAddress] == nil { existingByEmail[alias.emailAddress] = alias }
                     }
                     for (idx, rule) in allRules.enumerated() {
+                        let actionType = EmailRuleActionType(rawValue: rule.actionType) ?? .forward
                         if let ex = existingByEmail[rule.emailAddress] {
                             ex.cloudflareTag = rule.cloudflareTag
                             ex.isEnabled = rule.isEnabled
                             ex.forwardTo = rule.forwardTo
+                            ex.actionType = actionType
                             if ex.zoneId.isEmpty { ex.zoneId = rule.zoneId }
                             ex.sortIndex = idx + 1
                         } else {
-                            let newAlias = EmailAlias(emailAddress: rule.emailAddress, forwardTo: rule.forwardTo, zoneId: rule.zoneId)
+                            let newAlias = EmailAlias(emailAddress: rule.emailAddress, forwardTo: rule.forwardTo, zoneId: rule.zoneId, actionType: actionType)
                             newAlias.cloudflareTag = rule.cloudflareTag
                             newAlias.isEnabled = rule.isEnabled
                             newAlias.sortIndex = idx + 1

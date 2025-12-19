@@ -133,8 +133,9 @@ struct ContentView: View {
                     // Use existing alias
                     alias = existingAlias
                 } else {
-                    // Create new alias
-                    alias = EmailAlias(emailAddress: emailAddress, forwardTo: rule.forwardTo)
+                    // Create new alias with action type
+                    let actionType = EmailRuleActionType(rawValue: rule.actionType) ?? .forward
+                    alias = EmailAlias(emailAddress: emailAddress, forwardTo: rule.forwardTo, zoneId: rule.zoneId, actionType: actionType)
                     alias.created = nil  // Ensure no creation date for Cloudflare-fetched entries
                     
                     modelContext.insert(alias)
@@ -144,6 +145,8 @@ struct ContentView: View {
                 alias.cloudflareTag = rule.cloudflareTag
                 alias.isEnabled = rule.isEnabled
                 alias.sortIndex = index + 1  // Shift indices up by 1
+                alias.forwardTo = rule.forwardTo
+                alias.actionType = EmailRuleActionType(rawValue: rule.actionType) ?? .forward
             }
             
             try modelContext.save()

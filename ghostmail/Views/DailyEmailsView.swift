@@ -1,8 +1,14 @@
 import SwiftUI
+import SwiftData
 
 struct DailyEmailsView: View {
     let date: Date
     let statistics: [EmailStatistic]
+    @Query private var emailAliases: [EmailAlias]
+    
+    private func isDropAlias(for emailAddress: String) -> Bool {
+        emailAliases.first { $0.emailAddress == emailAddress }?.actionType != .forward
+    }
     
     // Structure to hold individual email information
     private struct EmailItem: Identifiable {
@@ -10,6 +16,7 @@ struct DailyEmailsView: View {
         let from: String
         let to: String
         let date: Date
+        let action: EmailRoutingAction
     }
     
     // Get all individual emails for the selected day
@@ -28,7 +35,8 @@ struct DailyEmailsView: View {
                 allEmails.append(EmailItem(
                     from: detail.from,
                     to: stat.emailAddress,
-                    date: detail.date
+                    date: detail.date,
+                    action: detail.action
                 ))
             }
         }
@@ -51,6 +59,20 @@ struct DailyEmailsView: View {
         }
     }
     
+    // Summary counts by action
+    private var actionSummary: (forwarded: Int, dropped: Int, rejected: Int) {
+        var forwarded = 0, dropped = 0, rejected = 0
+        for email in emailsForDay {
+            switch email.action {
+            case .forwarded: forwarded += 1
+            case .dropped: dropped += 1
+            case .rejected: rejected += 1
+            case .unknown: break
+            }
+        }
+        return (forwarded, dropped, rejected)
+    }
+    
     var body: some View {
         List {
             if emailsForDay.isEmpty {
@@ -64,9 +86,22 @@ struct DailyEmailsView: View {
                     .padding(.vertical, 40)
                 }
             } else {
+                // Summary section
+                Section {
+                    HStack(spacing: 16) {
+                        ActionSummaryBadge(action: .forwarded, count: actionSummary.forwarded)
+                        ActionSummaryBadge(action: .dropped, count: actionSummary.dropped)
+                        ActionSummaryBadge(action: .rejected, count: actionSummary.rejected)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                } header: {
+                    Text("Summary")
+                }
+                
                 Section {
                     ForEach(emailsForDay) { email in
-                        EmailRowView(email: email)
+                        EmailRowView(email: email, isDropAlias: isDropAlias(for: email.to))
                             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                             .listRowSeparator(.hidden)
                     }
@@ -86,18 +121,40 @@ struct DailyEmailsView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
     
+    // Summary badge for action counts
+    private struct ActionSummaryBadge: View {
+        let action: EmailRoutingAction
+        let count: Int
+        
+        var body: some View {
+            VStack(spacing: 4) {
+                Image(systemName: action.iconName)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.5))
+                Text("\(count)")
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                    .foregroundStyle(count > 0 ? .primary : .secondary)
+                Text(action.label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+    
     // Individual email row view
     private struct EmailRowView: View {
         let email: EmailItem
+        let isDropAlias: Bool
         @State private var showCopyToast = false
         
         var body: some View {
             HStack(alignment: .top, spacing: 12) {
-                // Single envelope icon for the email
-                Image(systemName: "envelope.fill")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(.blue)
-                    .frame(width: 20)
+                // Status icon with color
+                Image(systemName: email.action.iconName)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(email.action.color)
+                    .frame(width: 24)
                     .padding(.top, 2)
                 
                 // All email info in a compact vertical stack
@@ -126,20 +183,33 @@ struct DailyEmailsView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             Text(email.to)
                                 .font(.system(.subheadline, design: .rounded, weight: .medium))
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(isDropAlias ? .red : .primary)
                                 .fixedSize(horizontal: true, vertical: false)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     
-                    // Date/Time line
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                        Text(formatTime(email.date))
-                            .font(.system(.caption, design: .rounded))
-                            .foregroundStyle(.secondary)
+                    // Date/Time and Status line
+                    HStack(spacing: 8) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                            Text(formatTime(email.date))
+                                .font(.system(.caption, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+                        
+                        // Status badge
+                        Text(email.action.label)
+                            .font(.system(.caption2, design: .rounded, weight: .medium))
+                            .foregroundStyle(email.action.color)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(email.action.color.opacity(0.15))
+                            )
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

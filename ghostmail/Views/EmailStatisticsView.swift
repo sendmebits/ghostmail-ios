@@ -1,13 +1,23 @@
 import SwiftUI
+import SwiftData
 
 struct EmailStatisticsView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
+    @Query private var emailAliases: [EmailAlias]
     @State private var statistics: [EmailStatistic] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var selectedZoneId: String
     
     private let allZonesIdentifier = "ALL_ZONES"
+    
+    /// Returns the action type for a given email address by looking up in aliases
+    private func actionType(for emailAddress: String) -> EmailRuleActionType {
+        if let alias = emailAliases.first(where: { $0.emailAddress == emailAddress }) {
+            return alias.actionType
+        }
+        return .forward  // Default to forward if no alias found
+    }
     
     init(initialZoneId: String? = nil) {
         // Default to "All" if no zone specified or if multiple zones exist
@@ -84,30 +94,7 @@ struct EmailStatisticsView: View {
                         NavigationLink {
                             EmailStatisticsDetailView(statistic: stat)
                         } label: {
-                            HStack {
-                                Text(stat.emailAddress)
-                                    .font(.body)
-                                Spacer()
-                                Text("\(stat.count)")
-                                    .font(.monospacedDigit(.body)())
-                                    .foregroundStyle(.secondary)
-                                    .padding(8)
-                                    .contentShape(Rectangle())
-                                    .contextMenu {
-                                        Button {
-                                            UIPasteboard.general.string = "\(stat.count)"
-                                        } label: {
-                                            Text("Copy Count")
-                                            Image(systemName: "doc.on.doc")
-                                        }
-                                    }
-                                    .onLongPressGesture {
-                                        UIPasteboard.general.string = "\(stat.count)"
-                                        let generator = UIImpactFeedbackGenerator(style: .light)
-                                        generator.impactOccurred()
-                                    }
-                                    .padding(-8)
-                            }
+                            StatisticRowView(stat: stat, isDropAlias: actionType(for: stat.emailAddress) != .forward)
                         }
                     }
                 }
@@ -234,6 +221,88 @@ struct EmailStatisticsView: View {
                     self.isLoading = false
                 }
             }
+        }
+    }
+}
+
+// MARK: - Statistic Row View
+
+private struct StatisticRowView: View {
+    let stat: EmailStatistic
+    let isDropAlias: Bool
+    
+    // Calculate action counts
+    private var actionCounts: (forwarded: Int, dropped: Int, rejected: Int) {
+        var forwarded = 0, dropped = 0, rejected = 0
+        for detail in stat.emailDetails {
+            switch detail.action {
+            case .forwarded: forwarded += 1
+            case .dropped: dropped += 1
+            case .rejected: rejected += 1
+            case .unknown: break
+            }
+        }
+        return (forwarded, dropped, rejected)
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(stat.emailAddress)
+                    .font(.body)
+                    .foregroundStyle(isDropAlias ? .red : .primary)
+                    .lineLimit(1)
+                Spacer()
+                Text("\(stat.count)")
+                    .font(.monospacedDigit(.body)())
+                    .foregroundStyle(.secondary)
+            }
+            
+            // Mini status indicators
+            HStack(spacing: 12) {
+                if actionCounts.forwarded > 0 {
+                    StatusBadge(action: .forwarded, count: actionCounts.forwarded)
+                }
+                if actionCounts.dropped > 0 {
+                    StatusBadge(action: .dropped, count: actionCounts.dropped)
+                }
+                if actionCounts.rejected > 0 {
+                    StatusBadge(action: .rejected, count: actionCounts.rejected)
+                }
+                Spacer()
+            }
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button {
+                UIPasteboard.general.string = stat.emailAddress
+            } label: {
+                Text("Copy Email")
+                Image(systemName: "doc.on.doc")
+            }
+            Button {
+                UIPasteboard.general.string = "\(stat.count)"
+            } label: {
+                Text("Copy Count")
+                Image(systemName: "number")
+            }
+        }
+    }
+    
+    // Compact status badge
+    private struct StatusBadge: View {
+        let action: EmailRoutingAction
+        let count: Int
+        
+        var body: some View {
+            HStack(spacing: 3) {
+                Image(systemName: action.iconName)
+                    .font(.system(size: 10, weight: .medium))
+                Text("\(count)")
+                    .font(.system(.caption2, design: .rounded, weight: .medium))
+            }
+            .foregroundStyle(action.color)
         }
     }
 }

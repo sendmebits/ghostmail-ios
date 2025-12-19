@@ -1,7 +1,13 @@
 import SwiftUI
+import SwiftData
 
 struct EmailStatisticsDetailView: View {
     let statistic: EmailStatistic
+    @Query private var emailAliases: [EmailAlias]
+    
+    private var isDropAlias: Bool {
+        emailAliases.first { $0.emailAddress == statistic.emailAddress }?.actionType != .forward
+    }
     
     // Group emails by date
     private var emailsByDate: [(date: Date, emails: [EmailStatistic.EmailDetail])] {
@@ -17,6 +23,20 @@ struct EmailStatisticsDetailView: View {
             .sorted { $0.date > $1.date }
     }
     
+    // Overall summary counts
+    private var actionSummary: (forwarded: Int, dropped: Int, rejected: Int) {
+        var forwarded = 0, dropped = 0, rejected = 0
+        for detail in statistic.emailDetails {
+            switch detail.action {
+            case .forwarded: forwarded += 1
+            case .dropped: dropped += 1
+            case .rejected: rejected += 1
+            case .unknown: break
+            }
+        }
+        return (forwarded, dropped, rejected)
+    }
+    
     var body: some View {
         List {
             // Chart Section
@@ -28,6 +48,21 @@ struct EmailStatisticsDetailView: View {
                 Text("7-Day Trend")
             }
             
+            // Summary Section
+            if !statistic.emailDetails.isEmpty {
+                Section {
+                    HStack(spacing: 16) {
+                        ActionSummaryBadge(action: .forwarded, count: actionSummary.forwarded)
+                        ActionSummaryBadge(action: .dropped, count: actionSummary.dropped)
+                        ActionSummaryBadge(action: .rejected, count: actionSummary.rejected)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                } header: {
+                    Text("Status Summary")
+                }
+            }
+            
             if statistic.emailDetails.isEmpty {
                 Section {
                     Text("No detailed logs available.")
@@ -37,12 +72,36 @@ struct EmailStatisticsDetailView: View {
                 ForEach(emailsByDate, id: \.date) { group in
                     Section {
                         ForEach(group.emails, id: \.self) { detail in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(detail.from)
-                                    .font(.body)
-                                Text(detail.date.formatted(date: .omitted, time: .shortened))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            HStack(spacing: 12) {
+                                // Status icon
+                                Image(systemName: detail.action.iconName)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(detail.action.color)
+                                    .frame(width: 18)
+                                
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(detail.from)
+                                        .font(.body)
+                                    
+                                    HStack(spacing: 8) {
+                                        Text(detail.date.formatted(date: .omitted, time: .shortened))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        
+                                        // Status badge
+                                        Text(detail.action.label)
+                                            .font(.system(.caption2, design: .rounded, weight: .medium))
+                                            .foregroundStyle(detail.action.color)
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 1)
+                                            .background(
+                                                Capsule()
+                                                    .fill(detail.action.color.opacity(0.15))
+                                            )
+                                    }
+                                }
+                                
+                                Spacer()
                             }
                             .padding(.vertical, 2)
                             .contentShape(Rectangle())
@@ -68,6 +127,13 @@ struct EmailStatisticsDetailView: View {
         }
         .navigationTitle(statistic.emailAddress)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(statistic.emailAddress)
+                    .font(.headline)
+                    .foregroundStyle(isDropAlias ? .red : .primary)
+            }
+        }
     }
     
     private func formatDateHeader(_ date: Date) -> String {
@@ -80,6 +146,27 @@ struct EmailStatisticsDetailView: View {
             let formatter = DateFormatter()
             formatter.dateStyle = .medium
             return formatter.string(from: date)
+        }
+    }
+    
+    // Summary badge for action counts
+    private struct ActionSummaryBadge: View {
+        let action: EmailRoutingAction
+        let count: Int
+        
+        var body: some View {
+            VStack(spacing: 4) {
+                Image(systemName: action.iconName)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.5))
+                Text("\(count)")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(count > 0 ? .primary : .secondary)
+                Text(action.label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
         }
     }
 }

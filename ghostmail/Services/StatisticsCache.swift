@@ -130,13 +130,15 @@ private struct CachedStatistic: Codable {
 private struct CachedEmailDetail: Codable {
     let from: String
     let date: Date
+    let action: EmailRoutingAction
     
     init(from detail: EmailStatistic.EmailDetail) {
         self.from = detail.from
         self.date = detail.date
+        self.action = detail.action
     }
     
     func toEmailDetail() -> EmailStatistic.EmailDetail {
-        EmailStatistic.EmailDetail(from: from, date: date)
+        EmailStatistic.EmailDetail(from: from, date: date, action: action)
     }
 }

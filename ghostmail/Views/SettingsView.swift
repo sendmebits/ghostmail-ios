@@ -33,6 +33,7 @@ struct SettingsView: View {
     @State private var zoneToRemove: CloudflareClient.CloudflareZone? = nil
     @State private var showRemoveZoneAlert: Bool = false
     @AppStorage("showAnalytics") private var showAnalytics: Bool = false
+    @AppStorage("showDroppedEmails") private var showDroppedEmails: Bool = true
     
     init() {
         // Initialize selectedDefaultAddress with the current saved value
@@ -427,6 +428,7 @@ struct SettingsView: View {
             showWebsiteLogo: $showWebsiteLogo,
             iCloudSyncEnabled: $iCloudSyncEnabled,
             showAnalytics: $showAnalytics,
+            showDroppedEmails: $showDroppedEmails,
             isLoading: isLoading,
             showDeleteICloudDataConfirmation: $showDeleteICloudDataConfirmation,
             sortedForwardingAddresses: sortedForwardingAddresses,
@@ -452,6 +454,7 @@ struct SettingsView: View {
             showWebsiteLogo: $showWebsiteLogo,
             iCloudSyncEnabled: $iCloudSyncEnabled,
             showAnalytics: $showAnalytics,
+            showDroppedEmails: $showDroppedEmails,
             isLoading: isLoading,
             showDeleteICloudDataConfirmation: $showDeleteICloudDataConfirmation,
             sortedForwardingAddresses: sortedForwardingAddresses,
@@ -715,6 +718,7 @@ private struct SettingsListContentView: View {
     @Binding var showWebsiteLogo: Bool
     @Binding var iCloudSyncEnabled: Bool
     @Binding var showAnalytics: Bool
+    @Binding var showDroppedEmails: Bool
     let isLoading: Bool
     @Binding var showDeleteICloudDataConfirmation: Bool
     let sortedForwardingAddresses: [String]
@@ -762,6 +766,7 @@ private struct SettingsListContentView: View {
                 showWebsiteLogo: $showWebsiteLogo,
                 iCloudSyncEnabled: $iCloudSyncEnabled,
                 showAnalytics: $showAnalytics,
+                showDroppedEmails: $showDroppedEmails,
                 isLoading: isLoading,
                 showDeleteICloudDataConfirmation: $showDeleteICloudDataConfirmation,
                 sortedForwardingAddresses: sortedForwardingAddresses,
@@ -1106,6 +1111,7 @@ private struct SettingsSectionView: View {
     @Binding var showWebsiteLogo: Bool
     @Binding var iCloudSyncEnabled: Bool
     @Binding var showAnalytics: Bool
+    @Binding var showDroppedEmails: Bool
     let isLoading: Bool
     @Binding var showDeleteICloudDataConfirmation: Bool
     let sortedForwardingAddresses: [String]
@@ -1201,6 +1207,9 @@ private struct SettingsSectionView: View {
                 .disabled(isLoading)
             
             Toggle("Show Email Analytics", isOn: $showAnalytics)
+                .tint(.accentColor)
+            
+            Toggle("Show Dropped Emails", isOn: $showDroppedEmails)
                 .tint(.accentColor)
             
             NavigationLink {

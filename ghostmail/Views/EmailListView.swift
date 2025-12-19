@@ -7,12 +7,63 @@ import Combine
 enum DestinationFilter: Equatable {
     case all
     case address(String)
+    case dropped  // Virtual destination for dropped emails
     
     var label: String {
         switch self {
         case .all: return "All"
         case .address(let addr): return addr
+        case .dropped: return "Dropped"
         }
+    }
+}
+
+/// Represents either a real EmailAlias or a virtual "dropped" email entry from statistics
+enum EmailListItem: Identifiable, Hashable {
+    case alias(EmailAlias)
+    case droppedEmail(DroppedEmailEntry)
+    
+    var id: String {
+        switch self {
+        case .alias(let alias):
+            return "alias_\(alias.id)"
+        case .droppedEmail(let entry):
+            return "dropped_\(entry.emailAddress)"
+        }
+    }
+    
+    var emailAddress: String {
+        switch self {
+        case .alias(let alias):
+            return alias.emailAddress
+        case .droppedEmail(let entry):
+            return entry.emailAddress
+        }
+    }
+    
+    var sortIndex: Int {
+        switch self {
+        case .alias(let alias):
+            return alias.sortIndex
+        case .droppedEmail(let entry):
+            // Put dropped emails at the end, ordered by most recent drop
+            return Int.max - entry.dropCount
+        }
+    }
+}
+
+/// Virtual entry for emails that were dropped (not forwarded)
+struct DroppedEmailEntry: Identifiable, Hashable {
+    let id: String
+    let emailAddress: String
+    let dropCount: Int
+    let recentDrops: [EmailStatistic.EmailDetail]
+    
+    init(emailAddress: String, dropCount: Int, recentDrops: [EmailStatistic.EmailDetail]) {
+        self.id = "dropped_\(emailAddress)"
+        self.emailAddress = emailAddress
+        self.dropCount = dropCount
+        self.recentDrops = recentDrops
     }
 }
 
@@ -43,9 +94,13 @@ struct EmailListView: View {
     // Domain filter (by domain name - includes main domains and subdomains)
     enum DomainFilter: Equatable { case all, domain(String) }
     @State private var domainFilter: DomainFilter = .all
+    // Status filter (all, dropped, disabled)
+    enum StatusFilter: Equatable { case all, dropped, disabled }
+    @State private var statusFilter: StatusFilter = .all
     // Pending (staged) filters used inside the filter sheet
     @State private var pendingDestinationFilter: DestinationFilter = .all
     @State private var pendingDomainFilter: DomainFilter = .all
+    @State private var pendingStatusFilter: StatusFilter = .all
     
     // Statistics state
     @State private var emailStatistics: [EmailStatistic] = []
@@ -64,7 +119,8 @@ struct EmailListView: View {
         case .all: domainActive = false
         default: domainActive = true
         }
-        return destActive || domainActive
+        let statusActive = statusFilter != .all
+        return destActive || domainActive || statusActive
     }
 
     // Only show aliases whose zoneId is in this device's configured zones
@@ -148,6 +204,9 @@ struct EmailListView: View {
         case .address(let addr):
             UserDefaults.standard.set("address", forKey: "EmailListView.destinationFilterType")
             UserDefaults.standard.set(addr, forKey: "EmailListView.destinationFilterAddress")
+        case .dropped:
+            UserDefaults.standard.set("dropped", forKey: "EmailListView.destinationFilterType")
+            UserDefaults.standard.removeObject(forKey: "EmailListView.destinationFilterAddress")
         }
     }
     
@@ -176,6 +235,18 @@ struct EmailListView: View {
         // Combine all filter operations into a single pass for better performance
         // This avoids creating intermediate arrays for each filter step
         return allAliases.filter { alias in
+            // Check status filter (all, dropped, disabled)
+            let matchesStatus: Bool
+            switch statusFilter {
+            case .all:
+                matchesStatus = true
+            case .dropped:
+                matchesStatus = alias.actionType != .forward
+            case .disabled:
+                matchesStatus = !alias.isEnabled
+            }
+            guard matchesStatus else { return false }
+            
             // Check search text filter
             let matchesSearch: Bool
             if searchText.isEmpty {
@@ -193,6 +264,9 @@ struct EmailListView: View {
                 matchesDestination = true
             case .address(let addr):
                 matchesDestination = alias.forwardTo == addr
+            case .dropped:
+                // When filtering for dropped, only show drop/reject action aliases
+                matchesDestination = alias.actionType != .forward
             }
             guard matchesDestination else { return false }
             
@@ -606,164 +680,182 @@ struct EmailListView: View {
         }
     }
 
+    @ToolbarContentBuilder
+    private var mainToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarLeading) {
+            Menu {
+                // Sort option
+                Picker("Sort Order", selection: $sortOrder) {
+                    ForEach([SortOrder.cloudflareOrder, .alphabetical], id: \.self) { order in
+                        Label(order.label, systemImage: order.systemImage)
+                    }
+                }
+                // Filter option
+                Button {
+                    // Stage current filters before presenting the sheet
+                    pendingDestinationFilter = destinationFilter
+                    pendingDomainFilter = domainFilter
+                    pendingStatusFilter = statusFilter
+                    showFilterSheet = true
+                } label: {
+                    Label("Filter", systemImage: isFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                }
+            } label: {
+                Image(systemName: isFilterActive ? "ellipsis.circle.fill" : "ellipsis.circle")
+                    .imageScale(.large)
+                    .accessibilityLabel("Menu")
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                showingSettings = true
+            } label: {
+                Image(systemName: "gear")
+            }
+        }
+    }
+
     var body: some View {
         content
-    .background(Color(.systemBackground).ignoresSafeArea())
-    .preferredColorScheme(themeColorScheme)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Menu {
-                    // Sort option
-                    Picker("Sort Order", selection: $sortOrder) {
-                        ForEach([SortOrder.cloudflareOrder, .alphabetical], id: \.self) { order in
-                            Label(order.label, systemImage: order.systemImage)
-                        }
-                    }
-                    // Filter option
-                    Button {
-                        // Stage current filters before presenting the sheet
-                        pendingDestinationFilter = destinationFilter
-                        pendingDomainFilter = domainFilter
-                        showFilterSheet = true
-                    } label: {
-                        Label("Filter", systemImage: isFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                    }
-                } label: {
-                    Image(systemName: isFilterActive ? "ellipsis.circle.fill" : "ellipsis.circle")
-                        .imageScale(.large)
-                        .accessibilityLabel("Menu")
-                }
+            .background(Color(.systemBackground).ignoresSafeArea())
+            .preferredColorScheme(themeColorScheme)
+            .toolbar { mainToolbar }
+            .navigationTitle("Email Aliases")
+            .searchable(text: $searchText, prompt: "Search emails or websites")
+            .onChange(of: sortOrder) { _, newValue in
+                persistSortOrder(newValue)
             }
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showingSettings = true
-                } label: {
-                    Image(systemName: "gear")
-                }
+            .onChange(of: destinationFilter) { _, newValue in
+                persistDestinationFilter(newValue)
+                refilterStatistics()
             }
-        }
-        .navigationTitle("Email Aliases")
-        .searchable(text: $searchText, prompt: "Search emails or websites")
-        .onChange(of: sortOrder) { _, newValue in
-            persistSortOrder(newValue)
-        }
-        .onChange(of: destinationFilter) { _, newValue in
-            persistDestinationFilter(newValue)
-            refilterStatistics()
-        }
-        .onChange(of: domainFilter) { _, newValue in
-            persistDomainFilter(newValue)
-            refilterStatistics()
-        }
-        .onChange(of: searchText) { _, _ in
-            refilterStatistics()
-        }
-        .onChange(of: showAnalytics) { _, _ in
-            Task {
-                await loadStatistics()
+            .onChange(of: domainFilter) { _, newValue in
+                persistDomainFilter(newValue)
+                refilterStatistics()
             }
-        }
-        .sheet(isPresented: $showingSettings) {
-            SettingsView()
-        }
-        .sheet(isPresented: $showFilterSheet) {
-            FilterSheetView(
-                pendingDestinationFilter: $pendingDestinationFilter,
-                pendingDomainFilter: $pendingDomainFilter,
-                destinationFilter: $destinationFilter,
-                domainFilter: $domainFilter,
-                showFilterSheet: $showFilterSheet,
-                allDestinationAddresses: allDestinationAddresses,
-                allAvailableDomains: allAvailableDomains
-            )
-        }
-        .sheet(isPresented: $showingComposeSheet) {
-            let enabledAliases = emailAliases.filter { $0.isEnabled }.map { $0.emailAddress }.sorted()
-            let lastUsedEmail = UserDefaults.standard.string(forKey: "lastUsedFromEmail")
-            let defaultEmail = lastUsedEmail != nil && enabledAliases.contains(lastUsedEmail!) 
-                ? lastUsedEmail! 
-                : (enabledAliases.first ?? "")
-            
-            EmailComposeView(
-                fromEmail: defaultEmail,
-                availableEmails: enabledAliases
-            )
-        }
-        .sheet(isPresented: $showingCreateSheet) {
-            EmailCreateView { createdEmail in
-                showToastWithTimer(createdEmail)
+            .onChange(of: statusFilter) { _, _ in
+                refilterStatistics()
             }
-        }
-        .alert("Error", isPresented: $showError, presenting: error) { _ in
-            Button("OK", role: .cancel) { }
-        } message: { error in
-            Text(error.localizedDescription)
-        }
-        .task {
-            // Ensure we have forwarding addresses ready for the filter picker
-            do {
-                if cloudflareClient.zones.count > 1 {
-                    try await cloudflareClient.refreshForwardingAddressesAllZones()
-                } else {
-                    try await cloudflareClient.ensureForwardingAddressesLoaded()
-                }
-            } catch {
-                print("Error loading forwarding addresses for list view: \(error)")
+            .onChange(of: searchText) { _, _ in
+                refilterStatistics()
             }
-            
-            // Show loading spinner only on truly empty initial load
-            if isInitialLoad && emailAliases.isEmpty {
-                await refreshEmailRules(showLoading: true)
-            } else {
-                // Mark as loaded immediately to avoid blocking UI
-                isInitialLoad = false
-                
-                // Silent background refresh to pick up any changes
-                // This keeps data fresh without blocking user interaction
-                Task.detached(priority: .utility) {
-                    await MainActor.run {
-                        Task {
-                            await refreshEmailRules(showLoading: false)
-                        }
-                    }
-                }
-            }
-            
-            // Load statistics (uses cache for instant display, refreshes in background if stale)
-            await loadStatistics()
-        }
-        .onChange(of: needsRefresh) { _, needsRefresh in
-            if needsRefresh {
+            .onChange(of: showAnalytics) { _, _ in
                 Task {
-                    await refreshEmailRules()
-                    self.needsRefresh = false
+                    await loadStatistics()
                 }
             }
-        }
-        // Auto-refresh when zones change (e.g., adding/removing a zone)
-        .onChange(of: cloudflareClient.zones) { _, _ in
-            Task {
-                // Keep forwarding addresses in sync when zones change
-                do {
-                    if cloudflareClient.zones.count > 1 {
-                        try await cloudflareClient.refreshForwardingAddressesAllZones()
-                    } else {
-                        try await cloudflareClient.refreshForwardingAddresses()
+            .sheet(isPresented: $showingSettings) {
+                SettingsView()
+            }
+            .sheet(isPresented: $showFilterSheet) {
+                FilterSheetView(
+                    pendingDestinationFilter: $pendingDestinationFilter,
+                    pendingDomainFilter: $pendingDomainFilter,
+                    pendingStatusFilter: $pendingStatusFilter,
+                    destinationFilter: $destinationFilter,
+                    domainFilter: $domainFilter,
+                    statusFilter: $statusFilter,
+                    showFilterSheet: $showFilterSheet,
+                    allDestinationAddresses: allDestinationAddresses,
+                    allAvailableDomains: allAvailableDomains
+                )
+            }
+            .sheet(isPresented: $showingComposeSheet) {
+                composeSheetContent
+            }
+            .sheet(isPresented: $showingCreateSheet) {
+                EmailCreateView { createdEmail in
+                    showToastWithTimer(createdEmail)
+                }
+            }
+            .alert("Error", isPresented: $showError, presenting: error) { _ in
+                Button("OK", role: .cancel) { }
+            } message: { error in
+                Text(error.localizedDescription)
+            }
+            .task {
+                await initialLoad()
+            }
+            .onChange(of: needsRefresh) { _, needsRefresh in
+                if needsRefresh {
+                    Task {
+                        await refreshEmailRules()
+                        self.needsRefresh = false
                     }
-                } catch {
-                    print("Error refreshing addresses after zone change: \(error)")
                 }
-                await refreshEmailRules()
+            }
+            .onChange(of: cloudflareClient.zones) { _, _ in
+                Task {
+                    await handleZoneChange()
+                }
+            }
+            .onAppear {
+                checkAndReloadIfCacheUpdated()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .statisticsCacheUpdated)) { _ in
+                checkAndReloadIfCacheUpdated()
+            }
+    }
+    
+    @ViewBuilder
+    private var composeSheetContent: some View {
+        let enabledAliases = emailAliases.filter { $0.isEnabled }.map { $0.emailAddress }.sorted()
+        let lastUsedEmail = UserDefaults.standard.string(forKey: "lastUsedFromEmail")
+        let defaultEmail = lastUsedEmail != nil && enabledAliases.contains(lastUsedEmail!) 
+            ? lastUsedEmail! 
+            : (enabledAliases.first ?? "")
+        
+        EmailComposeView(
+            fromEmail: defaultEmail,
+            availableEmails: enabledAliases
+        )
+    }
+    
+    private func initialLoad() async {
+        // Ensure we have forwarding addresses ready for the filter picker
+        do {
+            if cloudflareClient.zones.count > 1 {
+                try await cloudflareClient.refreshForwardingAddressesAllZones()
+            } else {
+                try await cloudflareClient.ensureForwardingAddressesLoaded()
+            }
+        } catch {
+            print("Error loading forwarding addresses for list view: \(error)")
+        }
+        
+        // Show loading spinner only on truly empty initial load
+        if isInitialLoad && emailAliases.isEmpty {
+            await refreshEmailRules(showLoading: true)
+        } else {
+            // Mark as loaded immediately to avoid blocking UI
+            isInitialLoad = false
+            
+            // Silent background refresh to pick up any changes
+            Task.detached(priority: .utility) {
+                await MainActor.run {
+                    Task {
+                        await refreshEmailRules(showLoading: false)
+                    }
+                }
             }
         }
-        .onAppear {
-            // Check if cache has been updated since we last loaded
-            checkAndReloadIfCacheUpdated()
+        
+        // Load statistics
+        await loadStatistics()
+    }
+    
+    private func handleZoneChange() async {
+        // Keep forwarding addresses in sync when zones change
+        do {
+            if cloudflareClient.zones.count > 1 {
+                try await cloudflareClient.refreshForwardingAddressesAllZones()
+            } else {
+                try await cloudflareClient.refreshForwardingAddresses()
+            }
+        } catch {
+            print("Error refreshing addresses after zone change: \(error)")
         }
-        .onReceive(NotificationCenter.default.publisher(for: .statisticsCacheUpdated)) { _ in
-            // Cache was updated by background sync, reload it immediately
-            checkAndReloadIfCacheUpdated()
-        }
+        await refreshEmailRules()
     }
 }
 
@@ -778,7 +870,7 @@ struct EmailRowView: View {
         HStack(spacing: 16) {
             // Icon area: website icon (if available), globe when website exists but no icon, envelope when no website
             ZStack {
-                // Decide icon based on settings
+                // Always show normal icon regardless of action type
                 if cloudflareClient.shouldShowWebsiteLogos && !email.website.isEmpty {
                     // Show website icon if loaded
                     if let uiImage = websiteUIImage {
@@ -839,7 +931,7 @@ struct EmailRowView: View {
                     }
                 }
 
-                // Status indicator
+                // Status indicator for disabled aliases
                 if !email.isEnabled {
                     Circle()
                         .fill(.gray)
@@ -855,6 +947,7 @@ struct EmailRowView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(email.emailAddress)
                     .font(.system(.body, design: .rounded, weight: .medium))
+                    .foregroundStyle(email.actionType != .forward ? .red : .primary)
                     .strikethrough(!email.isEnabled)
                 
                 if !email.website.isEmpty && cloudflareClient.shouldShowWebsitesInList {
@@ -866,6 +959,13 @@ struct EmailRowView: View {
             .padding(.vertical, 8)
             
             Spacer()
+            
+            // Drop/Reject indicator on the right side
+            if email.actionType != .forward {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.red)
+            }
         }
         .contentShape(Rectangle())
         .opacity(email.isEnabled ? 1.0 : 0.6)
@@ -926,8 +1026,10 @@ extension Color {
 private struct FilterSheetView: View {
     @Binding var pendingDestinationFilter: DestinationFilter
     @Binding var pendingDomainFilter: EmailListView.DomainFilter
+    @Binding var pendingStatusFilter: EmailListView.StatusFilter
     @Binding var destinationFilter: DestinationFilter
     @Binding var domainFilter: EmailListView.DomainFilter
+    @Binding var statusFilter: EmailListView.StatusFilter
     @Binding var showFilterSheet: Bool
     let allDestinationAddresses: [String]
     let allAvailableDomains: [String]
@@ -981,6 +1083,36 @@ private struct FilterSheetView: View {
                         }
                     }
                 }
+                
+                Section(header: Text("Status")) {
+                    Button(action: { pendingStatusFilter = .all }) {
+                        HStack {
+                            Text("All")
+                            if pendingStatusFilter == .all {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                    Button(action: { pendingStatusFilter = .dropped }) {
+                        HStack {
+                            Text("Dropped Emails")
+                            if pendingStatusFilter == .dropped {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                    Button(action: { pendingStatusFilter = .disabled }) {
+                        HStack {
+                            Text("Disabled Emails")
+                            if pendingStatusFilter == .disabled {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
             }
             .navigationTitle("Filter")
             .navigationBarTitleDisplayMode(.inline)
@@ -993,11 +1125,13 @@ private struct FilterSheetView: View {
                         // Reset filters to defaults and apply immediately
                         destinationFilter = .all
                         domainFilter = .all
+                        statusFilter = .all
                         pendingDestinationFilter = .all
                         pendingDomainFilter = .all
+                        pendingStatusFilter = .all
                         showFilterSheet = false
                     }
-                    .disabled(destinationFilter == .all && domainFilter == .all)
+                    .disabled(destinationFilter == .all && domainFilter == .all && statusFilter == .all)
                 }
             }
             .safeAreaInset(edge: .bottom) {
@@ -1006,6 +1140,7 @@ private struct FilterSheetView: View {
                         Button {
                             destinationFilter = pendingDestinationFilter
                             domainFilter = pendingDomainFilter
+                            statusFilter = pendingStatusFilter
                             showFilterSheet = false
                         } label: {
                             Text("Apply Filters")
@@ -1015,7 +1150,7 @@ private struct FilterSheetView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .tint(.blue)
-                        .disabled(pendingDestinationFilter == destinationFilter && pendingDomainFilter == domainFilter)
+                        .disabled(pendingDestinationFilter == destinationFilter && pendingDomainFilter == domainFilter && pendingStatusFilter == statusFilter)
                         .padding(.horizontal)
                         .padding(.top, 8)
                         .padding(.bottom)

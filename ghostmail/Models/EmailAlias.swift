@@ -2,6 +2,21 @@ import Foundation
 import SwiftData
 import CloudKit
 
+/// The action type for an email routing rule
+enum EmailRuleActionType: String, Codable {
+    case forward = "forward"
+    case drop = "drop"
+    case reject = "reject"
+    
+    var displayName: String {
+        switch self {
+        case .forward: return "Forward"
+        case .drop: return "Drop"
+        case .reject: return "Reject"
+        }
+    }
+}
+
 @Model
 final class EmailAlias {
     var id: String = UUID().uuidString
@@ -18,8 +33,16 @@ final class EmailAlias {
     var zoneId: String = ""
     var isLoggedOut: Bool = false
     var userIdentifier: String = ""
+    /// The action type: forward, drop, or reject. Defaults to "forward" for backward compatibility.
+    var actionTypeRaw: String = "forward"
     
-    init(emailAddress: String, forwardTo: String = "", isManuallyCreated: Bool = false, zoneId: String = "") {
+    /// Computed property to get/set the action type as an enum
+    var actionType: EmailRuleActionType {
+        get { EmailRuleActionType(rawValue: actionTypeRaw) ?? .forward }
+        set { actionTypeRaw = newValue.rawValue }
+    }
+    
+    init(emailAddress: String, forwardTo: String = "", isManuallyCreated: Bool = false, zoneId: String = "", actionType: EmailRuleActionType = .forward) {
         self.id = UUID().uuidString
         self.emailAddress = emailAddress
         self.website = ""
@@ -31,8 +54,9 @@ final class EmailAlias {
         self.isLoggedOut = false
         self.userIdentifier = ""
         self.zoneId = zoneId
+        self.actionTypeRaw = actionType.rawValue
         
-        print("EmailAlias initialized - address: \(emailAddress), forward to: \(forwardTo)")
+        print("EmailAlias initialized - address: \(emailAddress), action: \(actionType.rawValue), forward to: \(forwardTo)")
     }
     
     static func isEmailAddressUnique(_ emailAddress: String, context: ModelContext) -> Bool {

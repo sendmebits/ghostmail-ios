@@ -311,11 +311,14 @@ class CloudflareClient: ObservableObject {
         var seenEmailAddresses = Set<String>()
         
         for rule in allRules {
-            // Skip rules that don't have email forwarding
-            guard let forwardAction = rule.actions.first(where: { $0.type == "forward" }),
-                  let forwardTo = forwardAction.value?.first else {
+            // Get the action type - support forward, drop, and reject
+            guard let action = rule.actions.first,
+                  ["forward", "drop", "reject"].contains(action.type) else {
                 continue
             }
+            
+            let actionType = action.type
+            let forwardTo = actionType == "forward" ? (action.value?.first ?? "") : ""
             
             // Skip catch-all rules or rules without a "to" matcher
             guard let matcher = rule.matchers.first,
@@ -332,14 +335,15 @@ class CloudflareClient: ObservableObject {
             }
             
             seenEmailAddresses.insert(emailAddress)
-            print("Creating alias for \(emailAddress) with forward to: \(forwardTo)")
+            print("Creating alias for \(emailAddress) with action: \(actionType), forward to: \(forwardTo)")
             
             let alias = CloudflareEmailRule(
                 emailAddress: emailAddress,
                 cloudflareTag: rule.tag,
                 isEnabled: rule.enabled,
                 forwardTo: forwardTo,
-                zoneId: self.zoneId
+                zoneId: self.zoneId,
+                actionType: actionType
             )
             
             uniqueRules.append(alias)
@@ -387,11 +391,16 @@ class CloudflareClient: ObservableObject {
         var uniqueRules: [CloudflareEmailRule] = []
         var seenEmailAddresses = Set<String>()
         for rule in allRules {
-            guard let forwardAction = rule.actions.first(where: { $0.type == "forward" }), let forwardTo = forwardAction.value?.first else { continue }
+            // Get the action type - support forward, drop, and reject
+            guard let action = rule.actions.first,
+                  ["forward", "drop", "reject"].contains(action.type) else { continue }
+            let actionType = action.type
+            let forwardTo = actionType == "forward" ? (action.value?.first ?? "") : ""
+            
             guard let matcher = rule.matchers.first, matcher.type == "literal", matcher.field == "to", let emailAddress = matcher.value else { continue }
             if seenEmailAddresses.contains(emailAddress) { continue }
             seenEmailAddresses.insert(emailAddress)
-            uniqueRules.append(CloudflareEmailRule(emailAddress: emailAddress, cloudflareTag: rule.tag, isEnabled: rule.enabled, forwardTo: forwardTo, zoneId: zone.zoneId))
+            uniqueRules.append(CloudflareEmailRule(emailAddress: emailAddress, cloudflareTag: rule.tag, isEnabled: rule.enabled, forwardTo: forwardTo, zoneId: zone.zoneId, actionType: actionType))
         }
         return uniqueRules
     }
@@ -498,6 +507,7 @@ class CloudflareClient: ObservableObject {
         let to: String
         let from: String
         let datetime: String
+        let action: String  // "forward", "drop", or "reject"
     }
 
     func fetchEmailStatistics(for zone: CloudflareZone, days: Int = 30) async throws -> [EmailStatistic] {
@@ -541,6 +551,7 @@ class CloudflareClient: ObservableObject {
                         to
                         from
                         datetime
+                        action
                       }
                     }
                   }
@@ -568,19 +579,26 @@ class CloudflareClient: ObservableObject {
                     return [String: [EmailStatistic.EmailDetail]]()
                 }
                 
+                // Debug: Log action value distribution
+                let actionCounts = logs.reduce(into: [String: Int]()) { counts, log in
+                    counts[log.action, default: 0] += 1
+                }
+                print("📧 Email action distribution: \(actionCounts)")
+                
                 // Parse dates inside the task
                 let taskIsoFormatter = ISO8601DateFormatter()
                 taskIsoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
                 
                 return logs.reduce(into: [String: [EmailStatistic.EmailDetail]]()) { result, log in
+                    let action = EmailRoutingAction(from: log.action)
                     if let date = taskIsoFormatter.date(from: log.datetime) {
-                        result[log.to, default: []].append(EmailStatistic.EmailDetail(from: log.from, date: date))
+                        result[log.to, default: []].append(EmailStatistic.EmailDetail(from: log.from, date: date, action: action))
                     } else {
                         // Fallback for dates without fractional seconds
                         let fallbackFormatter = ISO8601DateFormatter()
                         fallbackFormatter.formatOptions = [.withInternetDateTime]
                         if let date = fallbackFormatter.date(from: log.datetime) {
-                            result[log.to, default: []].append(EmailStatistic.EmailDetail(from: log.from, date: date))
+                            result[log.to, default: []].append(EmailStatistic.EmailDetail(from: log.from, date: date, action: action))
                         }
                     }
                 }
@@ -716,13 +734,21 @@ class CloudflareClient: ObservableObject {
     defaults.removeObject(forKey: "cloudflareZones")
     }
     
-    func updateEmailRule(tag: String, emailAddress: String, isEnabled: Bool, forwardTo: String) async throws {
+    func updateEmailRule(tag: String, emailAddress: String, isEnabled: Bool, forwardTo: String, actionType: String = "forward") async throws {
         let url = URL(string: "\(baseURL)/zones/\(zoneId)/email/routing/rules/\(tag)")!
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.allHTTPHeaderFields = headers
         
-        let rule = [
+        // Build actions based on action type
+        let actions: [[String: Any]]
+        if actionType == "forward" {
+            actions = [["type": "forward", "value": [forwardTo]]]
+        } else {
+            actions = [["type": actionType]]  // drop or reject don't need a value
+        }
+        
+        let rule: [String: Any] = [
             "matchers": [
                 [
                     "type": "literal",
@@ -730,15 +756,10 @@ class CloudflareClient: ObservableObject {
                     "value": emailAddress
                 ]
             ],
-            "actions": [
-                [
-                    "type": "forward",
-                    "value": [forwardTo]
-                ]
-            ],
+            "actions": actions,
             "enabled": isEnabled,
             "priority": 0
-        ] as [String: Any]
+        ]
         
         request.httpBody = try JSONSerialization.data(withJSONObject: rule)
         
@@ -753,7 +774,7 @@ class CloudflareClient: ObservableObject {
     }
 
     // Overload to update a rule in a specified zone using that zone's token
-    func updateEmailRule(tag: String, emailAddress: String, isEnabled: Bool, forwardTo: String, in zone: CloudflareZone) async throws {
+    func updateEmailRule(tag: String, emailAddress: String, isEnabled: Bool, forwardTo: String, in zone: CloudflareZone, actionType: String = "forward") async throws {
         let url = URL(string: "\(baseURL)/zones/\(zone.zoneId)/email/routing/rules/\(tag)")!
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
@@ -762,7 +783,15 @@ class CloudflareClient: ObservableObject {
             "Content-Type": "application/json"
         ]
 
-        let rule = [
+        // Build actions based on action type
+        let actions: [[String: Any]]
+        if actionType == "forward" {
+            actions = [["type": "forward", "value": [forwardTo]]]
+        } else {
+            actions = [["type": actionType]]  // drop or reject don't need a value
+        }
+
+        let rule: [String: Any] = [
             "matchers": [
                 [
                     "type": "literal",
@@ -770,15 +799,10 @@ class CloudflareClient: ObservableObject {
                     "value": emailAddress
                 ]
             ],
-            "actions": [
-                [
-                    "type": "forward",
-                    "value": [forwardTo]
-                ]
-            ],
+            "actions": actions,
             "enabled": isEnabled,
             "priority": 0
-        ] as [String: Any]
+        ]
 
         request.httpBody = try JSONSerialization.data(withJSONObject: rule)
 
@@ -1517,6 +1541,7 @@ class CloudflareClient: ObservableObject {
         for (index, rule) in cloudflareRules.enumerated() {
             let emailAddress = rule.emailAddress
             let forwardTo = rule.forwardTo
+            let actionType = EmailRuleActionType(rawValue: rule.actionType) ?? .forward
             
             if let existing = existingAliasesMap[emailAddress] {
                 // Reactivate if it was logged out and update fields
@@ -1527,6 +1552,7 @@ class CloudflareClient: ObservableObject {
                 existing.cloudflareTag = rule.cloudflareTag
                 existing.isEnabled = rule.isEnabled
                 existing.forwardTo = forwardTo
+                existing.actionType = actionType
                 existing.sortIndex = index + 1
                 existing.zoneId = newZoneId
             } else {
@@ -1534,7 +1560,8 @@ class CloudflareClient: ObservableObject {
                 let newAlias = EmailAlias(
                     emailAddress: emailAddress,
                     forwardTo: forwardTo,
-                    zoneId: rule.zoneId
+                    zoneId: rule.zoneId,
+                    actionType: actionType
                 )
                 newAlias.cloudflareTag = rule.cloudflareTag
                 newAlias.isEnabled = rule.isEnabled
@@ -1625,8 +1652,9 @@ struct CloudflareEmailRule {
     let emailAddress: String
     let cloudflareTag: String
     let isEnabled: Bool
-    let forwardTo: String
+    let forwardTo: String  // Empty string for drop/reject actions
     let zoneId: String
+    let actionType: String  // "forward", "drop", or "reject"
     
     // Add any other properties needed for email rules
 }
