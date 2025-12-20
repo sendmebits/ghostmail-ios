@@ -330,12 +330,10 @@ class CloudflareClient: ObservableObject {
             
             // Skip if we've already seen this email address
             if seenEmailAddresses.contains(emailAddress) {
-                print("⚠️ Skipping duplicate Cloudflare rule for: \(emailAddress)")
                 continue
             }
             
             seenEmailAddresses.insert(emailAddress)
-            print("Creating alias for \(emailAddress) with action: \(actionType), forward to: \(forwardTo)")
             
             let alias = CloudflareEmailRule(
                 emailAddress: emailAddress,
@@ -579,12 +577,6 @@ class CloudflareClient: ObservableObject {
                     return [String: [EmailStatistic.EmailDetail]]()
                 }
                 
-                // Debug: Log action value distribution
-                let actionCounts = logs.reduce(into: [String: Int]()) { counts, log in
-                    counts[log.action, default: 0] += 1
-                }
-                print("📧 Email action distribution: \(actionCounts)")
-                
                 // Parse dates inside the task
                 let taskIsoFormatter = ISO8601DateFormatter()
                 taskIsoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -825,7 +817,6 @@ class CloudflareClient: ObservableObject {
         // Check if we have valid cached data
         let cacheAge = Date().timeIntervalSince(lastForwardingAddressesFetch)
         if !forwardingAddressesCache.isEmpty && cacheAge < cacheValidityDuration {
-            print("Using cached forwarding addresses (age: \(Int(cacheAge))s)")
             await MainActor.run {
                 self.forwardingAddresses = forwardingAddressesCache
             }
@@ -833,18 +824,14 @@ class CloudflareClient: ObservableObject {
         }
         
         if forwardingAddresses.isEmpty {
-            print("Forwarding addresses not loaded, fetching now...")
             
             do {
                 try await refreshForwardingAddresses()
                 
                 // Add fallback logic if we couldn't get any verified addresses
                 if forwardingAddresses.isEmpty {
-                    print("Warning: No verified forwarding addresses found. Using default email as fallback.")
-                    
                     // Check if we at least have a default forwarding email stored
                     if !forwardingEmail.isEmpty {
-                        print("Using stored default email as fallback: \(forwardingEmail)")
                         await MainActor.run {
                             self.forwardingAddresses = [forwardingEmail]
                             self.forwardingAddressesCache = [forwardingEmail]
@@ -852,22 +839,17 @@ class CloudflareClient: ObservableObject {
                     } else if !accountId.isEmpty {
                         // As a last resort, create a dummy fallback to prevent UI issues
                         let fallbackEmail = "default@\(emailDomain)"
-                        print("No stored email available. Using generated fallback: \(fallbackEmail)")
                         await MainActor.run {
                             self.forwardingAddresses = [fallbackEmail]
                             self.forwardingAddressesCache = [fallbackEmail]
                         }
                     } else {
-                        print("Cannot generate fallback address - missing domain information.")
                         throw CloudflareError(message: "No forwarding addresses available and unable to create fallback.")
                     }
                 }
             } catch {
-                print("Error in ensureForwardingAddressesLoaded: \(error.localizedDescription)")
                 throw error
             }
-        } else {
-            print("Using \(forwardingAddresses.count) cached forwarding addresses")
         }
     }
     
@@ -1015,7 +997,6 @@ class CloudflareClient: ObservableObject {
         // Check cache first
         let cacheAge = Date().timeIntervalSince(lastForwardingAddressesFetch)
         if !forwardingAddressesCache.isEmpty && cacheAge < cacheValidityDuration {
-            print("Using cached forwarding addresses (age: \(Int(cacheAge))s)")
             await MainActor.run {
                 self.forwardingAddresses = forwardingAddressesCache
             }
@@ -1024,9 +1005,7 @@ class CloudflareClient: ObservableObject {
         
         do {
             // Fetch fresh from the Cloudflare API
-            print("Calling fetchForwardingAddresses() directly")
             try await fetchForwardingAddresses()
-            print("Successfully refreshed forwarding addresses. Count: \(self.forwardingAddresses.count)")
             
             // Update cache
             await MainActor.run {
@@ -1115,31 +1094,15 @@ class CloudflareClient: ObservableObject {
             let addressResponse = try JSONDecoder().decode(AddressResponse.self, from: data)
             
             if addressResponse.success {
-                // Log the raw result for debugging
-                print("API returned \(addressResponse.result.count) total addresses")
-                
                 // Consider an address verified if it has a non-nil, non-empty verified timestamp
                 let verifiedAddresses = Set(
                     addressResponse.result
-                        .filter { emailAddress in 
-                            // Log verification status
-                            let isVerified = emailAddress.verified != nil && !emailAddress.verified!.isEmpty
-                            if !isVerified {
-                                print("Skipping unverified address: \(emailAddress.email)")
-                            }
-                            return isVerified
-                        }
+                        .filter { $0.verified != nil && !$0.verified!.isEmpty }
                         .map { $0.email }
                 )
                 
-                print("Fetched \(verifiedAddresses.count) verified forwarding addresses out of \(addressResponse.result.count) total")
-                
                 if verifiedAddresses.isEmpty && !addressResponse.result.isEmpty {
-                    print("Warning: Found addresses but none are verified. This may indicate a verification issue.")
-                    // Show verification status of all addresses for debugging
-                    for (index, address) in addressResponse.result.enumerated() {
-                        print("Address \(index+1): \(address.email), Verified: \(address.verified ?? "null")")
-                    }
+                    print("Warning: Found addresses but none are verified")
                 }
                 
                 await MainActor.run {
@@ -1147,19 +1110,10 @@ class CloudflareClient: ObservableObject {
                 }
             } else {
                 let errorMessage = addressResponse.errors.first?.message ?? "Failed to get forwarding addresses from response"
-                print("API returned success=false: \(errorMessage)")
                 throw CloudflareError(message: errorMessage)
             }
         } catch let decodingError as DecodingError {
-            // Better error handling for JSON decoding issues
-            print("Decoding error: \(decodingError)")
-            if let responseText = String(data: data, encoding: .utf8) {
-                print("Response data: \(responseText)")
-            }
             throw CloudflareError(message: "Failed to decode API response: \(decodingError.localizedDescription)")
-        } catch {
-            print("Other error: \(error)")
-            throw error
         }
     }
 

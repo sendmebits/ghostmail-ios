@@ -204,8 +204,6 @@ struct ghostmailApp: App {
                     
                     // If authenticated, refresh data from Cloudflare in parallel for faster startup
                     if cloudflareClient.isAuthenticated {
-                        print("App startup: Refreshing data in parallel")
-                        
                         // Run critical startup operations in parallel with timeout
                         await withTaskGroup(of: Void.self) { group in
                             // Task 1: Fetch domain name if needed
@@ -215,7 +213,6 @@ struct ghostmailApp: App {
                                         try await withTimeout(seconds: 5) {
                                             try await cloudflareClient.fetchDomainName()
                                         }
-                                        print("App startup: Domain name fetched")
                                     } catch {
                                         print("App startup: Domain name fetch failed: \(error)")
                                     }
@@ -228,7 +225,6 @@ struct ghostmailApp: App {
                                     try await withTimeout(seconds: 5) {
                                         try await cloudflareClient.refreshForwardingAddresses()
                                     }
-                                    print("App startup: Forwarding addresses refreshed")
                                 } catch {
                                     print("App startup: Forwarding addresses refresh failed: \(error)")
                                 }
@@ -242,15 +238,12 @@ struct ghostmailApp: App {
                                         try await withTimeout(seconds: 8) {
                                             try await cloudflareClient.refreshSubdomainsAllZones()
                                         }
-                                        print("App startup: Subdomains refreshed")
                                     } catch {
-                                        print("App startup: Subdomains refresh failed (non-critical): \(error)")
+                                        print("App startup: Subdomains refresh failed: \(error)")
                                     }
                                 }
                             }
                         }
-                        
-                        print("App startup: Parallel refresh completed")
                     }
                     
                     // Update user identifiers and trigger sync on app launch - now non-blocking
@@ -328,26 +321,18 @@ struct ghostmailApp: App {
     @MainActor
     private func performForegroundSyncIfNeeded() async {
         guard cloudflareClient.isAuthenticated else { return }
-        guard !isUpdating else {
-            print("Foreground sync: Skipped (update already in progress)")
-            return
-        }
+        guard !isUpdating else { return }
         
         let now = Date()
         let timeSinceLastForeground = now.timeIntervalSince(lastForegroundSync)
         
         // Use shorter cooldown for foreground returns to feel responsive
-        guard timeSinceLastForeground >= foregroundCooldown else {
-            print("Foreground sync: Skipped (cooldown, \(Int(foregroundCooldown - timeSinceLastForeground))s remaining)")
-            return
-        }
+        guard timeSinceLastForeground >= foregroundCooldown else { return }
         
         // Update timestamps
         lastForegroundSync = now
         lastUpdateCheck = now // Also reset background timer to avoid double-syncing
         isUpdating = true
-        
-        print("Foreground sync: Starting (last sync \(Int(timeSinceLastForeground))s ago)")
         
         do {
             // Sync email rules - this runs in background and updates SwiftData
@@ -357,10 +342,8 @@ struct ghostmailApp: App {
             if showAnalytics {
                 await syncEmailStatisticsInBackground()
             }
-            
-            print("Foreground sync: Completed successfully")
         } catch {
-            print("Foreground sync: Failed with error: \(error)")
+            print("Foreground sync failed: \(error)")
         }
         
         isUpdating = false
@@ -372,10 +355,7 @@ struct ghostmailApp: App {
     private func performBackgroundUpdateIfNeeded() async {
         // Prevent concurrent executions
         guard cloudflareClient.isAuthenticated else { return }
-        guard !isUpdating else {
-            print("Background update: Skipped (already in progress)")
-            return
-        }
+        guard !isUpdating else { return }
         
         let now = Date()
         let timeSinceLastUpdate = now.timeIntervalSince(lastUpdateCheck)
@@ -385,7 +365,6 @@ struct ghostmailApp: App {
             isUpdating = true
             lastUpdateCheck = now
             
-            print("Background update: Starting check (last check was \(Int(timeSinceLastUpdate))s ago)")
             do {
                 // Sync email rules from Cloudflare
                 try await cloudflareClient.syncEmailRules(modelContext: modelContainer.mainContext)
@@ -394,15 +373,11 @@ struct ghostmailApp: App {
                 if showAnalytics {
                     await syncEmailStatisticsInBackground()
                 }
-                
-                print("Background update: Completed successfully")
             } catch {
-                print("Background update: Failed with error: \(error)")
+                print("Background update failed: \(error)")
             }
             
             isUpdating = false
-        } else {
-            // print("Background update: Skipped (too soon, \(Int(updateInterval - timeSinceLastUpdate))s remaining)")
         }
     }
     
@@ -411,8 +386,6 @@ struct ghostmailApp: App {
     /// Sync email statistics in the background and update the cache
     /// This is lightweight and doesn't affect the UI
     private func syncEmailStatisticsInBackground() async {
-        print("Background update: Syncing email statistics...")
-        
         var allStats: [EmailStatistic] = []
         
         // Fetch statistics for all zones
