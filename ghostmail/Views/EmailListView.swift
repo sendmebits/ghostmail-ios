@@ -18,55 +18,6 @@ enum DestinationFilter: Equatable {
     }
 }
 
-/// Represents either a real EmailAlias or a virtual "dropped" email entry from statistics
-enum EmailListItem: Identifiable, Hashable {
-    case alias(EmailAlias)
-    case droppedEmail(DroppedEmailEntry)
-    
-    var id: String {
-        switch self {
-        case .alias(let alias):
-            return "alias_\(alias.id)"
-        case .droppedEmail(let entry):
-            return "dropped_\(entry.emailAddress)"
-        }
-    }
-    
-    var emailAddress: String {
-        switch self {
-        case .alias(let alias):
-            return alias.emailAddress
-        case .droppedEmail(let entry):
-            return entry.emailAddress
-        }
-    }
-    
-    var sortIndex: Int {
-        switch self {
-        case .alias(let alias):
-            return alias.sortIndex
-        case .droppedEmail(let entry):
-            // Put dropped emails at the end, ordered by most recent drop
-            return Int.max - entry.dropCount
-        }
-    }
-}
-
-/// Virtual entry for emails that were dropped (not forwarded)
-struct DroppedEmailEntry: Identifiable, Hashable {
-    let id: String
-    let emailAddress: String
-    let dropCount: Int
-    let recentDrops: [EmailStatistic.EmailDetail]
-    
-    init(emailAddress: String, dropCount: Int, recentDrops: [EmailStatistic.EmailDetail]) {
-        self.id = "dropped_\(emailAddress)"
-        self.emailAddress = emailAddress
-        self.dropCount = dropCount
-        self.recentDrops = recentDrops
-    }
-}
-
 struct EmailListView: View {
     @Binding var searchText: String
     @State private var sortOrder: SortOrder = .cloudflareOrder

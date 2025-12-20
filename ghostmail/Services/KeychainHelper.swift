@@ -74,42 +74,6 @@ final class KeychainHelper {
         }
     }
     
-    /// Save data to Keychain, throwing on failure
-    func saveOrThrow(_ data: Data, service: String, account: String) throws {
-        let query = [
-            kSecValueData: data,
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-            kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked
-        ] as [CFString: Any]
-        
-        let status = SecItemAdd(query as CFDictionary, nil)
-        
-        if status == errSecSuccess {
-            return
-        } else if status == errSecDuplicateItem {
-            let searchQuery = [
-                kSecAttrService: service,
-                kSecAttrAccount: account,
-                kSecClass: kSecClassGenericPassword
-            ] as [CFString: Any]
-            
-            let attributesToUpdate = [
-                kSecValueData: data,
-                kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked
-            ] as [CFString: Any]
-            
-            let updateStatus = SecItemUpdate(searchQuery as CFDictionary, attributesToUpdate as CFDictionary)
-            
-            if updateStatus != errSecSuccess {
-                throw KeychainError.updateFailed(updateStatus)
-            }
-        } else {
-            throw KeychainError.saveFailed(status)
-        }
-    }
-    
     func read(service: String, account: String) -> Data? {
         let query = [
             kSecAttrService: service,
@@ -160,13 +124,6 @@ final class KeychainHelper {
             return false
         }
         return save(data, service: service, account: account)
-    }
-    
-    func saveOrThrow(_ string: String, service: String, account: String) throws {
-        guard let data = string.data(using: .utf8) else {
-            throw KeychainError.dataConversionFailed
-        }
-        try saveOrThrow(data, service: service, account: account)
     }
     
     func readString(service: String, account: String) -> String? {

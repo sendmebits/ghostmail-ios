@@ -820,14 +820,6 @@ class CloudflareClient: ObservableObject {
         domainName.isEmpty ? "Loading..." : domainName
     }
     
-    func createFullEmailAddress(username: String) -> String {
-        "\(username)@\(emailDomain)"
-    }
-    
-    func extractUsername(from email: String) -> String {
-        email.components(separatedBy: "@").first ?? email
-    }
-    
     // Ensure we have the current forwarding addresses available - now with caching
     func ensureForwardingAddressesLoaded() async throws {
         // Check if we have valid cached data

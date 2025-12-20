@@ -58,45 +58,6 @@ final class EmailAlias {
         
         print("EmailAlias initialized - address: \(emailAddress), action: \(actionType.rawValue), forward to: \(forwardTo)")
     }
-    
-    static func isEmailAddressUnique(_ emailAddress: String, context: ModelContext) -> Bool {
-        let descriptor = FetchDescriptor<EmailAlias>(
-            predicate: #Predicate<EmailAlias> { alias in
-                alias.emailAddress == emailAddress
-            }
-        )
-        
-        do {
-            let matches = try context.fetch(descriptor)
-            return matches.isEmpty
-        } catch {
-            print("Error checking email uniqueness: \(error)")
-            return false
-        }
-    }
-    
-    // Helper method to get stable identifier for CloudKit
-    static func stableIdentifier(for emailAddress: String) -> String {
-        return "alias_\(emailAddress.lowercased())"
-    }
-    
-    // Helper method to set user identifier for all aliases
-    static func setUserIdentifier(_ identifier: String, in context: ModelContext) {
-        do {
-            let descriptor = FetchDescriptor<EmailAlias>()
-            let allAliases = try context.fetch(descriptor)
-            
-            for alias in allAliases {
-                if alias.userIdentifier.isEmpty {
-                    alias.userIdentifier = identifier
-                }
-            }
-            
-            try context.save()
-        } catch {
-            print("Error setting user identifier for aliases: \(error)")
-        }
-    }
 
     // Remove duplicate aliases by emailAddress while merging useful fields.
     // Returns number of records deleted.

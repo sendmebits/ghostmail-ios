@@ -82,15 +82,6 @@ class StatisticsCache {
         UserDefaults.standard.removeObject(forKey: timestampKey)
     }
     
-    /// Check if cache exists and is fresh (< 24 hours old)
-    var isFresh: Bool {
-        guard let timestamp = UserDefaults.standard.object(forKey: timestampKey) as? Date else {
-            return false
-        }
-        let age = Date().timeIntervalSince(timestamp)
-        return age <= maxCacheAge
-    }
-    
     /// Get statistics for a specific email address from cache
     func loadForEmail(_ emailAddress: String) -> (statistic: EmailStatistic?, isStale: Bool)? {
         guard let cached = load() else {

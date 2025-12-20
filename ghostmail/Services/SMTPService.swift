@@ -331,9 +331,7 @@ class SMTPService: @unchecked Sendable {
     
     private enum SMTPState {
         case initial
-        case connected
         case ehloSent
-        case tlsStarted
         case authenticated
         case authUsernameSent
         case authPasswordSent

@@ -10,9 +10,6 @@ final class IconCache {
     private let fileManager = FileManager.default
     private let cacheDir: URL
     
-    // Semaphore to limit concurrent icon fetches (prevents request flooding)
-    private let fetchSemaphore = DispatchSemaphore(value: 6)
-    
     // Actor to serialize SVG rendering operations
     private let svgRenderActor = SVGRenderActor()
 
@@ -328,13 +325,6 @@ final class IconCache {
             }
             task.resume()
         }
-    }
-
-    // MARK: - SVG Rasterization
-    
-    // Rasterize SVG data using the shared actor
-    private func rasterizeSVGData(_ data: Data, targetSize: CGSize = CGSize(width: 64, height: 64)) async -> UIImage? {
-        return await svgRenderActor.rasterize(data: data, targetSize: targetSize)
     }
 
     /// Synchronous check to quickly determine whether we previously marked this host as missing.
