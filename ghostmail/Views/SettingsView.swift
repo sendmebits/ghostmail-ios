@@ -78,9 +78,9 @@ struct SettingsView: View {
     private func exportToCSV() {
         let allowedZoneIds = Set(cloudflareClient.zones.map { $0.zoneId.trimmingCharacters(in: .whitespacesAndNewlines) })
         let filtered = emailAliases.filter { allowedZoneIds.contains($0.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)) }
-        let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To\n" + filtered.map { alias in
+        let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To,Action Type\n" + filtered.map { alias in
             let createdStr = alias.created?.ISO8601Format() ?? ""
-            return "\(alias.emailAddress),\(alias.website),\(alias.notes),\(createdStr),\(alias.isEnabled),\(alias.forwardTo)"
+            return "\(alias.emailAddress),\(alias.website),\(alias.notes),\(createdStr),\(alias.isEnabled),\(alias.forwardTo),\(alias.actionType.rawValue)"
         }.joined(separator: "\n")
         
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("ghostmail_backup.csv")
@@ -139,6 +139,15 @@ struct SettingsView: View {
                 let isEnabled = fields[4].trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "true"
                 let forwardTo = fields[5].trimmingCharacters(in: .whitespacesAndNewlines)
                 
+                // Parse action type (optional 7th column, defaults to "forward" for backward compatibility)
+                let actionType: EmailRuleActionType
+                if fields.count >= 7 {
+                    let actionRaw = fields[6].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    actionType = EmailRuleActionType(rawValue: actionRaw) ?? .forward
+                } else {
+                    actionType = .forward
+                }
+                
                 // Extract domain from email
                 let emailParts = emailAddress.split(separator: "@")
                 guard emailParts.count == 2 else { continue }
@@ -158,6 +167,7 @@ struct SettingsView: View {
                     existingAlias.isEnabled = isEnabled
                     existingAlias.forwardTo = forwardTo
                     existingAlias.created = created  // Always overwrite the created date, even if nil
+                    existingAlias.actionType = actionType
                     
                     // Update Cloudflare if we have a tag, using the alias' zone if available
                     if let tag = existingAlias.cloudflareTag {
@@ -176,7 +186,8 @@ struct SettingsView: View {
                                     emailAddress: emailAddress,
                                     isEnabled: isEnabled,
                                     forwardTo: forwardTo,
-                                    in: z
+                                    in: z,
+                                    actionType: actionType.rawValue
                                 )
                             } else {
                                 // Fallback to current primary zone
@@ -184,7 +195,8 @@ struct SettingsView: View {
                                     tag: tag,
                                     emailAddress: emailAddress,
                                     isEnabled: isEnabled,
-                                    forwardTo: forwardTo
+                                    forwardTo: forwardTo,
+                                    actionType: actionType.rawValue
                                 )
                             }
                         }
@@ -202,14 +214,15 @@ struct SettingsView: View {
                                     forwardTo: forwardTo,
                                     in: z
                                 )
-                                // If CSV specifies disabled, reflect that state
-                                if isEnabled == false {
+                                // Update if disabled or non-forward action type
+                                if isEnabled == false || actionType != .forward {
                                     try await cloudflareClient.updateEmailRule(
                                         tag: rule.tag,
                                         emailAddress: emailAddress,
-                                        isEnabled: false,
+                                        isEnabled: isEnabled,
                                         forwardTo: forwardTo,
-                                        in: z
+                                        in: z,
+                                        actionType: actionType.rawValue
                                     )
                                 }
                             } else {
@@ -217,12 +230,14 @@ struct SettingsView: View {
                                     emailAddress: emailAddress,
                                     forwardTo: forwardTo
                                 )
-                                if isEnabled == false {
+                                // Update if disabled or non-forward action type
+                                if isEnabled == false || actionType != .forward {
                                     try await cloudflareClient.updateEmailRule(
                                         tag: rule.tag,
                                         emailAddress: emailAddress,
-                                        isEnabled: false,
-                                        forwardTo: forwardTo
+                                        isEnabled: isEnabled,
+                                        forwardTo: forwardTo,
+                                        actionType: actionType.rawValue
                                     )
                                 }
                             }
@@ -232,7 +247,8 @@ struct SettingsView: View {
                                 emailAddress: emailAddress,
                                 forwardTo: forwardTo,
                                 isManuallyCreated: created != nil,
-                                zoneId: zone?.zoneId ?? cloudflareClient.zoneId
+                                zoneId: zone?.zoneId ?? cloudflareClient.zoneId,
+                                actionType: actionType
                             )
                             newAlias.website = website
                             newAlias.notes = notes
