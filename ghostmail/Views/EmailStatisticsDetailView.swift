@@ -73,11 +73,16 @@ struct EmailStatisticsDetailView: View {
                     Section {
                         ForEach(group.emails, id: \.self) { detail in
                             HStack(spacing: 12) {
-                                // Status icon
-                                Image(systemName: detail.action.iconName)
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundStyle(detail.action.color)
-                                    .frame(width: 18)
+                                // Status icon with background
+                                ZStack {
+                                    Circle()
+                                        .fill(detail.action.color.opacity(0.15))
+                                        .frame(width: 30, height: 30)
+                                    
+                                    Image(systemName: detail.action.iconName)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(detail.action.color)
+                                }
                                 
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(detail.from)
@@ -149,24 +154,36 @@ struct EmailStatisticsDetailView: View {
         }
     }
     
-    // Summary badge for action counts
+    // Summary badge for action counts - enhanced visual design
     private struct ActionSummaryBadge: View {
         let action: EmailRoutingAction
         let count: Int
         
         var body: some View {
-            VStack(spacing: 4) {
-                Image(systemName: action.iconName)
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.5))
+            VStack(spacing: 8) {
+                // Icon with colored background circle
+                ZStack {
+                    Circle()
+                        .fill(count > 0 ? action.color.opacity(0.15) : Color.gray.opacity(0.1))
+                        .frame(width: 52, height: 52)
+                    
+                    Image(systemName: action.iconName)
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.4))
+                }
+                
+                // Count
                 Text("\(count)")
-                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .font(.system(.title2, design: .rounded, weight: .bold))
                     .foregroundStyle(count > 0 ? .primary : .secondary)
+                
+                // Label
                 Text(action.label)
-                    .font(.caption2)
+                    .font(.system(.caption, weight: .medium))
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
         }
     }
 }

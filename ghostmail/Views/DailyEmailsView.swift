@@ -121,24 +121,36 @@ struct DailyEmailsView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
     
-    // Summary badge for action counts
+    // Summary badge for action counts - enhanced visual design
     private struct ActionSummaryBadge: View {
         let action: EmailRoutingAction
         let count: Int
         
         var body: some View {
-            VStack(spacing: 4) {
-                Image(systemName: action.iconName)
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.5))
+            VStack(spacing: 8) {
+                // Icon with colored background circle
+                ZStack {
+                    Circle()
+                        .fill(count > 0 ? action.color.opacity(0.15) : Color.gray.opacity(0.1))
+                        .frame(width: 52, height: 52)
+                    
+                    Image(systemName: action.iconName)
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.4))
+                }
+                
+                // Count
                 Text("\(count)")
-                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                    .font(.system(.title2, design: .rounded, weight: .bold))
                     .foregroundStyle(count > 0 ? .primary : .secondary)
+                
+                // Label
                 Text(action.label)
-                    .font(.caption2)
+                    .font(.system(.caption, weight: .medium))
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
         }
     }
     
@@ -150,12 +162,17 @@ struct DailyEmailsView: View {
         
         var body: some View {
             HStack(alignment: .top, spacing: 12) {
-                // Status icon with color
-                Image(systemName: email.action.iconName)
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(email.action.color)
-                    .frame(width: 24)
-                    .padding(.top, 2)
+                // Status icon with colored background
+                ZStack {
+                    Circle()
+                        .fill(email.action.color.opacity(0.15))
+                        .frame(width: 36, height: 36)
+                    
+                    Image(systemName: email.action.iconName)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(email.action.color)
+                }
+                .padding(.top, 2)
                 
                 // All email info in a compact vertical stack
                 VStack(alignment: .leading, spacing: 6) {
