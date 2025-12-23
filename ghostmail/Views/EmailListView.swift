@@ -7,13 +7,11 @@ import Combine
 enum DestinationFilter: Equatable {
     case all
     case address(String)
-    case dropped  // Virtual destination for dropped emails
     
     var label: String {
         switch self {
         case .all: return "All"
         case .address(let addr): return addr
-        case .dropped: return "Dropped"
         }
     }
 }
@@ -155,9 +153,6 @@ struct EmailListView: View {
         case .address(let addr):
             UserDefaults.standard.set("address", forKey: "EmailListView.destinationFilterType")
             UserDefaults.standard.set(addr, forKey: "EmailListView.destinationFilterAddress")
-        case .dropped:
-            UserDefaults.standard.set("dropped", forKey: "EmailListView.destinationFilterType")
-            UserDefaults.standard.removeObject(forKey: "EmailListView.destinationFilterAddress")
         }
     }
     
@@ -215,9 +210,6 @@ struct EmailListView: View {
                 matchesDestination = true
             case .address(let addr):
                 matchesDestination = alias.forwardTo == addr
-            case .dropped:
-                // When filtering for dropped, only show drop/reject action aliases
-                matchesDestination = alias.actionType != .forward
             }
             guard matchesDestination else { return false }
             
