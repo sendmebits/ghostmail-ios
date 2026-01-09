@@ -105,6 +105,77 @@ class CloudflareClient: ObservableObject {
             self.zones = [CloudflareZone(accountId: self.accountId, zoneId: self.zoneId, apiToken: self.apiToken, accountName: self.accountName, domainName: self.domainName)]
             persistZones()
         }
+        
+        // MARK: - Handle iCloud Restore Scenario
+        // After restoring from iCloud backup, UserDefaults syncs but Keychain doesn't.
+        // Detect when isAuthenticated is true but tokens are missing.
+        if self.isAuthenticated && !hasValidCredentials {
+            print("[CloudflareClient] ⚠️ Credentials missing after iCloud restore. Tokens not found in Keychain.")
+            print("[CloudflareClient] Resetting authentication state - user will need to re-enter credentials.")
+            LogBuffer.shared.add("[CloudflareClient] Credentials missing (likely iCloud restore). Prompting re-authentication.")
+            
+            // Reset authentication state but preserve zone configuration (domain names, etc.)
+            // so user only needs to re-enter their API tokens
+            self.isAuthenticated = false
+            UserDefaults.standard.set(false, forKey: "isAuthenticated")
+        }
+    }
+    
+    /// Check if we have valid credentials to make API calls.
+    /// Returns false if any required token is missing (e.g., after iCloud restore where Keychain didn't sync).
+    var hasValidCredentials: Bool {
+        // Check primary credentials
+        guard !apiToken.isEmpty else { return false }
+        
+        // For multi-zone setups, ensure all zones have tokens
+        // (though we allow operation if at least primary zone has a token)
+        if zones.isEmpty {
+            return !accountId.isEmpty && !zoneId.isEmpty
+        }
+        
+        // Check that at least one zone has a valid token
+        return zones.contains { !$0.apiToken.isEmpty }
+    }
+    
+    /// Returns zones that need re-authentication (have zone data but no API token)
+    var zonesNeedingReauth: [CloudflareZone] {
+        zones.filter { $0.apiToken.isEmpty && !$0.zoneId.isEmpty }
+    }
+    
+    /// Update the API token for a specific zone (used during re-authentication flow)
+    @MainActor
+    func updateZoneToken(zoneId: String, apiToken: String) async throws {
+        let token = apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard let index = zones.firstIndex(where: { $0.zoneId == zoneId }) else {
+            throw CloudflareError(message: "Zone not found")
+        }
+        
+        // Verify the token works for this zone
+        guard try await verifyToken(using: token) else {
+            throw CloudflareError(message: "Invalid API token")
+        }
+        
+        // Update the zone with the new token
+        zones[index].apiToken = token
+        
+        // If this is the primary zone, also update the primary credentials
+        if zoneId == self.zoneId {
+            self.apiToken = token
+            KeychainHelper.shared.save(token, service: "ghostmail", account: "apiToken")
+        }
+        
+        // Save to Keychain
+        KeychainHelper.shared.save(token, service: "ghostmail", account: "apiToken_\(zoneId)")
+        
+        // Persist zone changes
+        persistZones()
+        
+        // If all zones now have tokens and we were unauthenticated, set authenticated
+        if !isAuthenticated && !zones.contains(where: { $0.apiToken.isEmpty }) {
+            isAuthenticated = true
+            UserDefaults.standard.set(true, forKey: "isAuthenticated")
+        }
     }
 
     // MARK: - Privacy-safe logging helpers

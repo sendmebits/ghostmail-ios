@@ -993,14 +993,45 @@ private struct AdditionalZonesSectionView: View {
     @State private var showSubdomainError = false
     @State private var subdomainErrorMessage = ""
     @State private var errorZoneId = ""
+    @State private var showAddTokenSheet = false
+    @State private var zoneForTokenEntry: CloudflareClient.CloudflareZone? = nil
     
     private func zoneDisplayName(_ zone: CloudflareClient.CloudflareZone) -> String {
         zone.domainName.isEmpty ? zone.zoneId : zone.domainName
     }
     
+    /// Check if a zone is missing its API token
+    private func isMissingToken(_ zone: CloudflareClient.CloudflareZone) -> Bool {
+        zone.apiToken.isEmpty
+    }
+    
     var body: some View {
         ForEach(additionalZones, id: \.zoneId) { z in
             Section {
+                // Warning banner for zones missing API token
+                if isMissingToken(z) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("API Token Required")
+                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            Text("This zone needs an API token to sync")
+                                .font(.system(.caption, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 4)
+                    
+                    Button {
+                        zoneForTokenEntry = z
+                        showAddTokenSheet = true
+                    } label: {
+                        Label("Add API Token", systemImage: "key.fill")
+                    }
+                }
+                
                 InfoRow(title: "Zone ID for \(zoneDisplayName(z))") {
                     Text(z.zoneId)
                         .font(.system(.subheadline, design: .rounded))
@@ -1021,27 +1052,38 @@ private struct AdditionalZonesSectionView: View {
                         .foregroundStyle(.secondary)
                 }
                 
-                Toggle("Enable Sub-Domains for this Zone", isOn: Binding(
-                    get: { z.subdomainsEnabled },
-                    set: { newValue in
-                        Task {
-                            do {
-                                try await cloudflareClient.toggleSubdomains(for: z.zoneId, enabled: newValue)
-                            } catch {
-                                errorZoneId = z.zoneId
-                                subdomainErrorMessage = error.localizedDescription
-                                showSubdomainError = true
+                // Only show subdomain toggle if zone has a valid token
+                if !isMissingToken(z) {
+                    Toggle("Enable Sub-Domains for this Zone", isOn: Binding(
+                        get: { z.subdomainsEnabled },
+                        set: { newValue in
+                            Task {
+                                do {
+                                    try await cloudflareClient.toggleSubdomains(for: z.zoneId, enabled: newValue)
+                                } catch {
+                                    errorZoneId = z.zoneId
+                                    subdomainErrorMessage = error.localizedDescription
+                                    showSubdomainError = true
+                                }
                             }
                         }
-                    }
-                ))
-                .tint(.accentColor)
+                    ))
+                    .tint(.accentColor)
+                }
                 
                 Button(role: .destructive) {
                     zoneToRemove = z
                     showRemoveZoneAlert = true
                 } label: {
                     Label("Remove This Zone", systemImage: "trash")
+                }
+            }
+        }
+        .sheet(isPresented: $showAddTokenSheet) {
+            if let zone = zoneForTokenEntry {
+                AddZoneTokenSheet(zone: zone) {
+                    showAddTokenSheet = false
+                    zoneForTokenEntry = nil
                 }
             }
         }
@@ -1329,6 +1371,123 @@ private struct StatisticsSectionView: View {
                 .textCase(.uppercase)
                 .font(.system(.footnote, design: .rounded))
                 .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Sheet for adding an API token to a zone that's missing one (e.g., after iCloud restore)
+private struct AddZoneTokenSheet: View {
+    @EnvironmentObject private var cloudflareClient: CloudflareClient
+    let zone: CloudflareClient.CloudflareZone
+    let onComplete: () -> Void
+    
+    @State private var apiToken = ""
+    @State private var isLoading = false
+    @State private var errorMessage = ""
+    @State private var showError = false
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Add API Token")
+                            .font(.system(.headline, design: .rounded))
+                        Text("Enter the Cloudflare API token for this zone to enable syncing.")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                Section {
+                    HStack {
+                        Text("Domain")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(zone.domainName.isEmpty ? "Unknown" : zone.domainName)
+                            .font(.system(.body, design: .rounded))
+                    }
+                    
+                    HStack {
+                        Text("Zone ID")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(zone.zoneId.prefix(6))...\(zone.zoneId.suffix(4))")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                
+                Section {
+                    SecureField("API Token", text: $apiToken)
+                        .textContentType(.password)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                } footer: {
+                    Text("Create a token in Cloudflare with Email Routing permissions")
+                        .font(.system(.caption, design: .rounded))
+                }
+                
+                Section {
+                    Button {
+                        saveToken()
+                    } label: {
+                        HStack {
+                            Spacer()
+                            if isLoading {
+                                ProgressView()
+                            } else {
+                                Text("Save Token")
+                                    .font(.system(.body, design: .rounded, weight: .semibold))
+                            }
+                            Spacer()
+                        }
+                    }
+                    .disabled(apiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isLoading)
+                }
+            }
+            .navigationTitle(zone.domainName.isEmpty ? "Add Token" : zone.domainName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                        onComplete()
+                    }
+                }
+            }
+            .alert("Error", isPresented: $showError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(errorMessage)
+            }
+        }
+    }
+    
+    private func saveToken() {
+        isLoading = true
+        
+        Task {
+            do {
+                try await cloudflareClient.updateZoneToken(
+                    zoneId: zone.zoneId,
+                    apiToken: apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                
+                await MainActor.run {
+                    isLoading = false
+                    dismiss()
+                    onComplete()
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = error.localizedDescription
+                    showError = true
+                }
+            }
         }
     }
 }
