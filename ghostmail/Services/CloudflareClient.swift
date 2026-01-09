@@ -11,7 +11,8 @@ class CloudflareClient: ObservableObject {
     @Published var isAuthenticated: Bool
     @Published private(set) var accountName: String = ""
     // Multi-zone support
-    struct CloudflareZone: Codable, Hashable {
+    struct CloudflareZone: Codable, Hashable, Identifiable {
+        var id: String { zoneId }  // Use zoneId as the Identifiable id
         var accountId: String
         var zoneId: String
         var apiToken: String

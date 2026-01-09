@@ -993,7 +993,6 @@ private struct AdditionalZonesSectionView: View {
     @State private var showSubdomainError = false
     @State private var subdomainErrorMessage = ""
     @State private var errorZoneId = ""
-    @State private var showAddTokenSheet = false
     @State private var zoneForTokenEntry: CloudflareClient.CloudflareZone? = nil
     
     private func zoneDisplayName(_ zone: CloudflareClient.CloudflareZone) -> String {
@@ -1026,7 +1025,6 @@ private struct AdditionalZonesSectionView: View {
                     
                     Button {
                         zoneForTokenEntry = z
-                        showAddTokenSheet = true
                     } label: {
                         Label("Add API Token", systemImage: "key.fill")
                     }
@@ -1079,13 +1077,8 @@ private struct AdditionalZonesSectionView: View {
                 }
             }
         }
-        .sheet(isPresented: $showAddTokenSheet) {
-            if let zone = zoneForTokenEntry {
-                AddZoneTokenSheet(zone: zone) {
-                    showAddTokenSheet = false
-                    zoneForTokenEntry = nil
-                }
-            }
+        .sheet(item: $zoneForTokenEntry) { zone in
+            AddZoneTokenSheet(zone: zone)
         }
         .alert("Subdomain Error", isPresented: $showSubdomainError) {
             Button("OK", role: .cancel) { }
@@ -1379,7 +1372,6 @@ private struct StatisticsSectionView: View {
 private struct AddZoneTokenSheet: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     let zone: CloudflareClient.CloudflareZone
-    let onComplete: () -> Void
     
     @State private var apiToken = ""
     @State private var isLoading = false
@@ -1454,7 +1446,6 @@ private struct AddZoneTokenSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
-                        onComplete()
                     }
                 }
             }
@@ -1479,7 +1470,6 @@ private struct AddZoneTokenSheet: View {
                 await MainActor.run {
                     isLoading = false
                     dismiss()
-                    onComplete()
                 }
             } catch {
                 await MainActor.run {
