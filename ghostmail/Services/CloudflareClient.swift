@@ -736,6 +736,51 @@ class CloudflareClient: ObservableObject {
         
         return true
     }
+    
+    /// Check analytics permissions for all zones and enable the setting if any zone permits it.
+    /// This only enables analytics if currently disabled - it won't override a user's choice to disable.
+    /// - Returns: true if analytics was enabled (or already enabled), false if no permission
+    @discardableResult
+    func checkAndEnableAnalyticsIfPermitted() async -> Bool {
+        // Check current setting - don't override if user explicitly enabled/disabled
+        let currentSetting = UserDefaults.standard.bool(forKey: "showAnalytics")
+        
+        // Only auto-enable if currently disabled (first-time setup scenario)
+        // If we wanted to always check and potentially enable: remove this early return
+        if currentSetting {
+            print("[Analytics] Already enabled, skipping permission check")
+            return true
+        }
+        
+        // Get all zones with valid tokens
+        let validZones = zones.filter { !$0.apiToken.isEmpty }
+        guard !validZones.isEmpty else {
+            print("[Analytics] No zones with valid tokens, cannot check permissions")
+            return false
+        }
+        
+        print("[Analytics] Checking analytics permissions for \(validZones.count) zone(s)")
+        
+        // Check if ANY zone has analytics permission
+        for zone in validZones {
+            do {
+                let hasPermission = try await validateAnalyticsPermission(for: zone)
+                if hasPermission {
+                    print("[Analytics] Permission granted for zone \(zone.domainName.isEmpty ? zone.zoneId : zone.domainName) - enabling analytics")
+                    await MainActor.run {
+                        UserDefaults.standard.set(true, forKey: "showAnalytics")
+                    }
+                    return true
+                }
+            } catch {
+                print("[Analytics] Error checking permissions for zone: \(error.localizedDescription)")
+                // Continue checking other zones
+            }
+        }
+        
+        print("[Analytics] No zones have analytics permission")
+        return false
+    }
 
     @MainActor
     func updateCredentials(accountId: String, zoneId: String, apiToken: String) {

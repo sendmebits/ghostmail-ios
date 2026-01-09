@@ -190,6 +190,12 @@ struct AddZoneView: View {
                         }
                     }
                     try? modelContext.save()
+                }
+                
+                // Check and auto-enable analytics if the new zone's API has permission
+                await cloudflareClient.checkAndEnableAnalyticsIfPermitted()
+                
+                await MainActor.run {
                     successMessage = "Zone added and entries loaded."
                     showSuccess = true
                     

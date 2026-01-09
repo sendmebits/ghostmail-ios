@@ -436,6 +436,9 @@ struct AuthenticationView: View {
                                 }
                                 
                                 try modelContext.save()
+                                
+                                // Check and auto-enable analytics if the API has permission
+                                await cloudflareClient.checkAndEnableAnalyticsIfPermitted()
                             } catch {
                                 print("Error syncing data: \(error)")
                             }

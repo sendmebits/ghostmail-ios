@@ -1467,6 +1467,9 @@ private struct AddZoneTokenSheet: View {
                     apiToken: apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
                 
+                // Check and auto-enable analytics if this zone's API has permission
+                await cloudflareClient.checkAndEnableAnalyticsIfPermitted()
+                
                 await MainActor.run {
                     isLoading = false
                     dismiss()
