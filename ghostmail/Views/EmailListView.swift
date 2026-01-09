@@ -515,46 +515,32 @@ struct EmailListView: View {
                                     showWeeklyEmails = true
                                 } label: {
                                     HStack {
-                                        // Styled 7-Day Trend header
-                                        HStack(spacing: 6) {
+                                        // Left side: 7-Day Trend with chart icon
+                                        HStack(spacing: 5) {
                                             Image(systemName: "chart.bar.fill")
-                                                .font(.system(size: 12, weight: .semibold))
+                                                .font(.system(size: 11, weight: .semibold))
                                                 .foregroundStyle(Color.accentColor)
                                             Text("7-Day Trend")
                                                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                                                 .foregroundStyle(Color.accentColor)
                                             Image(systemName: "chevron.right")
-                                                .font(.system(size: 10, weight: .bold))
-                                                .foregroundStyle(Color.accentColor.opacity(0.6))
+                                                .font(.system(size: 9, weight: .bold))
+                                                .foregroundStyle(Color.accentColor.opacity(0.5))
                                         }
                                         if isLoadingStatistics && isUsingCachedStatistics {
                                             ProgressView()
                                                 .scaleEffect(0.7)
                                         }
                                         Spacer()
-                                        // Styled Total Emails counter
-                                        HStack(spacing: 6) {
-                                            VStack(alignment: .trailing, spacing: 0) {
-                                                Text("\(emailStatistics.reduce(0) { $0 + $1.count })")
-                                                    .font(.system(.title3, design: .rounded, weight: .bold))
-                                                    .foregroundStyle(.white)
-                                            }
+                                        // Right side: Total count with envelope icon (no pill)
+                                        HStack(spacing: 5) {
+                                            Text("\(emailStatistics.reduce(0) { $0 + $1.count })")
+                                                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                                .foregroundStyle(Color.accentColor)
                                             Image(systemName: "envelope.fill")
-                                                .font(.system(size: 12, weight: .semibold))
-                                                .foregroundStyle(.white.opacity(0.8))
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .foregroundStyle(Color.accentColor)
                                         }
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(
-                                            Capsule()
-                                                .fill(
-                                                    LinearGradient(
-                                                        colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
-                                                        startPoint: .topLeading,
-                                                        endPoint: .bottomTrailing
-                                                    )
-                                                )
-                                        )
                                     }
                                 }
                                 .buttonStyle(.plain)
