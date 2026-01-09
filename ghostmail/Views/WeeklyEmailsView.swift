@@ -99,11 +99,23 @@ struct WeeklyEmailsView: View {
                 .padding(.vertical, 8)
             } header: {
                 HStack {
-                    Text("7-Day Summary")
+                    HStack(spacing: 5) {
+                        Image(systemName: "calendar.badge.clock")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                        Text("7-Day Summary")
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                    }
                     Spacer()
-                    Text("\(totalEmails) emails")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        Text("\(totalEmails)")
+                            .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            .foregroundStyle(Color.accentColor)
+                        Image(systemName: "envelope.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                    }
                 }
             }
             
@@ -113,12 +125,17 @@ struct WeeklyEmailsView: View {
                     if section.emails.isEmpty {
                         HStack {
                             Spacer()
-                            Text("No emails")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                            VStack(spacing: 8) {
+                                Image(systemName: "envelope.open")
+                                    .font(.system(size: 24, weight: .light))
+                                    .foregroundStyle(Color.secondary.opacity(0.5))
+                                Text("No emails")
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                            }
                             Spacer()
                         }
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 16)
                     } else {
                         ForEach(section.emails) { email in
                             EmailRowView(email: email, isDropAlias: isDropAlias(for: email.to))
@@ -128,12 +145,19 @@ struct WeeklyEmailsView: View {
                     }
                 } header: {
                     HStack {
-                        Text(dayLabel(for: section.date))
+                        HStack(spacing: 5) {
+                            Image(systemName: isToday(section.date) ? "star.fill" : "calendar")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(isToday(section.date) ? Color.accentColor : .secondary)
+                            Text(dayLabel(for: section.date))
+                                .font(.system(.subheadline, design: .rounded, weight: isToday(section.date) ? .semibold : .medium))
+                                .foregroundStyle(isToday(section.date) ? Color.accentColor : .secondary)
+                        }
                         Spacer()
                         if !section.emails.isEmpty {
                             Text("\(section.emails.count)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(.system(.caption, design: .rounded, weight: .semibold))
+                                .foregroundStyle(isToday(section.date) ? Color.accentColor : .secondary)
                         }
                     }
                 }
@@ -157,6 +181,11 @@ struct WeeklyEmailsView: View {
             formatter.dateFormat = "EEEE, MMM d"
             return formatter.string(from: date)
         }
+    }
+    
+    // Check if date is today
+    private func isToday(_ date: Date) -> Bool {
+        Calendar.current.isDateInToday(date)
     }
     
     // Summary badge for action counts
@@ -247,11 +276,11 @@ struct WeeklyEmailsView: View {
                     // Date/Time and Status line
                     HStack(spacing: 8) {
                         HStack(spacing: 4) {
-                            Image(systemName: "clock")
+                            Image(systemName: "clock.fill")
                                 .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.accentColor.opacity(0.7))
                             Text(formatTime(email.date))
-                                .font(.system(.caption, design: .rounded))
+                                .font(.system(.caption, design: .rounded, weight: .medium))
                                 .foregroundStyle(.secondary)
                         }
                         
@@ -301,13 +330,18 @@ struct WeeklyEmailsView: View {
             .overlay(
                 Group {
                     if showCopyToast {
-                        Text("Copied!")
-                            .font(.caption)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Capsule())
-                            .transition(.opacity.combined(with: .scale))
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                            Text("Copied!")
+                                .font(.system(.caption, design: .rounded, weight: .medium))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Capsule())
+                        .transition(.opacity.combined(with: .scale))
                     }
                 }
                 .animation(.easeInOut(duration: 0.2), value: showCopyToast)
