@@ -26,6 +26,7 @@ struct ghostmailApp: App {
     @State private var lastForegroundSync: Date = .distantPast
     @State private var updateTimer: Timer?
     @State private var isUpdating: Bool = false
+    @State private var isSyncingStatistics: Bool = false  // Guard for statistics sync
     private let updateInterval: TimeInterval = 120 // 2 minutes for background polling
     private let foregroundCooldown: TimeInterval = 30 // 30 seconds for foreground sync
     
@@ -410,6 +411,14 @@ struct ghostmailApp: App {
     /// This is lightweight and doesn't affect the UI
     /// Uses smart delta fetching to minimize API calls
     private func syncEmailStatisticsInBackground() async {
+        // Prevent concurrent statistics syncing
+        guard !isSyncingStatistics else {
+            print("📊 Statistics sync already in progress, skipping")
+            return
+        }
+        isSyncingStatistics = true
+        defer { isSyncingStatistics = false }
+        
         var allStats: [EmailStatistic] = []
         
         // Load cached data for smart delta fetching
