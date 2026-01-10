@@ -931,6 +931,8 @@ private struct PrimaryZoneSectionView: View {
     @Binding var zoneToEditToken: CloudflareClient.CloudflareZone?
     @State private var showSubdomainError = false
     @State private var subdomainErrorMessage = ""
+    @State private var catchAllStatus: CatchAllStatus?
+    @State private var isLoadingCatchAll = false
     
     private var primaryZone: CloudflareClient.CloudflareZone? {
         cloudflareClient.zones.first(where: { $0.zoneId == cloudflareClient.zoneId })
@@ -961,6 +963,30 @@ private struct PrimaryZoneSectionView: View {
                 Text("\(entryCount) Addresses Created")
                     .font(.system(.subheadline, design: .rounded))
                     .foregroundStyle(.secondary)
+            }
+            
+            // Catch-All Status Row
+            InfoRow(title: "Catch-All") {
+                HStack(spacing: 6) {
+                    if isLoadingCatchAll {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                    } else if let status = catchAllStatus {
+                        Image(systemName: status.systemImage)
+                            .foregroundStyle(status.color)
+                        Text(status.displayText)
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        Text("—")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .task {
+                await loadCatchAllStatus()
             }
             
             Toggle("Enable Sub-Domains for this Zone", isOn: Binding(
@@ -1004,6 +1030,24 @@ private struct PrimaryZoneSectionView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(subdomainErrorMessage)
+        }
+    }
+    
+    private func loadCatchAllStatus() async {
+        guard !isLoadingCatchAll else { return }
+        isLoadingCatchAll = true
+        defer { isLoadingCatchAll = false }
+        
+        do {
+            let status = try await cloudflareClient.fetchCatchAllStatus(forZoneId: cloudflareClient.zoneId)
+            await MainActor.run {
+                catchAllStatus = status
+            }
+        } catch {
+            print("Failed to fetch catch-all status: \(error)")
+            await MainActor.run {
+                catchAllStatus = nil
+            }
         }
     }
 }
@@ -1075,6 +1119,11 @@ private struct AdditionalZonesSectionView: View {
                         .foregroundStyle(.secondary)
                 }
                 
+                // Catch-All Status Row - only show if zone has valid token
+                if !isMissingToken(z) {
+                    CatchAllStatusRow(zone: z)
+                }
+                
                 // Only show subdomain toggle if zone has a valid token
                 if !isMissingToken(z) {
                     Toggle("Enable Sub-Domains for this Zone", isOn: Binding(
@@ -1112,6 +1161,61 @@ private struct AdditionalZonesSectionView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(subdomainErrorMessage)
+        }
+    }
+}
+
+/// A row that fetches and displays the catch-all status for a zone
+private struct CatchAllStatusRow: View {
+    @EnvironmentObject private var cloudflareClient: CloudflareClient
+    let zone: CloudflareClient.CloudflareZone
+    
+    @State private var catchAllStatus: CatchAllStatus?
+    @State private var isLoading = false
+    @State private var hasLoaded = false
+    
+    var body: some View {
+        InfoRow(title: "Catch-All") {
+            HStack(spacing: 6) {
+                if isLoading {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else if let status = catchAllStatus {
+                    Image(systemName: status.systemImage)
+                        .foregroundStyle(status.color)
+                    Text(status.displayText)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text("—")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .task {
+            guard !hasLoaded else { return }
+            await loadCatchAllStatus()
+            hasLoaded = true
+        }
+    }
+    
+    private func loadCatchAllStatus() async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+        
+        do {
+            let status = try await cloudflareClient.fetchCatchAllStatus(for: zone)
+            await MainActor.run {
+                catchAllStatus = status
+            }
+        } catch {
+            print("Failed to fetch catch-all status for zone \(zone.zoneId): \(error)")
+            await MainActor.run {
+                catchAllStatus = nil
+            }
         }
     }
 }

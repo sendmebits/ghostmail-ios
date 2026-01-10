@@ -802,6 +802,83 @@ class CloudflareClient: ObservableObject {
         return true
     }
     
+    // MARK: - Catch-All Rule
+    
+    /// Fetch the catch-all rule status for a specific zone
+    /// - Parameter zone: The zone to check
+    /// - Returns: The catch-all status (disabled, forward, drop, etc.)
+    func fetchCatchAllStatus(for zone: CloudflareZone) async throws -> CatchAllStatus {
+        let url = URL(string: "\(baseURL)/zones/\(zone.zoneId)/email/routing/rules/catch_all")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.allHTTPHeaderFields = [
+            "Authorization": "Bearer \(zone.apiToken)",
+            "Content-Type": "application/json"
+        ]
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw CloudflareError(message: "Invalid response")
+        }
+        
+        // Handle different status codes
+        if httpResponse.statusCode == 404 {
+            // No catch-all rule configured
+            return .disabled
+        }
+        
+        guard httpResponse.statusCode == 200 else {
+            if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
+                throw CloudflareError(message: errorResponse.errors.first?.message ?? "Failed to fetch catch-all status")
+            }
+            throw CloudflareError(message: "Failed to fetch catch-all status (HTTP \(httpResponse.statusCode))")
+        }
+        
+        let catchAllResponse = try JSONDecoder().decode(CatchAllResponse.self, from: data)
+        
+        guard let rule = catchAllResponse.result else {
+            return .disabled
+        }
+        
+        // If not enabled, return disabled
+        if !rule.enabled {
+            return .disabled
+        }
+        
+        // Determine the action type from the first action
+        guard let action = rule.actions.first else {
+            return .unknown
+        }
+        
+        switch action.type.lowercased() {
+        case "forward":
+            return .forward(to: action.value ?? [])
+        case "drop":
+            return .drop
+        case "worker":
+            return .worker
+        default:
+            return .unknown
+        }
+    }
+    
+    /// Fetch catch-all status using zone ID (convenience method for primary zone)
+    func fetchCatchAllStatus(forZoneId zoneId: String) async throws -> CatchAllStatus {
+        guard let zone = zones.first(where: { $0.zoneId == zoneId }) else {
+            // Fallback: create a temporary zone struct with primary credentials
+            let tempZone = CloudflareZone(
+                accountId: self.accountId,
+                zoneId: zoneId,
+                apiToken: self.apiToken,
+                accountName: self.accountName,
+                domainName: self.domainName
+            )
+            return try await fetchCatchAllStatus(for: tempZone)
+        }
+        return try await fetchCatchAllStatus(for: zone)
+    }
+    
     /// Check analytics permissions for all zones and enable the setting if any zone permits it.
     /// This only enables analytics if currently disabled - it won't override a user's choice to disable.
     /// - Returns: true if analytics was enabled (or already enabled), false if no permission
@@ -1736,6 +1813,96 @@ struct CloudflareErrorResponse: Codable {
 struct CloudflareErrorDetail: Codable {
     let code: Int
     let message: String
+}
+
+// MARK: - Catch-All Rule Types
+
+struct CatchAllRule: Codable {
+    let enabled: Bool
+    let name: String?
+    let matchers: [CatchAllMatcher]
+    let actions: [CatchAllAction]
+}
+
+struct CatchAllMatcher: Codable {
+    let type: String  // "all" for catch-all
+}
+
+struct CatchAllAction: Codable {
+    let type: String  // "forward", "drop", or "worker"
+    let value: [String]?
+}
+
+struct CatchAllResponse: Codable {
+    let result: CatchAllRule?
+    let success: Bool
+    let errors: [CloudflareErrorDetail]?
+}
+
+/// Represents the catch-all configuration status for a zone
+enum CatchAllStatus: Equatable {
+    case disabled
+    case forward(to: [String])
+    case drop
+    case worker
+    case unknown
+    
+    var displayText: String {
+        switch self {
+        case .disabled:
+            return "Disabled"
+        case .forward(let addresses):
+            if addresses.isEmpty {
+                return "Forward (no address)"
+            }
+            return "Forward to \(addresses.joined(separator: ", "))"
+        case .drop:
+            return "Drop"
+        case .worker:
+            return "Worker"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+    
+    var isEnabled: Bool {
+        switch self {
+        case .disabled:
+            return false
+        default:
+            return true
+        }
+    }
+    
+    var systemImage: String {
+        switch self {
+        case .disabled:
+            return "xmark.circle"
+        case .forward:
+            return "arrow.right.circle"
+        case .drop:
+            return "trash.circle"
+        case .worker:
+            return "gearshape.circle"
+        case .unknown:
+            return "questionmark.circle"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .disabled:
+            return .secondary
+        case .forward:
+            return .green
+        case .drop:
+            return .orange
+        case .worker:
+            return .blue
+        case .unknown:
+            return .secondary
+        }
+    }
 }
 
 struct EmailRule: Codable {
