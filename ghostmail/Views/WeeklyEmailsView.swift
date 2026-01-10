@@ -10,6 +10,11 @@ struct WeeklyEmailsView: View {
         emailAliases.first { $0.emailAddress == emailAddress }?.actionType != .forward
     }
     
+    /// Check if an email address is a catch-all (not defined as any alias)
+    private func isCatchAllAddress(_ emailAddress: String) -> Bool {
+        !emailAliases.contains { $0.emailAddress == emailAddress }
+    }
+    
     // Structure to hold individual email information
     private struct EmailItem: Identifiable {
         let id = UUID()
@@ -138,7 +143,11 @@ struct WeeklyEmailsView: View {
                         .padding(.vertical, 16)
                     } else {
                         ForEach(section.emails) { email in
-                            EmailRowView(email: email, isDropAlias: isDropAlias(for: email.to))
+                            EmailRowView(
+                                email: email,
+                                isDropAlias: isDropAlias(for: email.to),
+                                isCatchAll: isCatchAllAddress(email.to)
+                            )
                                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                                 .listRowSeparator(.hidden)
                         }
@@ -225,6 +234,7 @@ struct WeeklyEmailsView: View {
     private struct EmailRowView: View {
         let email: EmailItem
         let isDropAlias: Bool
+        let isCatchAll: Bool
         @State private var showCopyToast = false
         
         var body: some View {
@@ -265,10 +275,25 @@ struct WeeklyEmailsView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize()
                         ScrollView(.horizontal, showsIndicators: false) {
-                            Text(email.to)
-                                .font(.system(.subheadline, design: .rounded, weight: .medium))
-                                .foregroundStyle(isDropAlias ? .red : .primary)
-                                .fixedSize(horizontal: true, vertical: false)
+                            HStack(spacing: 4) {
+                                Text(email.to)
+                                    .font(.system(.subheadline, design: .rounded, weight: .medium))
+                                    .foregroundStyle(isDropAlias ? .red : (isCatchAll ? .purple : .primary))
+                                    .fixedSize(horizontal: true, vertical: false)
+                                
+                                // Catch-all indicator badge
+                                if isCatchAll {
+                                    Text("Catch-All")
+                                        .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                        .foregroundStyle(.purple)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color.purple.opacity(0.15))
+                                        )
+                                }
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }

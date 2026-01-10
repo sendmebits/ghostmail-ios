@@ -453,14 +453,32 @@ struct EmailListView: View {
     }
     
     private func filterStatistics(_ stats: [EmailStatistic]) -> [EmailStatistic] {
-        var filtered = stats
-        
-        // Get the email addresses from filteredEmails
+        // Get the email addresses from filteredEmails (aliases)
         let filteredEmailAddresses = Set(filteredEmails.map { $0.emailAddress })
         
-        // Only include statistics for emails that pass the current filters
-        filtered = filtered.filter { stat in
-            filteredEmailAddresses.contains(stat.emailAddress)
+        // Get ALL known alias email addresses (for identifying catch-all emails)
+        let allAliasAddresses = Set(allAliases.map { $0.emailAddress })
+        
+        // Filter statistics to include:
+        // 1. Statistics for emails that pass the current filters
+        // 2. Statistics for catch-all emails (emails that don't have an alias)
+        let filtered = stats.filter { stat in
+            // Include if it's in the filtered aliases
+            if filteredEmailAddresses.contains(stat.emailAddress) {
+                return true
+            }
+            
+            // Also include catch-all emails (not defined as any alias) if no specific filters are active
+            // Only show catch-all when showing "all" status and no search/destination/domain filters
+            if statusFilter == .all 
+               && searchText.isEmpty 
+               && destinationFilter == .all 
+               && domainFilter == .all 
+               && !allAliasAddresses.contains(stat.emailAddress) {
+                return true
+            }
+            
+            return false
         }
         
         return filtered
