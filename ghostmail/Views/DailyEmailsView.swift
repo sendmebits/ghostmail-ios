@@ -96,7 +96,25 @@ struct DailyEmailsView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
                 } header: {
-                    Text("Summary")
+                    HStack {
+                        HStack(spacing: 5) {
+                            Image(systemName: "chart.bar.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                            Text("Summary")
+                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Text("\(emailsForDay.count)")
+                                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                .foregroundStyle(Color.accentColor)
+                            Image(systemName: "envelope.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
                 }
                 
                 Section {
@@ -107,10 +125,17 @@ struct DailyEmailsView: View {
                     }
                 } header: {
                     HStack {
-                        Text("Emails Received")
+                        HStack(spacing: 5) {
+                            Image(systemName: "tray.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Text("Emails Received")
+                                .font(.system(.subheadline, design: .rounded, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
                         Spacer()
                         Text("\(emailsForDay.count)")
-                            .font(.caption)
+                            .font(.system(.caption, design: .rounded, weight: .semibold))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -209,11 +234,11 @@ struct DailyEmailsView: View {
                     // Date/Time and Status line
                     HStack(spacing: 8) {
                         HStack(spacing: 4) {
-                            Image(systemName: "clock")
+                            Image(systemName: "clock.fill")
                                 .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.accentColor.opacity(0.7))
                             Text(formatTime(email.date))
-                                .font(.system(.caption, design: .rounded))
+                                .font(.system(.caption, design: .rounded, weight: .medium))
                                 .foregroundStyle(.secondary)
                         }
                         
@@ -263,13 +288,18 @@ struct DailyEmailsView: View {
             .overlay(
                 Group {
                     if showCopyToast {
-                        Text("Copied!")
-                            .font(.caption)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Capsule())
-                            .transition(.opacity.combined(with: .scale))
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                            Text("Copied!")
+                                .font(.system(.caption, design: .rounded, weight: .medium))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Capsule())
+                        .transition(.opacity.combined(with: .scale))
                     }
                 }
                 .animation(.easeInOut(duration: 0.2), value: showCopyToast)
