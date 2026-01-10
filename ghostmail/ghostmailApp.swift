@@ -243,6 +243,21 @@ struct ghostmailApp: App {
                                     }
                                 }
                             }
+                            
+                            // Task 4: Preload email statistics (delta fetch for speed)
+                            group.addTask {
+                                // Check if analytics are enabled before preloading
+                                let showAnalytics = UserDefaults.standard.bool(forKey: "showAnalytics")
+                                if showAnalytics {
+                                    do {
+                                        try await withTimeout(seconds: 10) {
+                                            await self.preloadEmailStatistics()
+                                        }
+                                    } catch {
+                                        print("App startup: Statistics preload failed: \(error)")
+                                    }
+                                }
+                            }
                         }
                     }
                     
@@ -383,21 +398,42 @@ struct ghostmailApp: App {
     
     // MARK: - Background Statistics Sync
     
+    /// Preload email statistics at app startup for faster perceived load time
+    /// Uses delta fetching to minimize API calls
+    private func preloadEmailStatistics() async {
+        print("App startup: Preloading email statistics...")
+        await syncEmailStatisticsInBackground()
+        print("App startup: Statistics preload complete")
+    }
+    
     /// Sync email statistics in the background and update the cache
     /// This is lightweight and doesn't affect the UI
+    /// Uses smart delta fetching to minimize API calls
     private func syncEmailStatisticsInBackground() async {
         var allStats: [EmailStatistic] = []
         
-        // Fetch statistics for all zones
+        // Load cached data for smart delta fetching
+        let cachedData = StatisticsCache.shared.load()
+        let cacheTimestamp = UserDefaults.standard.object(forKey: "EmailStatisticsCacheTimestamp") as? Date
+        
+        // Fetch statistics for all zones with delta optimization
         for zone in cloudflareClient.zones {
             do {
-                let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
+                let stats = try await cloudflareClient.fetchEmailStatistics(
+                    for: zone,
+                    cachedData: cachedData?.statistics,
+                    cacheTimestamp: cacheTimestamp,
+                    forceFull: false
+                )
                 allStats.append(contentsOf: stats)
             } catch {
                 print("Background update: Failed to fetch statistics for zone \(zone.zoneId): \(error)")
                 // Continue with other zones even if one fails
             }
         }
+        
+        // Deduplicate statistics before saving to cache
+        allStats = deduplicateStatistics(allStats)
         
         // Update the cache with fresh statistics
         if !allStats.isEmpty {
@@ -406,6 +442,38 @@ struct ghostmailApp: App {
         } else {
             print("Background update: No statistics to cache")
         }
+    }
+    
+    /// Deduplicate statistics by email address, merging details and removing duplicate events
+    private func deduplicateStatistics(_ stats: [EmailStatistic]) -> [EmailStatistic] {
+        var emailDetailsMap: [String: [EmailStatistic.EmailDetail]] = [:]
+        
+        // Collect all details for each email address
+        for stat in stats {
+            emailDetailsMap[stat.emailAddress, default: []].append(contentsOf: stat.emailDetails)
+        }
+        
+        // Deduplicate details within each email address by (from, date) pair
+        return emailDetailsMap.map { email, details in
+            var seenKeys = Set<String>()
+            var uniqueDetails: [EmailStatistic.EmailDetail] = []
+            
+            for detail in details {
+                let key = "\(detail.from)|\(detail.date.timeIntervalSince1970)"
+                if !seenKeys.contains(key) {
+                    seenKeys.insert(key)
+                    uniqueDetails.append(detail)
+                }
+            }
+            
+            let sortedDetails = uniqueDetails.sorted { $0.date > $1.date }
+            return EmailStatistic(
+                emailAddress: email,
+                count: sortedDetails.count,
+                receivedDates: sortedDetails.map { $0.date },
+                emailDetails: sortedDetails
+            )
+        }.sorted { $0.count > $1.count }
     }
 }
 

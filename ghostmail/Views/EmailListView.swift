@@ -360,10 +360,18 @@ struct EmailListView: View {
         }
         
         // Try to load from cache first for instant display
+        var cachedStats: [EmailStatistic]? = nil
+        var cacheTimestamp: Date? = nil
+        var cacheIsStale = true
+        
         if useCache, let cached = StatisticsCache.shared.load() {
+            cachedStats = cached.statistics
+            cacheTimestamp = UserDefaults.standard.object(forKey: "EmailStatisticsCacheTimestamp") as? Date
+            cacheIsStale = cached.isStale
+            
             // Update last check time
-            if let cacheTimestamp = UserDefaults.standard.object(forKey: "EmailStatisticsCacheTimestamp") as? Date {
-                lastCacheCheckTime = cacheTimestamp
+            if let ts = cacheTimestamp {
+                lastCacheCheckTime = ts
             }
             
             await MainActor.run {
@@ -372,24 +380,37 @@ struct EmailListView: View {
                 self.isUsingCachedStatistics = true
             }
             
-            // If cache is fresh (< 24 hours), we're done
-            if !cached.isStale {
+            // If cache is fresh (< 24 hours), we're done - no need to fetch
+            if !cacheIsStale {
+                print("📊 Cache is fresh, skipping network fetch")
                 return
             }
-            // If stale, continue to fetch fresh data in background
+            // If stale, continue to fetch fresh data in background with delta optimization
         }
         
         isLoadingStatistics = true
         
         // Fetch statistics for all zones in parallel for faster refresh
+        // Pass cached data and timestamp to enable smart delta fetching
         var allStats: [EmailStatistic] = []
         let zones = cloudflareClient.zones
+        let forceFull = !useCache  // Force full fetch on manual refresh
         
         await withTaskGroup(of: [EmailStatistic].self) { group in
             for zone in zones {
+                // For delta fetch, filter cached data to only include this zone's addresses
+                // (we can't easily know which addresses belong to which zone, so pass all)
+                let zoneCache = cachedStats
+                let zoneCacheTime = cacheTimestamp
+                
                 group.addTask {
                     do {
-                        return try await self.cloudflareClient.fetchEmailStatistics(for: zone)
+                        return try await self.cloudflareClient.fetchEmailStatistics(
+                            for: zone,
+                            cachedData: zoneCache,
+                            cacheTimestamp: zoneCacheTime,
+                            forceFull: forceFull
+                        )
                     } catch {
                         print("Error fetching statistics for zone \(zone.zoneId): \(error)")
                         return []
@@ -402,6 +423,9 @@ struct EmailListView: View {
                 allStats.append(contentsOf: zoneStats)
             }
         }
+        
+        // Deduplicate statistics by email address (merges details from multiple sources)
+        allStats = deduplicateStatistics(allStats)
         
         // Cache the raw statistics before filtering
         if !allStats.isEmpty {
@@ -440,6 +464,40 @@ struct EmailListView: View {
         }
         
         return filtered
+    }
+    
+    /// Deduplicate statistics by email address, merging details and removing duplicate events
+    private func deduplicateStatistics(_ stats: [EmailStatistic]) -> [EmailStatistic] {
+        var emailDetailsMap: [String: [EmailStatistic.EmailDetail]] = [:]
+        
+        // Collect all details for each email address
+        for stat in stats {
+            emailDetailsMap[stat.emailAddress, default: []].append(contentsOf: stat.emailDetails)
+        }
+        
+        // Deduplicate details within each email address by (from, date) pair
+        return emailDetailsMap.map { email, details in
+            // Use a Set to track unique (from, date) combinations
+            var seenKeys = Set<String>()
+            var uniqueDetails: [EmailStatistic.EmailDetail] = []
+            
+            for detail in details {
+                // Create a unique key from sender and timestamp
+                let key = "\(detail.from)|\(detail.date.timeIntervalSince1970)"
+                if !seenKeys.contains(key) {
+                    seenKeys.insert(key)
+                    uniqueDetails.append(detail)
+                }
+            }
+            
+            let sortedDetails = uniqueDetails.sorted { $0.date > $1.date }
+            return EmailStatistic(
+                emailAddress: email,
+                count: sortedDetails.count,
+                receivedDates: sortedDetails.map { $0.date },
+                emailDetails: sortedDetails
+            )
+        }.sorted { $0.count > $1.count }
     }
     
     /// Check if cache has been updated since we last loaded and reload if so

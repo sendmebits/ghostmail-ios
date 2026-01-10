@@ -580,7 +580,19 @@ class CloudflareClient: ObservableObject {
         let action: String  // "forward", "drop", or "reject"
     }
 
-    func fetchEmailStatistics(for zone: CloudflareZone, days: Int = 30) async throws -> [EmailStatistic] {
+    /// Fetch email statistics with smart delta optimization
+    /// - Parameters:
+    ///   - zone: The Cloudflare zone to fetch statistics for
+    ///   - cachedData: Optional cached statistics to merge with (enables delta fetch)
+    ///   - cacheTimestamp: When the cached data was last fetched (enables delta fetch)
+    ///   - forceFull: Force a full 7-day fetch even if cache exists
+    /// - Returns: Array of EmailStatistic covering the last 7 days
+    func fetchEmailStatistics(
+        for zone: CloudflareZone,
+        cachedData: [EmailStatistic]? = nil,
+        cacheTimestamp: Date? = nil,
+        forceFull: Bool = false
+    ) async throws -> [EmailStatistic] {
         let url = URL(string: "\(baseURL)/graphql")!
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime]
@@ -589,14 +601,44 @@ class CloudflareClient: ObservableObject {
         // We'll fetch in 24-hour chunks in parallel.
         
         let now = Date()
+        let calendar = Calendar.current
         var tasks: [Task<[String: [EmailStatistic.EmailDetail]], Error>] = []
         
-        // Limit to 7 days for performance, or use the requested days if small
-        let daysToFetch = min(days, 7)
+        // Smart delta fetch optimization:
+        // If we have recent cached data (< 24 hours old), only fetch today's data
+        // and merge with cached historical data. This reduces API calls from 7 to 1.
+        let daysToFetch: Int
+        let useDeltaFetch: Bool
+        
+        if !forceFull,
+           let cacheTime = cacheTimestamp,
+           let cached = cachedData,
+           !cached.isEmpty {
+            let cacheAge = now.timeIntervalSince(cacheTime)
+            let cacheAgeHours = cacheAge / 3600
+            
+            if cacheAgeHours < 24 {
+                // Cache is fresh enough - only fetch today, yesterday, and day before for overlap safety
+                // This ensures we have full coverage at day boundaries
+                daysToFetch = 3
+                useDeltaFetch = true
+                print("📊 Delta fetch: Cache is \(Int(cacheAgeHours))h old, fetching \(daysToFetch) days only")
+            } else {
+                // Cache is too old, do full fetch
+                daysToFetch = 7
+                useDeltaFetch = false
+                print("📊 Full fetch: Cache is \(Int(cacheAgeHours))h old")
+            }
+        } else {
+            // No cache or forced full fetch
+            daysToFetch = 7
+            useDeltaFetch = false
+            print("📊 Full fetch: No cache available or forced refresh")
+        }
         
         for i in 0..<daysToFetch {
-            let endDate = Calendar.current.date(byAdding: .day, value: -i, to: now)!
-            let startDate = Calendar.current.date(byAdding: .day, value: -1, to: endDate)!
+            let endDate = calendar.date(byAdding: .day, value: -i, to: now)!
+            let startDate = calendar.date(byAdding: .day, value: -1, to: endDate)!
             
             // Format dates outside the Task to avoid capturing non-Sendable ISO8601DateFormatter
             let startDateString = isoFormatter.string(from: startDate)
@@ -682,6 +724,29 @@ class CloudflareClient: ObservableObject {
                 print("Failed to fetch chunk: \(error)")
                 // Continue with other chunks
             }
+        }
+        
+        // If delta fetch, merge fresh data with cached historical data
+        if useDeltaFetch, let cached = cachedData {
+            // Calculate the actual start time of our fresh fetch window
+            // For i=0: startDate = yesterday at current time
+            // For i=daysToFetch-1: startDate = (daysToFetch days ago) at current time
+            // We need to keep cached data that's OLDER than our oldest fetch window start
+            let oldestFetchStart = calendar.date(byAdding: .day, value: -daysToFetch, to: now)!
+            
+            // Merge: keep cached details that are older than our fresh fetch window
+            for cachedStat in cached {
+                let olderDetails = cachedStat.emailDetails.filter { detail in
+                    detail.date < oldestFetchStart
+                }
+                
+                if !olderDetails.isEmpty {
+                    // Add older cached details to our fresh data
+                    totalDetails[cachedStat.emailAddress, default: []].append(contentsOf: olderDetails)
+                }
+            }
+            
+            print("📊 Delta merge: Combined fresh data with \(cached.count) cached email addresses")
         }
         
         return totalDetails.map { 
