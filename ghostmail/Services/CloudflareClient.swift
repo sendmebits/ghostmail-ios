@@ -822,9 +822,15 @@ class CloudflareClient: ObservableObject {
             throw CloudflareError(message: "Invalid response")
         }
         
+        // Log response for debugging
+        if let responseString = String(data: data, encoding: .utf8) {
+            print("📧 Catch-all GET response (\(httpResponse.statusCode)): \(responseString.prefix(500))")
+        }
+        
         // Handle different status codes
         if httpResponse.statusCode == 404 {
-            // No catch-all rule configured
+            // No catch-all rule configured - this is normal for zones without catch-all set up
+            print("📧 No catch-all rule configured for this zone (404)")
             return .disabled
         }
         
@@ -877,6 +883,100 @@ class CloudflareClient: ObservableObject {
             return try await fetchCatchAllStatus(for: tempZone)
         }
         return try await fetchCatchAllStatus(for: zone)
+    }
+    
+    // MARK: - Update Catch-All Rule
+    
+    /// Update the catch-all rule for a zone
+    /// - Parameters:
+    ///   - zone: The zone to update
+    ///   - enabled: Whether catch-all should be enabled
+    ///   - action: The action type ("forward" or "drop")
+    ///   - forwardTo: Array of email addresses to forward to (only used when action is "forward")
+    func updateCatchAllRule(
+        for zone: CloudflareZone,
+        enabled: Bool,
+        action: String = "drop",
+        forwardTo: [String] = []
+    ) async throws {
+        let url = URL(string: "\(baseURL)/zones/\(zone.zoneId)/email/routing/rules/catch_all")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.allHTTPHeaderFields = [
+            "Authorization": "Bearer \(zone.apiToken)",
+            "Content-Type": "application/json"
+        ]
+        
+        // Build the request body
+        var actions: [[String: Any]] = []
+        
+        if action == "forward" && !forwardTo.isEmpty {
+            actions.append([
+                "type": "forward",
+                "value": forwardTo
+            ])
+        } else {
+            actions.append([
+                "type": "drop"
+            ])
+        }
+        
+        let body: [String: Any] = [
+            "enabled": enabled,
+            "matchers": [
+                ["type": "all"]
+            ],
+            "actions": actions,
+            "name": "Catch-All Rule"
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw CloudflareError(message: "Invalid response")
+        }
+        
+        // Log the response for debugging
+        if let responseString = String(data: data, encoding: .utf8) {
+            print("📧 Catch-all update response (\(httpResponse.statusCode)): \(responseString)")
+        }
+        
+        guard httpResponse.statusCode == 200 else {
+            if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
+                let errorMsg = errorResponse.errors.first?.message ?? "Failed to update catch-all rule"
+                
+                // Check for common error scenarios
+                if errorMsg.contains("not enabled") || errorMsg.contains("not configured") {
+                    throw CloudflareError(message: "Email Routing is not enabled for this zone. Please enable Email Routing in Cloudflare Dashboard first.")
+                }
+                
+                throw CloudflareError(message: errorMsg)
+            }
+            
+            // Handle 5xx errors that might indicate Email Routing isn't set up
+            if httpResponse.statusCode >= 500 {
+                throw CloudflareError(message: "Cloudflare server error. Email Routing may not be configured for this zone. Please check the Cloudflare Dashboard.")
+            }
+            
+            throw CloudflareError(message: "Failed to update catch-all rule (HTTP \(httpResponse.statusCode)). This zone may require Email Routing to be configured first in the Cloudflare Dashboard.")
+        }
+        
+        print("✅ Catch-all rule updated successfully for zone \(zone.zoneId)")
+    }
+    
+    /// Update catch-all rule using zone ID (convenience method)
+    func updateCatchAllRule(
+        forZoneId zoneId: String,
+        enabled: Bool,
+        action: String = "drop",
+        forwardTo: [String] = []
+    ) async throws {
+        guard let zone = zones.first(where: { $0.zoneId == zoneId }) else {
+            throw CloudflareError(message: "Zone not found")
+        }
+        try await updateCatchAllRule(for: zone, enabled: enabled, action: action, forwardTo: forwardTo)
     }
     
     /// Check analytics permissions for all zones and enable the setting if any zone permits it.

@@ -933,9 +933,17 @@ private struct PrimaryZoneSectionView: View {
     @State private var subdomainErrorMessage = ""
     @State private var catchAllStatus: CatchAllStatus?
     @State private var isLoadingCatchAll = false
+    @State private var isUpdatingCatchAll = false
+    @State private var showCatchAllError = false
+    @State private var catchAllErrorMessage = ""
+    @State private var showCatchAllOptions = false
     
     private var primaryZone: CloudflareClient.CloudflareZone? {
         cloudflareClient.zones.first(where: { $0.zoneId == cloudflareClient.zoneId })
+    }
+    
+    private var catchAllIsEnabled: Bool {
+        catchAllStatus?.isEnabled ?? false
     }
     
     var body: some View {
@@ -965,28 +973,51 @@ private struct PrimaryZoneSectionView: View {
                     .foregroundStyle(.secondary)
             }
             
-            // Catch-All Status Row
-            InfoRow(title: "Catch-All") {
-                HStack(spacing: 6) {
-                    if isLoadingCatchAll {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                    } else if let status = catchAllStatus {
-                        Image(systemName: status.systemImage)
-                            .foregroundStyle(status.color)
-                        Text(status.displayText)
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    } else {
-                        Text("—")
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
+            // Catch-All Toggle Row
+            if isLoadingCatchAll {
+                HStack {
+                    Text("Catch-All")
+                    Spacer()
+                    ProgressView()
+                        .scaleEffect(0.7)
+                }
+            } else {
+                Toggle(isOn: Binding(
+                    get: { catchAllIsEnabled },
+                    set: { newValue in
+                        if newValue {
+                            // Show options when enabling
+                            showCatchAllOptions = true
+                        } else {
+                            // Disable directly
+                            Task { await updateCatchAll(enabled: false) }
+                        }
+                    }
+                )) {
+                    HStack(spacing: 6) {
+                        Text("Catch-All")
+                        if isUpdatingCatchAll {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                        } else if let status = catchAllStatus, status.isEnabled {
+                            Text(status == .drop ? "(Drop)" : "(Forward)")
+                                .font(.system(.caption, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
+                .tint(.accentColor)
+                .disabled(isUpdatingCatchAll)
             }
-            .task {
-                await loadCatchAllStatus()
+            
+            // Catch-All Status Row (showing forward address if applicable)
+            if let status = catchAllStatus, case .forward(let addresses) = status, !addresses.isEmpty {
+                InfoRow(title: "Forward To") {
+                    Text(addresses.joined(separator: ", "))
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             
             Toggle("Enable Sub-Domains for this Zone", isOn: Binding(
@@ -1026,10 +1057,29 @@ private struct PrimaryZoneSectionView: View {
                 Label("Remove This Zone", systemImage: "trash")
             }
         }
+        .task {
+            await loadCatchAllStatus()
+        }
         .alert("Subdomain Error", isPresented: $showSubdomainError) {
             Button("OK", role: .cancel) { }
         } message: {
             Text(subdomainErrorMessage)
+        }
+        .alert("Catch-All Error", isPresented: $showCatchAllError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(catchAllErrorMessage)
+        }
+        .confirmationDialog("Enable Catch-All", isPresented: $showCatchAllOptions, titleVisibility: .visible) {
+            Button("Drop (Discard Emails)") {
+                Task { await updateCatchAll(enabled: true, action: "drop") }
+            }
+            Button("Forward to Default") {
+                Task { await updateCatchAllWithForward() }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Choose what happens to emails sent to addresses that don't have a routing rule.")
         }
     }
     
@@ -1049,6 +1099,49 @@ private struct PrimaryZoneSectionView: View {
                 catchAllStatus = nil
             }
         }
+    }
+    
+    private func updateCatchAll(enabled: Bool, action: String = "drop", forwardTo: [String] = []) async {
+        print("📧 updateCatchAll called: enabled=\(enabled), action=\(action), forwardTo=\(forwardTo)")
+        isUpdatingCatchAll = true
+        defer { isUpdatingCatchAll = false }
+        
+        do {
+            try await cloudflareClient.updateCatchAllRule(
+                forZoneId: cloudflareClient.zoneId,
+                enabled: enabled,
+                action: action,
+                forwardTo: forwardTo
+            )
+            print("📧 updateCatchAll succeeded, refreshing status...")
+            // Refresh the status
+            await loadCatchAllStatus()
+        } catch {
+            print("📧 updateCatchAll failed: \(error)")
+            await MainActor.run {
+                catchAllErrorMessage = error.localizedDescription
+                showCatchAllError = true
+            }
+        }
+    }
+    
+    private func updateCatchAllWithForward() async {
+        // Get the default forwarding address from settings
+        let defaultAddress = UserDefaults.standard.string(forKey: "defaultForwardingAddress") ?? ""
+        
+        // If no default, try to get the first forwarding address from the list
+        let forwardingAddresses = Array(cloudflareClient.forwardingAddresses)
+        let addressToUse = defaultAddress.isEmpty ? forwardingAddresses.first ?? "" : defaultAddress
+        
+        if addressToUse.isEmpty {
+            await MainActor.run {
+                catchAllErrorMessage = "No forwarding address configured. Please add a forwarding address first."
+                showCatchAllError = true
+            }
+            return
+        }
+        
+        await updateCatchAll(enabled: true, action: "forward", forwardTo: [addressToUse])
     }
 }
 
@@ -1165,32 +1258,69 @@ private struct AdditionalZonesSectionView: View {
     }
 }
 
-/// A row that fetches and displays the catch-all status for a zone
+/// A row that fetches and displays the catch-all status for a zone with toggle support
 private struct CatchAllStatusRow: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     let zone: CloudflareClient.CloudflareZone
     
     @State private var catchAllStatus: CatchAllStatus?
     @State private var isLoading = false
+    @State private var isUpdating = false
     @State private var hasLoaded = false
+    @State private var showCatchAllOptions = false
+    @State private var showError = false
+    @State private var errorMessage = ""
+    
+    private var catchAllIsEnabled: Bool {
+        catchAllStatus?.isEnabled ?? false
+    }
     
     var body: some View {
-        InfoRow(title: "Catch-All") {
-            HStack(spacing: 6) {
-                if isLoading {
+        Group {
+            if isLoading {
+                HStack {
+                    Text("Catch-All")
+                    Spacer()
                     ProgressView()
                         .scaleEffect(0.7)
-                } else if let status = catchAllStatus {
-                    Image(systemName: status.systemImage)
-                        .foregroundStyle(status.color)
-                    Text(status.displayText)
-                        .font(.system(.subheadline, design: .rounded))
+                }
+            } else {
+                Toggle(isOn: Binding(
+                    get: { catchAllIsEnabled },
+                    set: { newValue in
+                        // Guard against re-triggering during update
+                        guard !isUpdating && !showCatchAllOptions else { return }
+                        print("📧 CatchAllStatusRow toggle changed to: \(newValue)")
+                        if newValue {
+                            showCatchAllOptions = true
+                        } else {
+                            Task { await updateCatchAll(enabled: false) }
+                        }
+                    }
+                )) {
+                    HStack(spacing: 6) {
+                        Text("Catch-All")
+                        if isUpdating {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                        } else if let status = catchAllStatus, status.isEnabled {
+                            Text(status == .drop ? "(Drop)" : "(Forward)")
+                                .font(.system(.caption, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .tint(.accentColor)
+                .disabled(isUpdating)
+            }
+            
+            // Show forward address if catch-all forwards to an address
+            if let status = catchAllStatus, case .forward(let addresses) = status, !addresses.isEmpty {
+                InfoRow(title: "Forward To") {
+                    Text(addresses.joined(separator: ", "))
+                        .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                } else {
-                    Text("—")
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -1198,6 +1328,22 @@ private struct CatchAllStatusRow: View {
             guard !hasLoaded else { return }
             await loadCatchAllStatus()
             hasLoaded = true
+        }
+        .confirmationDialog("Enable Catch-All", isPresented: $showCatchAllOptions, titleVisibility: .visible) {
+            Button("Drop (Discard Emails)") {
+                Task { await updateCatchAll(enabled: true, action: "drop") }
+            }
+            Button("Forward to Default") {
+                Task { await updateCatchAllWithForward() }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Choose what happens to emails sent to addresses that don't have a routing rule.")
+        }
+        .alert("Catch-All Error", isPresented: $showError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(errorMessage)
         }
     }
     
@@ -1211,12 +1357,58 @@ private struct CatchAllStatusRow: View {
             await MainActor.run {
                 catchAllStatus = status
             }
+        } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == -999 {
+            // Request was cancelled (likely due to view update), ignore silently
+            print("📧 Catch-all status request cancelled for zone \(zone.zoneId)")
         } catch {
             print("Failed to fetch catch-all status for zone \(zone.zoneId): \(error)")
             await MainActor.run {
                 catchAllStatus = nil
             }
         }
+    }
+    
+    private func updateCatchAll(enabled: Bool, action: String = "drop", forwardTo: [String] = []) async {
+        print("📧 CatchAllStatusRow.updateCatchAll called: enabled=\(enabled), action=\(action), forwardTo=\(forwardTo)")
+        isUpdating = true
+        defer { isUpdating = false }
+        
+        do {
+            try await cloudflareClient.updateCatchAllRule(
+                for: zone,
+                enabled: enabled,
+                action: action,
+                forwardTo: forwardTo
+            )
+            print("📧 CatchAllStatusRow.updateCatchAll succeeded")
+            // Refresh the status
+            await loadCatchAllStatus()
+        } catch {
+            print("📧 CatchAllStatusRow.updateCatchAll failed: \(error)")
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+                showError = true
+            }
+        }
+    }
+    
+    private func updateCatchAllWithForward() async {
+        // Get the default forwarding address from settings
+        let defaultAddress = UserDefaults.standard.string(forKey: "defaultForwardingAddress") ?? ""
+        
+        // If no default, try to get the first forwarding address from the list
+        let forwardingAddresses = Array(cloudflareClient.forwardingAddresses)
+        let addressToUse = defaultAddress.isEmpty ? forwardingAddresses.first ?? "" : defaultAddress
+        
+        if addressToUse.isEmpty {
+            await MainActor.run {
+                errorMessage = "No forwarding address configured. Please add a forwarding address first."
+                showError = true
+            }
+            return
+        }
+        
+        await updateCatchAll(enabled: true, action: "forward", forwardTo: [addressToUse])
     }
 }
 
