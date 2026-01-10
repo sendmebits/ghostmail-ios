@@ -514,9 +514,8 @@ struct SettingsView: View {
                             dismiss()
                         } label: {
                             Image(systemName: "xmark")
+                                .fontWeight(.medium)
                         }
-                        .buttonStyle(.borderless)
-                        .buttonBorderShape(.circle)
                         .tint(.primary)
                     }
                 }
