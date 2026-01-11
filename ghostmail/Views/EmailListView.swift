@@ -1189,7 +1189,7 @@ private struct FilterSheetView: View {
                     }
                     Button(action: { pendingStatusFilter = .dropped }) {
                         HStack {
-                            Text("Dropped Emails")
+                            Text("Alias set to Drop")
                             if pendingStatusFilter == .dropped {
                                 Spacer()
                                 Image(systemName: "checkmark")
@@ -1198,7 +1198,7 @@ private struct FilterSheetView: View {
                     }
                     Button(action: { pendingStatusFilter = .disabled }) {
                         HStack {
-                            Text("Disabled Emails")
+                            Text("Alias set to Disabled")
                             if pendingStatusFilter == .disabled {
                                 Spacer()
                                 Image(systemName: "checkmark")
