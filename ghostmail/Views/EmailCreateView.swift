@@ -97,6 +97,7 @@ struct EmailCreateView: View {
         NavigationStack {
             Form {
                 Section("Email Alias") {
+                    // Alias input row with optional AI generate button
                     HStack {
                         TextField("alias", text: $username)
                             .textInputAutocapitalization(.never)
@@ -104,37 +105,41 @@ struct EmailCreateView: View {
                             .keyboardType(.emailAddress)
                             .focused($isUsernameFocused)
                         
-                        // Show domain picker if there are multiple domains available across all zones
-                        if availableDomains.count > 1 {
-                            Picker("", selection: $selectedDomain) {
-                                ForEach(availableDomains, id: \.self) { domain in
-                                    Text("@\(domain)").tag(domain)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .labelsHidden()
-                        } else {
-                            Text("@\(selectedDomain.isEmpty ? cloudflareClient.emailDomain : selectedDomain)")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    
-                    // AI Generate button - only shown when Apple Intelligence is available
-                    if isAppleIntelligenceAvailable {
-                        Button {
-                            generateAliasWithAI()
-                        } label: {
-                            HStack {
+                        // AI Generate button - only shown when Apple Intelligence is available
+                        if isAppleIntelligenceAvailable {
+                            Button {
+                                generateAliasWithAI()
+                            } label: {
                                 if isGeneratingAlias {
                                     ProgressView()
                                         .scaleEffect(0.8)
                                 } else {
                                     Image(systemName: "wand.and.stars")
+                                        .foregroundStyle(Color.accentColor)
                                 }
-                                Text("Generate")
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isGeneratingAlias)
+                        }
+                    }
+                    
+                    // Domain selector on its own row
+                    if availableDomains.count > 1 {
+                        Picker("Domain", selection: $selectedDomain) {
+                            ForEach(availableDomains, id: \.self) { domain in
+                                Text("@\(domain)").tag(domain)
                             }
                         }
-                        .disabled(isGeneratingAlias)
+                        .pickerStyle(.menu)
+                        .foregroundStyle(.secondary)
+                    } else {
+                        HStack {
+                            Text("Domain")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("@\(selectedDomain.isEmpty ? cloudflareClient.emailDomain : selectedDomain)")
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 }
                 
