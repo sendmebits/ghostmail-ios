@@ -359,6 +359,9 @@ struct EmailListView: View {
             return
         }
         
+        // Set loading state FIRST to prevent race conditions
+        isLoadingStatistics = true
+        
         // Try to load from cache first for instant display
         var cachedStats: [EmailStatistic]? = nil
         var cacheTimestamp: Date? = nil
@@ -374,6 +377,7 @@ struct EmailListView: View {
                 lastCacheCheckTime = ts
             }
             
+            // Display cached data immediately - don't wait for network
             await MainActor.run {
                 self.unfilteredStatistics = cached.statistics
                 self.emailStatistics = filterStatistics(cached.statistics)
@@ -383,12 +387,14 @@ struct EmailListView: View {
             // If cache is fresh (< 24 hours), we're done - no need to fetch
             if !cacheIsStale {
                 print("📊 Cache is fresh, skipping network fetch")
+                await MainActor.run {
+                    self.isLoadingStatistics = false
+                }
                 return
             }
             // If stale, continue to fetch fresh data in background with delta optimization
+            print("📊 Cache is stale, fetching fresh data while showing cached")
         }
-        
-        isLoadingStatistics = true
         
         // Fetch statistics for all zones in parallel for faster refresh
         // Pass cached data and timestamp to enable smart delta fetching
@@ -427,19 +433,31 @@ struct EmailListView: View {
         // Deduplicate statistics by email address (merges details from multiple sources)
         allStats = deduplicateStatistics(allStats)
         
-        // Cache the raw statistics before filtering
+        // Only update if we got actual data from the network
+        // This prevents network failures from clearing cached data
         if !allStats.isEmpty {
+            // Cache the raw statistics before filtering
             StatisticsCache.shared.save(allStats)
-        }
-        
-        // Filter statistics based on current filters
-        let filteredStats = filterStatistics(allStats)
-        
-        await MainActor.run {
-            self.unfilteredStatistics = allStats
-            self.emailStatistics = filteredStats
-            self.isLoadingStatistics = false
-            self.isUsingCachedStatistics = false
+            
+            // Filter statistics based on current filters
+            let filteredStats = filterStatistics(allStats)
+            
+            await MainActor.run {
+                self.unfilteredStatistics = allStats
+                self.emailStatistics = filteredStats
+                self.isLoadingStatistics = false
+                self.isUsingCachedStatistics = false
+            }
+        } else {
+            // Network fetch returned empty - keep showing cached data if we have it
+            print("📊 Network fetch returned empty, keeping cached data")
+            await MainActor.run {
+                self.isLoadingStatistics = false
+                // Don't clear isUsingCachedStatistics if we're still showing cached data
+                if self.unfilteredStatistics.isEmpty {
+                    self.isUsingCachedStatistics = false
+                }
+            }
         }
     }
     
@@ -453,6 +471,12 @@ struct EmailListView: View {
     }
     
     private func filterStatistics(_ stats: [EmailStatistic]) -> [EmailStatistic] {
+        // If aliases haven't loaded yet, show all statistics without filtering
+        // This prevents the chart from appearing empty during initial load
+        if allAliases.isEmpty {
+            return stats
+        }
+        
         // Get the email addresses from filteredEmails (aliases)
         let filteredEmailAddresses = Set(filteredEmails.map { $0.emailAddress })
         

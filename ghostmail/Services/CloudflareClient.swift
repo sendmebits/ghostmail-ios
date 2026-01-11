@@ -728,25 +728,36 @@ class CloudflareClient: ObservableObject {
         
         // If delta fetch, merge fresh data with cached historical data
         if useDeltaFetch, let cached = cachedData {
-            // Calculate the actual start time of our fresh fetch window
-            // For i=0: startDate = yesterday at current time
-            // For i=daysToFetch-1: startDate = (daysToFetch days ago) at current time
-            // We need to keep cached data that's OLDER than our oldest fetch window start
-            let oldestFetchStart = calendar.date(byAdding: .day, value: -daysToFetch, to: now)!
+            // Calculate the 7-day window boundary
+            let sevenDaysAgo = calendar.date(byAdding: .day, value: -7, to: now)!
             
-            // Merge: keep cached details that are older than our fresh fetch window
-            for cachedStat in cached {
-                let olderDetails = cachedStat.emailDetails.filter { detail in
-                    detail.date < oldestFetchStart
-                }
-                
-                if !olderDetails.isEmpty {
-                    // Add older cached details to our fresh data
-                    totalDetails[cachedStat.emailAddress, default: []].append(contentsOf: olderDetails)
+            // Build a set of unique keys from fresh data to avoid duplicates
+            var freshKeys = Set<String>()
+            for (email, details) in totalDetails {
+                for detail in details {
+                    let key = "\(email)|\(detail.from)|\(detail.date.timeIntervalSince1970)"
+                    freshKeys.insert(key)
                 }
             }
             
-            print("📊 Delta merge: Combined fresh data with \(cached.count) cached email addresses")
+            // Merge: keep ALL cached details within 7 days that aren't already in fresh data
+            // This ensures we don't lose any data, even if fresh fetch returns empty for some days
+            var addedFromCache = 0
+            for cachedStat in cached {
+                for detail in cachedStat.emailDetails {
+                    // Only include if within 7-day window
+                    guard detail.date >= sevenDaysAgo else { continue }
+                    
+                    // Only add if not already in fresh data (avoid duplicates)
+                    let key = "\(cachedStat.emailAddress)|\(detail.from)|\(detail.date.timeIntervalSince1970)"
+                    if !freshKeys.contains(key) {
+                        totalDetails[cachedStat.emailAddress, default: []].append(detail)
+                        addedFromCache += 1
+                    }
+                }
+            }
+            
+            print("📊 Delta merge: Added \(addedFromCache) cached entries, combined with fresh data from \(cached.count) cached email addresses")
         }
         
         return totalDetails.map { 
