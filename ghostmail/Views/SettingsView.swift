@@ -1617,6 +1617,22 @@ private struct SettingsSectionView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .onAppear {
+                    // Initialize selection if empty but forwarding addresses exist
+                    if selectedDefaultAddress.isEmpty && !sortedForwardingAddresses.isEmpty {
+                        selectedDefaultAddress = sortedForwardingAddresses.first ?? ""
+                    }
+                }
+                .onChange(of: sortedForwardingAddresses) { _, newAddresses in
+                    // If current selection is no longer valid, reset to first available
+                    if !selectedDefaultAddress.isEmpty && !newAddresses.contains(selectedDefaultAddress) {
+                        selectedDefaultAddress = newAddresses.first ?? ""
+                    }
+                    // If selection was empty and addresses just loaded, initialize
+                    if selectedDefaultAddress.isEmpty && !newAddresses.isEmpty {
+                        selectedDefaultAddress = newAddresses.first ?? ""
+                    }
+                }
             } else {
                 Text("No forwarding addresses available")
                     .font(.system(.subheadline, design: .rounded))
