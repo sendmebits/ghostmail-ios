@@ -785,7 +785,7 @@ struct EmailListView: View {
             .background(Color(.systemBackground).ignoresSafeArea())
             .preferredColorScheme(themeColorScheme)
             .toolbar { mainToolbar }
-            .navigationTitle("Email Aliases")
+            .navigationTitle("\(sortedEmails.count) Email Alias\(sortedEmails.count == 1 ? "" : "es")")
             .searchable(text: $searchText, prompt: "Search emails or websites")
             .onChange(of: sortOrder) { _, newValue in
                 persistSortOrder(newValue)
