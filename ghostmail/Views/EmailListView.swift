@@ -621,9 +621,10 @@ struct EmailListView: View {
                 }
             } else {
                 List {
-                    // Chart Section
+                    // Chart Section - always show when analytics enabled (even with no data)
                     if showAnalytics {
-                        if !emailStatistics.isEmpty {
+                        if !isLoadingStatistics || !emailStatistics.isEmpty {
+                            // Show chart with data or empty chart (all zeros)
                             Section {
                                 EmailTrendChartView(
                                     statistics: emailStatistics,
