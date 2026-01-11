@@ -74,9 +74,36 @@ struct EmailListView: View {
     }
 
     // Only show aliases whose zoneId is in this device's configured zones
+    // Also filter out subdomain aliases when subdomains are disabled for that zone
     private var allAliases: [EmailAlias] {
         let allowedZoneIds = Set(cloudflareClient.zones.map { $0.zoneId.trimmingCharacters(in: .whitespacesAndNewlines) })
-        return emailAliases.filter { allowedZoneIds.contains($0.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        
+        // Build a lookup for zone subdomain settings and main domain names
+        var zoneInfo: [String: (domainName: String, subdomainsEnabled: Bool)] = [:]
+        for zone in cloudflareClient.zones {
+            let zoneId = zone.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+            zoneInfo[zoneId] = (zone.domainName.lowercased(), zone.subdomainsEnabled)
+        }
+        
+        return emailAliases.filter { alias in
+            let zoneId = alias.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard allowedZoneIds.contains(zoneId) else { return false }
+            
+            // Check if this is a subdomain alias and if subdomains are disabled
+            if let info = zoneInfo[zoneId], !info.subdomainsEnabled {
+                // Extract domain from email address
+                let parts = alias.emailAddress.split(separator: "@")
+                if parts.count == 2 {
+                    let emailDomain = String(parts[1]).lowercased()
+                    // If email domain doesn't match the zone's main domain, it's a subdomain
+                    if emailDomain != info.domainName && !info.domainName.isEmpty {
+                        return false // Hide subdomain aliases when subdomains are disabled
+                    }
+                }
+            }
+            
+            return true
+        }
     }
     
     private var themeColorScheme: ColorScheme? {

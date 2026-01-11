@@ -764,25 +764,16 @@ private struct SettingsListContentView: View {
             }
             
             CloudflareAccountSectionView()
-            PrimaryZoneSectionView(
+            
+            // New unified domain list section
+            DomainListSectionView(
                 zoneToRemove: $zoneToRemove,
                 showRemoveZoneAlert: $showRemoveZoneAlert,
-                entryCount: primaryEntryCount,
-                zoneToEditToken: $zoneToEditToken
+                zoneToEditToken: $zoneToEditToken,
+                zoneToAddToken: $zoneToAddToken,
+                showAddZoneSheet: $showAddZoneSheet,
+                entryCount: entryCount
             )
-
-            if cloudflareClient.zones.count > 1 {
-                AdditionalZonesSectionView(
-                    additionalZones: additionalZones,
-                    zoneToRemove: $zoneToRemove,
-                    showRemoveZoneAlert: $showRemoveZoneAlert,
-                    entryCount: entryCount,
-                    zoneToEditToken: $zoneToEditToken,
-                    zoneToAddToken: $zoneToAddToken
-                )
-            }
-
-            AddZoneSectionView(showAddZoneSheet: $showAddZoneSheet)
 
             SettingsSectionView(
                 defaultZoneId: $defaultZoneId,
@@ -915,6 +906,79 @@ private struct CloudflareAccountSectionView: View {
             }
         } header: {
             Text("Cloudflare Account")
+                .textCase(.uppercase)
+                .font(.system(.footnote, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Unified domain list section showing all zones with navigation to detail views
+private struct DomainListSectionView: View {
+    @EnvironmentObject private var cloudflareClient: CloudflareClient
+    @Query(sort: \EmailAlias.emailAddress) private var emailAliases: [EmailAlias]
+    
+    @Binding var zoneToRemove: CloudflareClient.CloudflareZone?
+    @Binding var showRemoveZoneAlert: Bool
+    @Binding var zoneToEditToken: CloudflareClient.CloudflareZone?
+    @Binding var zoneToAddToken: CloudflareClient.CloudflareZone?
+    @Binding var showAddZoneSheet: Bool
+    let entryCount: (String) -> Int
+    
+    private func domainName(for zone: CloudflareClient.CloudflareZone) -> String {
+        zone.domainName.isEmpty ? zone.zoneId : zone.domainName
+    }
+    
+    private func aliasCount(for zone: CloudflareClient.CloudflareZone) -> Int {
+        emailAliases.filter { $0.zoneId == zone.zoneId && $0.isLoggedOut == false }.count
+    }
+    
+    private func isMissingToken(_ zone: CloudflareClient.CloudflareZone) -> Bool {
+        zone.apiToken.isEmpty
+    }
+    
+    var body: some View {
+        Section {
+            ForEach(cloudflareClient.zones, id: \.zoneId) { zone in
+                NavigationLink {
+                    ZoneDetailView(
+                        zone: zone,
+                        zoneToRemove: $zoneToRemove,
+                        showRemoveZoneAlert: $showRemoveZoneAlert,
+                        zoneToEditToken: $zoneToEditToken,
+                        zoneToAddToken: $zoneToAddToken
+                    )
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                Text(domainName(for: zone))
+                                    .font(.system(.body, design: .rounded, weight: .medium))
+                                
+                                if isMissingToken(zone) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.caption)
+                                        .foregroundColor(.orange)
+                                }
+                            }
+                            
+                            Text("\(aliasCount(for: zone)) aliases created")
+                                .font(.system(.subheadline, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+            
+            // Add Domain button
+            Button {
+                showAddZoneSheet = true
+            } label: {
+                Label("Add Domain", systemImage: "plus.circle.fill")
+            }
+        } header: {
+            Text("Domains")
                 .textCase(.uppercase)
                 .font(.system(.footnote, design: .rounded))
                 .foregroundStyle(.secondary)
