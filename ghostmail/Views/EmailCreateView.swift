@@ -1,6 +1,9 @@
 import SwiftUI
 import SwiftData
 import UIKit
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 
 struct EmailCreateView: View {
     @Environment(\.modelContext) private var modelContext
@@ -14,6 +17,8 @@ struct EmailCreateView: View {
     @State private var website = ""
     @State private var notes = ""
     @State private var isLoading = false
+    @State private var isGeneratingAlias = false
+    @State private var recentGenerations: [String] = [] // Track recent generations to avoid repeats
     @State private var error: Error?
     @State private var showError = false
     @State private var forwardTo = ""
@@ -113,6 +118,24 @@ struct EmailCreateView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    
+                    // AI Generate button - only shown when Apple Intelligence is available
+                    if isAppleIntelligenceAvailable {
+                        Button {
+                            generateAliasWithAI()
+                        } label: {
+                            HStack {
+                                if isGeneratingAlias {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                } else {
+                                    Image(systemName: "wand.and.stars")
+                                }
+                                Text("Generate")
+                            }
+                        }
+                        .disabled(isGeneratingAlias)
+                    }
                 }
                 
                 Section("Destination Email") {
@@ -211,6 +234,92 @@ struct EmailCreateView: View {
                 }
             }
         }
+    }
+    
+    // MARK: - Apple Intelligence
+    
+    /// Check if Apple Intelligence (Foundation Models) is available on this device
+    private var isAppleIntelligenceAvailable: Bool {
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *) {
+            return SystemLanguageModel.default.isAvailable
+        }
+        #endif
+        return false
+    }
+    
+    /// Generate a creative email alias username using Apple Intelligence
+    private func generateAliasWithAI() {
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *) {
+            Task {
+                isGeneratingAlias = true
+                defer { isGeneratingAlias = false }
+                
+                do {
+                    let session = LanguageModelSession()
+                    
+                    // Add randomness seed based on current time
+                    let randomSeed = Int.random(in: 1...1000)
+                    let themes = ["animals", "nature", "space", "ocean", "weather", "colors", "food", "music", "tech", "fantasy"]
+                    let randomTheme = themes.randomElement() ?? "animals"
+                    
+                    // Build exclusion list from recent generations
+                    let exclusions = recentGenerations.isEmpty ? "" : """
+                    
+                    IMPORTANT: Do NOT use any of these recently used words or similar variations: \(recentGenerations.joined(separator: ", "))
+                    """
+                    
+                    let prompt = """
+                    Generate a single creative email alias username in the format: adjective + noun (no spaces, all lowercase).
+                    
+                    Theme hint: \(randomTheme) (seed: \(randomSeed))
+                    
+                    Examples of good usernames: swiftplane, crazycar, silentowl, brightlight, lazykoala, frostybear, goldensun, mistyforest
+                    
+                    Requirements:
+                    - Combine one descriptive adjective with one noun
+                    - Keep it short (under 20 characters total)
+                    - Make it unique and memorable
+                    - No numbers or special characters
+                    - Be creative and surprising - avoid common/obvious combinations\(exclusions)
+                    
+                    Respond with ONLY the username, nothing else.
+                    """
+                    
+                    // Use GenerationOptions to increase temperature/randomness
+                    let options = GenerationOptions(temperature: 0.9)
+                    let response = try await session.respond(to: prompt, options: options)
+                    
+                    // Extract just the generated username (trim any extra text)
+                    var generated = response.content
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                        .replacingOccurrences(of: " ", with: "")
+                        .filter { $0.isLetter }
+                    
+                    // Limit to 20 characters
+                    generated = String(generated.prefix(20))
+                    
+                    if !generated.isEmpty {
+                        // Track this generation to avoid repeats
+                        await MainActor.run {
+                            username = generated
+                            
+                            // Add to recent generations, keeping last 10
+                            recentGenerations.append(generated)
+                            if recentGenerations.count > 10 {
+                                recentGenerations.removeFirst()
+                            }
+                        }
+                    }
+                } catch {
+                    print("AI generation failed: \(error)")
+                    // Silently fail - user can just type manually
+                }
+            }
+        }
+        #endif
     }
     
     private func createEmailAlias() {
