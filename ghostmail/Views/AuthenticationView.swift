@@ -198,6 +198,17 @@ struct AuthenticationView: View {
                             """,
                             helpURL: "https://dash.cloudflare.com/profile/api-tokens"
                         )
+                        
+                        // Quick link to create API token with pre-selected permissions
+                        Link(destination: URL(string: "https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22analytics%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22dns%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22email_routing_address%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22email_routing_rule%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22zone_settings%22%2C%22type%22%3A%22read%22%7D%5D&name=GhostMail&accountId=*&zoneId=all")!) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.up.forward.app")
+                                Text("Create API Token on Cloudflare")
+                            }
+                            .font(.system(.subheadline, design: .rounded, weight: .medium))
+                            .foregroundColor(.accentColor)
+                        }
+                        .padding(.top, 4)
                     }
                 }
                 
