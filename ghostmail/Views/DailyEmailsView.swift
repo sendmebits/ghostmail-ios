@@ -78,6 +78,15 @@ struct DailyEmailsView: View {
         return (forwarded, dropped, rejected)
     }
     
+    // Filter state for action type
+    @State private var selectedActionFilter: EmailRoutingAction? = nil
+    
+    // Filtered emails based on selected action
+    private var filteredEmails: [EmailItem] {
+        guard let filter = selectedActionFilter else { return emailsForDay }
+        return emailsForDay.filter { $0.action == filter }
+    }
+    
     var body: some View {
         List {
             if emailsForDay.isEmpty {
@@ -94,9 +103,36 @@ struct DailyEmailsView: View {
                 // Summary section
                 Section {
                     HStack(spacing: 16) {
-                        ActionSummaryBadge(action: .forwarded, count: actionSummary.forwarded)
-                        ActionSummaryBadge(action: .dropped, count: actionSummary.dropped)
-                        ActionSummaryBadge(action: .rejected, count: actionSummary.rejected)
+                        ActionSummaryBadge(
+                            action: .forwarded,
+                            count: actionSummary.forwarded,
+                            isSelected: selectedActionFilter == .forwarded,
+                            hasActiveFilter: selectedActionFilter != nil
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedActionFilter = selectedActionFilter == .forwarded ? nil : .forwarded
+                            }
+                        }
+                        ActionSummaryBadge(
+                            action: .dropped,
+                            count: actionSummary.dropped,
+                            isSelected: selectedActionFilter == .dropped,
+                            hasActiveFilter: selectedActionFilter != nil
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedActionFilter = selectedActionFilter == .dropped ? nil : .dropped
+                            }
+                        }
+                        ActionSummaryBadge(
+                            action: .rejected,
+                            count: actionSummary.rejected,
+                            isSelected: selectedActionFilter == .rejected,
+                            hasActiveFilter: selectedActionFilter != nil
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedActionFilter = selectedActionFilter == .rejected ? nil : .rejected
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
@@ -112,9 +148,16 @@ struct DailyEmailsView: View {
                         }
                         Spacer()
                         HStack(spacing: 4) {
-                            Text("\(emailsForDay.count)")
-                                .font(.system(.subheadline, design: .rounded, weight: .bold))
-                                .foregroundStyle(Color.accentColor)
+                            // Show filtered count when filter is active
+                            if selectedActionFilter != nil {
+                                Text("\(filteredEmails.count)/\(emailsForDay.count)")
+                                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                    .foregroundStyle(Color.accentColor)
+                            } else {
+                                Text("\(emailsForDay.count)")
+                                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                    .foregroundStyle(Color.accentColor)
+                            }
                             Image(systemName: "envelope.fill")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(Color.accentColor)
@@ -123,14 +166,30 @@ struct DailyEmailsView: View {
                 }
                 
                 Section {
-                    ForEach(emailsForDay) { email in
-                        EmailRowView(
-                            email: email,
-                            isDropAlias: isDropAlias(for: email.to),
-                            isCatchAll: isCatchAllAddress(email.to)
-                        )
-                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                            .listRowSeparator(.hidden)
+                    if filteredEmails.isEmpty && selectedActionFilter != nil {
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 8) {
+                                Image(systemName: "envelope.open")
+                                    .font(.system(size: 24, weight: .light))
+                                    .foregroundStyle(Color.secondary.opacity(0.5))
+                                Text("No \(selectedActionFilter!.label.lowercased()) emails")
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 16)
+                    } else {
+                        ForEach(filteredEmails) { email in
+                            EmailRowView(
+                                email: email,
+                                isDropAlias: isDropAlias(for: email.to),
+                                isCatchAll: isCatchAllAddress(email.to)
+                            )
+                                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                                .listRowSeparator(.hidden)
+                        }
                     }
                 } header: {
                     HStack {
@@ -138,12 +197,12 @@ struct DailyEmailsView: View {
                             Image(systemName: "tray.fill")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(.secondary)
-                            Text("Emails Received")
+                            Text(selectedActionFilter != nil ? "\(selectedActionFilter!.label) Emails" : "Emails Received")
                                 .font(.system(.subheadline, design: .rounded, weight: .medium))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text("\(emailsForDay.count)")
+                        Text("\(filteredEmails.count)")
                             .font(.system(.caption, design: .rounded, weight: .semibold))
                             .foregroundStyle(.secondary)
                     }
@@ -155,36 +214,54 @@ struct DailyEmailsView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
     
-    // Summary badge for action counts - enhanced visual design
+    // Summary badge for action counts - tappable filter
     private struct ActionSummaryBadge: View {
         let action: EmailRoutingAction
         let count: Int
+        let isSelected: Bool
+        let hasActiveFilter: Bool
+        let onTap: () -> Void
         
         var body: some View {
-            VStack(spacing: 8) {
-                // Icon with colored background circle
-                ZStack {
-                    Circle()
-                        .fill(count > 0 ? action.color.opacity(0.15) : Color.gray.opacity(0.1))
-                        .frame(width: 52, height: 52)
+            Button(action: {
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
+                onTap()
+            }) {
+                VStack(spacing: 8) {
+                    // Icon with colored background circle
+                    ZStack {
+                        Circle()
+                            .fill(count > 0 ? action.color.opacity(isSelected ? 0.3 : 0.15) : Color.gray.opacity(0.1))
+                            .frame(width: 52, height: 52)
+                        
+                        // Selection ring
+                        if isSelected {
+                            Circle()
+                                .strokeBorder(action.color, lineWidth: 2.5)
+                                .frame(width: 52, height: 52)
+                        }
+                        
+                        Image(systemName: action.iconName)
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.4))
+                    }
                     
-                    Image(systemName: action.iconName)
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.4))
+                    // Count
+                    Text("\(count)")
+                        .font(.system(.title2, design: .rounded, weight: .bold))
+                        .foregroundStyle(count > 0 ? .primary : .secondary)
+                    
+                    // Label
+                    Text(action.label)
+                        .font(.system(.caption, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
-                
-                // Count
-                Text("\(count)")
-                    .font(.system(.title2, design: .rounded, weight: .bold))
-                    .foregroundStyle(count > 0 ? .primary : .secondary)
-                
-                // Label
-                Text(action.label)
-                    .font(.system(.caption, weight: .medium))
-                    .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .opacity(hasActiveFilter && !isSelected ? 0.5 : 1.0)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
+            .buttonStyle(.plain)
         }
     }
     

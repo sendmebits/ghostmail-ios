@@ -49,6 +49,15 @@ struct DailyEmailDetailView: View {
         return (forwarded, dropped, rejected)
     }
     
+    // Filter state for action type
+    @State private var selectedActionFilter: EmailRoutingAction? = nil
+    
+    // Filtered emails based on selected action
+    private var filteredEmails: [EmailStatistic.EmailDetail] {
+        guard let filter = selectedActionFilter else { return emailsForDay }
+        return emailsForDay.filter { $0.action == filter }
+    }
+    
     var body: some View {
         List {
             if emailsForDay.isEmpty {
@@ -60,75 +69,130 @@ struct DailyEmailDetailView: View {
                 // Summary section
                 Section {
                     HStack(spacing: 16) {
-                        ActionSummaryBadge(action: .forwarded, count: actionSummary.forwarded)
-                        ActionSummaryBadge(action: .dropped, count: actionSummary.dropped)
-                        ActionSummaryBadge(action: .rejected, count: actionSummary.rejected)
+                        ActionSummaryBadge(
+                            action: .forwarded,
+                            count: actionSummary.forwarded,
+                            isSelected: selectedActionFilter == .forwarded,
+                            hasActiveFilter: selectedActionFilter != nil
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedActionFilter = selectedActionFilter == .forwarded ? nil : .forwarded
+                            }
+                        }
+                        ActionSummaryBadge(
+                            action: .dropped,
+                            count: actionSummary.dropped,
+                            isSelected: selectedActionFilter == .dropped,
+                            hasActiveFilter: selectedActionFilter != nil
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedActionFilter = selectedActionFilter == .dropped ? nil : .dropped
+                            }
+                        }
+                        ActionSummaryBadge(
+                            action: .rejected,
+                            count: actionSummary.rejected,
+                            isSelected: selectedActionFilter == .rejected,
+                            hasActiveFilter: selectedActionFilter != nil
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedActionFilter = selectedActionFilter == .rejected ? nil : .rejected
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
                 } header: {
-                    Text("Summary")
+                    HStack {
+                        Text("Summary")
+                        Spacer()
+                        if selectedActionFilter != nil {
+                            Text("\(filteredEmails.count)/\(emailsForDay.count)")
+                                .font(.system(.caption, design: .rounded, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
                 }
                 
                 Section {
-                    ForEach(emailsForDay, id: \.self) { detail in
-                        HStack(spacing: 12) {
-                            // Status icon with background
-                            ZStack {
-                                Circle()
-                                    .fill(detail.action.color.opacity(0.15))
-                                    .frame(width: 32, height: 32)
-                                
-                                Image(systemName: detail.action.iconName)
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(detail.action.color)
+                    if filteredEmails.isEmpty && selectedActionFilter != nil {
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 8) {
+                                Image(systemName: "envelope.open")
+                                    .font(.system(size: 24, weight: .light))
+                                    .foregroundStyle(Color.secondary.opacity(0.5))
+                                Text("No \(selectedActionFilter!.label.lowercased()) emails")
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.secondary)
                             }
-                            
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(detail.from)
-                                    .font(.body)
-                                    .foregroundStyle(.primary)
-                                
-                                HStack(spacing: 8) {
-                                    Text(detail.date.formatted(date: .abbreviated, time: .shortened))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    
-                                    // Status badge
-                                    Text(detail.action.label)
-                                        .font(.system(.caption2, design: .rounded, weight: .medium))
-                                        .foregroundStyle(detail.action.color)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            Capsule()
-                                                .fill(detail.action.color.opacity(0.15))
-                                        )
-                                }
-                            }
-                            
                             Spacer()
                         }
-                        .padding(.vertical, 4)
-                        .contentShape(Rectangle())
-                        .contextMenu {
-                            Button {
-                                UIPasteboard.general.string = detail.from
-                            } label: {
-                                Text("Copy Email Address")
-                                Image(systemName: "doc.on.doc")
+                        .padding(.vertical, 16)
+                    } else {
+                        ForEach(filteredEmails, id: \.self) { detail in
+                            HStack(spacing: 12) {
+                                // Status icon with background
+                                ZStack {
+                                    Circle()
+                                        .fill(detail.action.color.opacity(0.15))
+                                        .frame(width: 32, height: 32)
+                                    
+                                    Image(systemName: detail.action.iconName)
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(detail.action.color)
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(detail.from)
+                                        .font(.body)
+                                        .foregroundStyle(.primary)
+                                    
+                                    HStack(spacing: 8) {
+                                        Text(detail.date.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        
+                                        // Status badge
+                                        Text(detail.action.label)
+                                            .font(.system(.caption2, design: .rounded, weight: .medium))
+                                            .foregroundStyle(detail.action.color)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(
+                                                Capsule()
+                                                    .fill(detail.action.color.opacity(0.15))
+                                            )
+                                    }
+                                }
+                                
+                                Spacer()
                             }
-                        }
-                        .onLongPressGesture {
-                            UIPasteboard.general.string = detail.from
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button {
+                                    UIPasteboard.general.string = detail.from
+                                } label: {
+                                    Text("Copy Email Address")
+                                    Image(systemName: "doc.on.doc")
+                                }
+                            }
+                            .onLongPressGesture {
+                                UIPasteboard.general.string = detail.from
+                                let generator = UIImpactFeedbackGenerator(style: .light)
+                                generator.impactOccurred()
+                            }
                         }
                     }
                 } header: {
-                    Text("Received Emails")
+                    Text(selectedActionFilter != nil ? "\(selectedActionFilter!.label) Emails" : "Received Emails")
                 } footer: {
-                    Text("Total: \(emailsForDay.count) emails on \(formattedDate)")
+                    if selectedActionFilter != nil {
+                        Text("Showing \(filteredEmails.count) of \(emailsForDay.count) emails on \(formattedDate)")
+                    } else {
+                        Text("Total: \(emailsForDay.count) emails on \(formattedDate)")
+                    }
                 }
             }
         }
@@ -143,36 +207,54 @@ struct DailyEmailDetailView: View {
         }
     }
     
-    // Summary badge for action counts - enhanced visual design
+    // Summary badge for action counts - tappable filter
     private struct ActionSummaryBadge: View {
         let action: EmailRoutingAction
         let count: Int
+        let isSelected: Bool
+        let hasActiveFilter: Bool
+        let onTap: () -> Void
         
         var body: some View {
-            VStack(spacing: 8) {
-                // Icon with colored background circle
-                ZStack {
-                    Circle()
-                        .fill(count > 0 ? action.color.opacity(0.15) : Color.gray.opacity(0.1))
-                        .frame(width: 52, height: 52)
+            Button(action: {
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
+                onTap()
+            }) {
+                VStack(spacing: 8) {
+                    // Icon with colored background circle
+                    ZStack {
+                        Circle()
+                            .fill(count > 0 ? action.color.opacity(isSelected ? 0.3 : 0.15) : Color.gray.opacity(0.1))
+                            .frame(width: 52, height: 52)
+                        
+                        // Selection ring
+                        if isSelected {
+                            Circle()
+                                .strokeBorder(action.color, lineWidth: 2.5)
+                                .frame(width: 52, height: 52)
+                        }
+                        
+                        Image(systemName: action.iconName)
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.4))
+                    }
                     
-                    Image(systemName: action.iconName)
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.4))
+                    // Count
+                    Text("\(count)")
+                        .font(.system(.title2, design: .rounded, weight: .bold))
+                        .foregroundStyle(count > 0 ? .primary : .secondary)
+                    
+                    // Label
+                    Text(action.label)
+                        .font(.system(.caption, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
-                
-                // Count
-                Text("\(count)")
-                    .font(.system(.title2, design: .rounded, weight: .bold))
-                    .foregroundStyle(count > 0 ? .primary : .secondary)
-                
-                // Label
-                Text(action.label)
-                    .font(.system(.caption, weight: .medium))
-                    .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .opacity(hasActiveFilter && !isSelected ? 0.5 : 1.0)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
+            .buttonStyle(.plain)
         }
     }
 }

@@ -9,6 +9,9 @@ struct EmailStatisticsDetailView: View {
         emailAliases.first { $0.emailAddress == statistic.emailAddress }?.actionType != .forward
     }
     
+    // Filter state for action type
+    @State private var selectedActionFilter: EmailRoutingAction? = nil
+    
     // Group emails by date
     private var emailsByDate: [(date: Date, emails: [EmailStatistic.EmailDetail])] {
         let calendar = Calendar.current
@@ -21,6 +24,19 @@ struct EmailStatisticsDetailView: View {
         
         return grouped.map { (date: $0.key, emails: $0.value.sorted { $0.date > $1.date }) }
             .sorted { $0.date > $1.date }
+    }
+    
+    // Filtered emails by date, applying action filter
+    private var filteredEmailsByDate: [(date: Date, emails: [EmailStatistic.EmailDetail])] {
+        guard let filter = selectedActionFilter else { return emailsByDate }
+        return emailsByDate.map { group in
+            (date: group.date, emails: group.emails.filter { $0.action == filter })
+        }.filter { !$0.emails.isEmpty }
+    }
+    
+    // Total filtered count
+    private var filteredEmailCount: Int {
+        filteredEmailsByDate.reduce(0) { $0 + $1.emails.count }
     }
     
     // Overall summary counts
@@ -52,14 +68,49 @@ struct EmailStatisticsDetailView: View {
             if !statistic.emailDetails.isEmpty {
                 Section {
                     HStack(spacing: 16) {
-                        ActionSummaryBadge(action: .forwarded, count: actionSummary.forwarded)
-                        ActionSummaryBadge(action: .dropped, count: actionSummary.dropped)
-                        ActionSummaryBadge(action: .rejected, count: actionSummary.rejected)
+                        ActionSummaryBadge(
+                            action: .forwarded,
+                            count: actionSummary.forwarded,
+                            isSelected: selectedActionFilter == .forwarded,
+                            hasActiveFilter: selectedActionFilter != nil
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedActionFilter = selectedActionFilter == .forwarded ? nil : .forwarded
+                            }
+                        }
+                        ActionSummaryBadge(
+                            action: .dropped,
+                            count: actionSummary.dropped,
+                            isSelected: selectedActionFilter == .dropped,
+                            hasActiveFilter: selectedActionFilter != nil
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedActionFilter = selectedActionFilter == .dropped ? nil : .dropped
+                            }
+                        }
+                        ActionSummaryBadge(
+                            action: .rejected,
+                            count: actionSummary.rejected,
+                            isSelected: selectedActionFilter == .rejected,
+                            hasActiveFilter: selectedActionFilter != nil
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                selectedActionFilter = selectedActionFilter == .rejected ? nil : .rejected
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
                 } header: {
-                    Text("Status Summary")
+                    HStack {
+                        Text("Status Summary")
+                        Spacer()
+                        if selectedActionFilter != nil {
+                            Text("\(filteredEmailCount)/\(statistic.emailDetails.count)")
+                                .font(.system(.caption, design: .rounded, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
                 }
             }
             
@@ -68,8 +119,24 @@ struct EmailStatisticsDetailView: View {
                     Text("No detailed logs available.")
                         .foregroundStyle(.secondary)
                 }
+            } else if filteredEmailsByDate.isEmpty && selectedActionFilter != nil {
+                Section {
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 8) {
+                            Image(systemName: "envelope.open")
+                                .font(.system(size: 24, weight: .light))
+                                .foregroundStyle(Color.secondary.opacity(0.5))
+                            Text("No \(selectedActionFilter!.label.lowercased()) emails")
+                                .font(.system(.subheadline, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 16)
+                }
             } else {
-                ForEach(emailsByDate, id: \.date) { group in
+                ForEach(filteredEmailsByDate, id: \.date) { group in
                     Section {
                         ForEach(group.emails, id: \.self) { detail in
                             HStack(spacing: 12) {
@@ -125,7 +192,13 @@ struct EmailStatisticsDetailView: View {
                             }
                         }
                     } header: {
-                        Text(formatDateHeader(group.date))
+                        HStack {
+                            Text(formatDateHeader(group.date))
+                            Spacer()
+                            Text("\(group.emails.count)")
+                                .font(.system(.caption, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -154,36 +227,54 @@ struct EmailStatisticsDetailView: View {
         }
     }
     
-    // Summary badge for action counts - enhanced visual design
+    // Summary badge for action counts - tappable filter
     private struct ActionSummaryBadge: View {
         let action: EmailRoutingAction
         let count: Int
+        let isSelected: Bool
+        let hasActiveFilter: Bool
+        let onTap: () -> Void
         
         var body: some View {
-            VStack(spacing: 8) {
-                // Icon with colored background circle
-                ZStack {
-                    Circle()
-                        .fill(count > 0 ? action.color.opacity(0.15) : Color.gray.opacity(0.1))
-                        .frame(width: 52, height: 52)
+            Button(action: {
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
+                onTap()
+            }) {
+                VStack(spacing: 8) {
+                    // Icon with colored background circle
+                    ZStack {
+                        Circle()
+                            .fill(count > 0 ? action.color.opacity(isSelected ? 0.3 : 0.15) : Color.gray.opacity(0.1))
+                            .frame(width: 52, height: 52)
+                        
+                        // Selection ring
+                        if isSelected {
+                            Circle()
+                                .strokeBorder(action.color, lineWidth: 2.5)
+                                .frame(width: 52, height: 52)
+                        }
+                        
+                        Image(systemName: action.iconName)
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.4))
+                    }
                     
-                    Image(systemName: action.iconName)
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.4))
+                    // Count
+                    Text("\(count)")
+                        .font(.system(.title2, design: .rounded, weight: .bold))
+                        .foregroundStyle(count > 0 ? .primary : .secondary)
+                    
+                    // Label
+                    Text(action.label)
+                        .font(.system(.caption, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
-                
-                // Count
-                Text("\(count)")
-                    .font(.system(.title2, design: .rounded, weight: .bold))
-                    .foregroundStyle(count > 0 ? .primary : .secondary)
-                
-                // Label
-                Text(action.label)
-                    .font(.system(.caption, weight: .medium))
-                    .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .opacity(hasActiveFilter && !isSelected ? 0.5 : 1.0)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
+            .buttonStyle(.plain)
         }
     }
 }

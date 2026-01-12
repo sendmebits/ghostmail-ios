@@ -89,6 +89,25 @@ struct WeeklyEmailsView: View {
         daySections.reduce(0) { $0 + $1.emails.count }
     }
     
+    // Filter state for action type
+    @State private var selectedActionFilter: EmailRoutingAction? = nil
+    
+    // Filtered sections based on selected action
+    private var filteredSections: [DaySection] {
+        guard let filter = selectedActionFilter else { return daySections }
+        return daySections.map { section in
+            DaySection(
+                date: section.date,
+                emails: section.emails.filter { $0.action == filter }
+            )
+        }
+    }
+    
+    // Filtered total count
+    private var filteredTotalEmails: Int {
+        filteredSections.reduce(0) { $0 + $1.emails.count }
+    }
+    
     @State private var showCopyToast = false
     
     var body: some View {
@@ -96,9 +115,36 @@ struct WeeklyEmailsView: View {
             // Summary section - aggregated totals
             Section {
                 HStack(spacing: 0) {
-                    ActionSummaryBadge(action: .forwarded, count: summaryStats.forwarded)
-                    ActionSummaryBadge(action: .dropped, count: summaryStats.dropped)
-                    ActionSummaryBadge(action: .rejected, count: summaryStats.rejected)
+                    ActionSummaryBadge(
+                        action: .forwarded,
+                        count: summaryStats.forwarded,
+                        isSelected: selectedActionFilter == .forwarded,
+                        hasActiveFilter: selectedActionFilter != nil
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedActionFilter = selectedActionFilter == .forwarded ? nil : .forwarded
+                        }
+                    }
+                    ActionSummaryBadge(
+                        action: .dropped,
+                        count: summaryStats.dropped,
+                        isSelected: selectedActionFilter == .dropped,
+                        hasActiveFilter: selectedActionFilter != nil
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedActionFilter = selectedActionFilter == .dropped ? nil : .dropped
+                        }
+                    }
+                    ActionSummaryBadge(
+                        action: .rejected,
+                        count: summaryStats.rejected,
+                        isSelected: selectedActionFilter == .rejected,
+                        hasActiveFilter: selectedActionFilter != nil
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedActionFilter = selectedActionFilter == .rejected ? nil : .rejected
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
@@ -114,9 +160,16 @@ struct WeeklyEmailsView: View {
                     }
                     Spacer()
                     HStack(spacing: 4) {
-                        Text("\(totalEmails)")
-                            .font(.system(.subheadline, design: .rounded, weight: .bold))
-                            .foregroundStyle(Color.accentColor)
+                        // Show filtered count when filter is active
+                        if selectedActionFilter != nil {
+                            Text("\(filteredTotalEmails)/\(totalEmails)")
+                                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                .foregroundStyle(Color.accentColor)
+                        } else {
+                            Text("\(totalEmails)")
+                                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                .foregroundStyle(Color.accentColor)
+                        }
                         Image(systemName: "envelope.fill")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(Color.accentColor)
@@ -125,7 +178,7 @@ struct WeeklyEmailsView: View {
             }
             
             // Email list sectioned by day
-            ForEach(daySections) { section in
+            ForEach(filteredSections) { section in
                 Section {
                     if section.emails.isEmpty {
                         HStack {
@@ -134,7 +187,7 @@ struct WeeklyEmailsView: View {
                                 Image(systemName: "envelope.open")
                                     .font(.system(size: 24, weight: .light))
                                     .foregroundStyle(Color.secondary.opacity(0.5))
-                                Text("No emails")
+                                Text(selectedActionFilter != nil ? "No \(selectedActionFilter!.label.lowercased()) emails" : "No emails")
                                     .font(.system(.subheadline, design: .rounded))
                                     .foregroundStyle(.secondary)
                             }
@@ -197,36 +250,54 @@ struct WeeklyEmailsView: View {
         Calendar.current.isDateInToday(date)
     }
     
-    // Summary badge for action counts
+    // Summary badge for action counts - tappable filter
     private struct ActionSummaryBadge: View {
         let action: EmailRoutingAction
         let count: Int
+        let isSelected: Bool
+        let hasActiveFilter: Bool
+        let onTap: () -> Void
         
         var body: some View {
-            VStack(spacing: 8) {
-                // Icon with colored background circle
-                ZStack {
-                    Circle()
-                        .fill(count > 0 ? action.color.opacity(0.15) : Color.gray.opacity(0.1))
-                        .frame(width: 52, height: 52)
+            Button(action: {
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
+                onTap()
+            }) {
+                VStack(spacing: 8) {
+                    // Icon with colored background circle
+                    ZStack {
+                        Circle()
+                            .fill(count > 0 ? action.color.opacity(isSelected ? 0.3 : 0.15) : Color.gray.opacity(0.1))
+                            .frame(width: 52, height: 52)
+                        
+                        // Selection ring
+                        if isSelected {
+                            Circle()
+                                .strokeBorder(action.color, lineWidth: 2.5)
+                                .frame(width: 52, height: 52)
+                        }
+                        
+                        Image(systemName: action.iconName)
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.4))
+                    }
                     
-                    Image(systemName: action.iconName)
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.4))
+                    // Count
+                    Text("\(count)")
+                        .font(.system(.title2, design: .rounded, weight: .bold))
+                        .foregroundStyle(count > 0 ? .primary : .secondary)
+                    
+                    // Label
+                    Text(action.label)
+                        .font(.system(.caption, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
-                
-                // Count
-                Text("\(count)")
-                    .font(.system(.title2, design: .rounded, weight: .bold))
-                    .foregroundStyle(count > 0 ? .primary : .secondary)
-                
-                // Label
-                Text(action.label)
-                    .font(.system(.caption, weight: .medium))
-                    .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .opacity(hasActiveFilter && !isSelected ? 0.5 : 1.0)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
+            .buttonStyle(.plain)
         }
     }
     
