@@ -74,14 +74,6 @@ class StatisticsCache {
         }
     }
     
-    /// Clear the cache
-    func clear() {
-        if let fileURL = cacheFileURL {
-            try? FileManager.default.removeItem(at: fileURL)
-        }
-        UserDefaults.standard.removeObject(forKey: timestampKey)
-    }
-    
     /// Get statistics for a specific email address from cache
     func loadForEmail(_ emailAddress: String) -> (statistic: EmailStatistic?, isStale: Bool)? {
         guard let cached = load() else {

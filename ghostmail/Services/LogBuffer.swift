@@ -24,8 +24,4 @@ final class LogBuffer {
         queue.sync { snapshot = self.lines }
         return snapshot.joined(separator: "\n")
     }
-
-    func clear() {
-        queue.async { self.lines.removeAll() }
-    }
 }

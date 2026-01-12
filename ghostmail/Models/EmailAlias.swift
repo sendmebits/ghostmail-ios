@@ -1,6 +1,5 @@
 import Foundation
 import SwiftData
-import CloudKit
 
 /// The action type for an email routing rule
 enum EmailRuleActionType: String, Codable {
