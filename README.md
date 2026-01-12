@@ -44,6 +44,8 @@ Log in to your Cloudflare dashboard, choose a zone/domain, and copy Account ID a
 
 Go to Profile > <a href="https://dash.cloudflare.com/profile/api-tokens">API Tokens</a> > Create new token (then choose Custom token)
 
+**Quick Setup:** Use this [pre-configured API token link](https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22analytics%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22dns%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22email_routing_address%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22email_routing_rule%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22zone_settings%22%2C%22type%22%3A%22read%22%7D%5D&name=GhostMail&accountId=*&zoneId=all) to create a token with all required permissions pre-selected.
+
 Token Permissions:
 1. Account > Email Routing Addresses > **Read**
 2. Zone > Email Routing Rules > **Edit**
