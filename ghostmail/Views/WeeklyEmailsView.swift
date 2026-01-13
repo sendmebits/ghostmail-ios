@@ -6,18 +6,6 @@ struct WeeklyEmailsView: View {
     let statistics: [EmailStatistic]
     @Query private var emailAliases: [EmailAlias]
     
-    private func isDropAlias(for emailAddress: String) -> Bool {
-        guard let alias = emailAliases.first(where: { $0.emailAddress == emailAddress }) else {
-            return false  // Not an alias at all (catch-all) - not a drop alias
-        }
-        return alias.actionType != .forward
-    }
-    
-    /// Check if an email address is a catch-all (not defined as any alias)
-    private func isCatchAllAddress(_ emailAddress: String) -> Bool {
-        !emailAliases.contains { $0.emailAddress == emailAddress }
-    }
-    
     // Structure to hold individual email information
     private struct EmailItem: Identifiable {
         let id = UUID()
@@ -201,8 +189,8 @@ struct WeeklyEmailsView: View {
                         ForEach(section.emails) { email in
                             EmailRowView(
                                 email: email,
-                                isDropAlias: isDropAlias(for: email.to),
-                                isCatchAll: isCatchAllAddress(email.to)
+                                isDropAlias: emailAliases.isDropAlias(for: email.to),
+                                isCatchAll: emailAliases.isCatchAllAddress(email.to)
                             )
                                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                                 .listRowSeparator(.hidden)
@@ -251,57 +239,6 @@ struct WeeklyEmailsView: View {
     // Check if date is today
     private func isToday(_ date: Date) -> Bool {
         Calendar.current.isDateInToday(date)
-    }
-    
-    // Summary badge for action counts - tappable filter
-    private struct ActionSummaryBadge: View {
-        let action: EmailRoutingAction
-        let count: Int
-        let isSelected: Bool
-        let hasActiveFilter: Bool
-        let onTap: () -> Void
-        
-        var body: some View {
-            Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
-                onTap()
-            }) {
-                VStack(spacing: 8) {
-                    // Icon with colored background circle
-                    ZStack {
-                        Circle()
-                            .fill(count > 0 ? action.color.opacity(isSelected ? 0.3 : 0.15) : Color.gray.opacity(0.1))
-                            .frame(width: 52, height: 52)
-                        
-                        // Selection ring
-                        if isSelected {
-                            Circle()
-                                .strokeBorder(action.color, lineWidth: 2.5)
-                                .frame(width: 52, height: 52)
-                        }
-                        
-                        Image(systemName: action.iconName)
-                            .font(.system(size: 26, weight: .semibold))
-                            .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.4))
-                    }
-                    
-                    // Count
-                    Text("\(count)")
-                        .font(.system(.title2, design: .rounded, weight: .bold))
-                        .foregroundStyle(count > 0 ? .primary : .secondary)
-                    
-                    // Label
-                    Text(action.label)
-                        .font(.system(.caption, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
-                .opacity(hasActiveFilter && !isSelected ? 0.5 : 1.0)
-            }
-            .buttonStyle(.plain)
-        }
     }
     
     // Individual email row view

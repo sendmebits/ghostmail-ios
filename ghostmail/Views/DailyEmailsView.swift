@@ -6,33 +6,12 @@ struct DailyEmailsView: View {
     let statistics: [EmailStatistic]
     @Query private var emailAliases: [EmailAlias]
     
-    private func isDropAlias(for emailAddress: String) -> Bool {
-        guard let alias = emailAliases.first(where: { $0.emailAddress == emailAddress }) else {
-            return false  // Not an alias at all (catch-all) - not a drop alias
-        }
-        return alias.actionType != .forward
-    }
-    
-    /// Check if an email address is a catch-all (not defined as any alias)
-    private func isCatchAllAddress(_ emailAddress: String) -> Bool {
-        !emailAliases.contains { $0.emailAddress == emailAddress }
-    }
-    
-    // Structure to hold individual email information
-    private struct EmailItem: Identifiable {
-        let id = UUID()
-        let from: String
-        let to: String
-        let date: Date
-        let action: EmailRoutingAction
-    }
-    
     // Get all individual emails for the selected day
-    private var emailsForDay: [EmailItem] {
+    private var emailsForDay: [EmailLogItem] {
         let calendar = Calendar.current
         let dayStart = calendar.startOfDay(for: date)
         
-        var allEmails: [EmailItem] = []
+        var allEmails: [EmailLogItem] = []
         
         for stat in statistics {
             let emailsOnDay = stat.emailDetails.filter { detail in
@@ -40,7 +19,7 @@ struct DailyEmailsView: View {
             }
             
             for detail in emailsOnDay {
-                allEmails.append(EmailItem(
+                allEmails.append(EmailLogItem(
                     from: detail.from,
                     to: stat.emailAddress,
                     date: detail.date,
@@ -85,7 +64,7 @@ struct DailyEmailsView: View {
     @State private var selectedActionFilter: EmailRoutingAction? = nil
     
     // Filtered emails based on selected action
-    private var filteredEmails: [EmailItem] {
+    private var filteredEmails: [EmailLogItem] {
         guard let filter = selectedActionFilter else { return emailsForDay }
         return emailsForDay.filter { $0.action == filter }
     }
@@ -187,8 +166,8 @@ struct DailyEmailsView: View {
                         ForEach(filteredEmails) { email in
                             EmailRowView(
                                 email: email,
-                                isDropAlias: isDropAlias(for: email.to),
-                                isCatchAll: isCatchAllAddress(email.to)
+                                isDropAlias: emailAliases.isDropAlias(for: email.to),
+                                isCatchAll: emailAliases.isCatchAllAddress(email.to)
                             )
                                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                                 .listRowSeparator(.hidden)
@@ -217,60 +196,9 @@ struct DailyEmailsView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
     
-    // Summary badge for action counts - tappable filter
-    private struct ActionSummaryBadge: View {
-        let action: EmailRoutingAction
-        let count: Int
-        let isSelected: Bool
-        let hasActiveFilter: Bool
-        let onTap: () -> Void
-        
-        var body: some View {
-            Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
-                onTap()
-            }) {
-                VStack(spacing: 8) {
-                    // Icon with colored background circle
-                    ZStack {
-                        Circle()
-                            .fill(count > 0 ? action.color.opacity(isSelected ? 0.3 : 0.15) : Color.gray.opacity(0.1))
-                            .frame(width: 52, height: 52)
-                        
-                        // Selection ring
-                        if isSelected {
-                            Circle()
-                                .strokeBorder(action.color, lineWidth: 2.5)
-                                .frame(width: 52, height: 52)
-                        }
-                        
-                        Image(systemName: action.iconName)
-                            .font(.system(size: 26, weight: .semibold))
-                            .foregroundStyle(count > 0 ? action.color : .gray.opacity(0.4))
-                    }
-                    
-                    // Count
-                    Text("\(count)")
-                        .font(.system(.title2, design: .rounded, weight: .bold))
-                        .foregroundStyle(count > 0 ? .primary : .secondary)
-                    
-                    // Label
-                    Text(action.label)
-                        .font(.system(.caption, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
-                .opacity(hasActiveFilter && !isSelected ? 0.5 : 1.0)
-            }
-            .buttonStyle(.plain)
-        }
-    }
-    
     // Individual email row view
     private struct EmailRowView: View {
-        let email: EmailItem
+        let email: EmailLogItem
         let isDropAlias: Bool
         let isCatchAll: Bool
         @State private var showCopyToast = false

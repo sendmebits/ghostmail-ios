@@ -22,14 +22,6 @@ struct EmailStatisticsView: View {
     private let allZonesIdentifier = "ALL_ZONES"
     private let allDestinationsIdentifier = "ALL_DESTINATIONS"
     
-    /// Returns the action type for a given email address by looking up in aliases
-    private func actionType(for emailAddress: String) -> EmailRuleActionType {
-        if let alias = emailAliases.first(where: { $0.emailAddress == emailAddress }) {
-            return alias.actionType
-        }
-        return .forward  // Default to forward if no alias found
-    }
-    
     /// Check if an email address is a catch-all (not defined as any alias)
     private func isCatchAllAddress(_ emailAddress: String) -> Bool {
         !emailAliases.contains { $0.emailAddress == emailAddress }
@@ -87,15 +79,15 @@ struct EmailStatisticsView: View {
             break
         case .forwarded:
             filtered = filtered.filter { stat in
-                actionType(for: stat.emailAddress) == .forward
+                emailAliases.actionType(for: stat.emailAddress) == .forward
             }
         case .dropped:
             filtered = filtered.filter { stat in
-                actionType(for: stat.emailAddress) == .drop
+                emailAliases.actionType(for: stat.emailAddress) == .drop
             }
         case .rejected:
             filtered = filtered.filter { stat in
-                actionType(for: stat.emailAddress) == .reject
+                emailAliases.actionType(for: stat.emailAddress) == .reject
             }
         }
         
@@ -203,7 +195,7 @@ struct EmailStatisticsView: View {
                         } label: {
                             StatisticRowView(
                                 stat: stat,
-                                isDropAlias: actionType(for: stat.emailAddress) != .forward,
+                                isDropAlias: emailAliases.actionType(for: stat.emailAddress) != .forward,
                                 isCatchAll: isCatchAllAddress(stat.emailAddress)
                             )
                         }
