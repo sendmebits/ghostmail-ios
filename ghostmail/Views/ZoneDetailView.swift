@@ -78,6 +78,18 @@ struct ZoneDetailView: View {
                     Text(zone.zoneId)
                         .font(.system(.body, design: .monospaced))
                         .textSelection(.enabled)
+                        .onLongPressGesture {
+                            UIPasteboard.general.string = zone.zoneId
+                            let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
+                        }
+                        .contextMenu {
+                            Button {
+                                UIPasteboard.general.string = zone.zoneId
+                                let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
+                            } label: {
+                                Label("Copy Zone ID", systemImage: "doc.on.doc")
+                            }
+                        }
                 }
                 .padding(.vertical, 4)
                 

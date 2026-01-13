@@ -383,6 +383,22 @@ struct EmailDetailView: View {
                                 }
                             }
                         }
+                        .contentShape(Rectangle())
+                        .onLongPressGesture {
+                            // Only copy if forwarding and has a destination
+                            if !isEditing && email.actionType == .forward && !email.forwardTo.isEmpty {
+                                copyToClipboard(email.forwardTo)
+                            }
+                        }
+                        .contextMenu {
+                            if !isEditing && email.actionType == .forward && !email.forwardTo.isEmpty {
+                                Button {
+                                    copyToClipboard(email.forwardTo)
+                                } label: {
+                                    Label("Copy Destination", systemImage: "doc.on.doc")
+                                }
+                            }
+                        }
                         
                         // Website section
                         if isEditing || !email.website.isEmpty {
@@ -483,6 +499,17 @@ struct EmailDetailView: View {
                         DetailSection(title: "Created") {
                             Text(formattedCreatedDate)
                                 .foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                        .onLongPressGesture {
+                            copyToClipboard(formattedCreatedDate)
+                        }
+                        .contextMenu {
+                            Button {
+                                copyToClipboard(formattedCreatedDate)
+                            } label: {
+                                Label("Copy Date", systemImage: "doc.on.doc")
+                            }
                         }
                         
                         // Delete button

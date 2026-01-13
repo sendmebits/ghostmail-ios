@@ -823,6 +823,7 @@ private struct AppVersionValueView: View {
             .contextMenu {
                 Button {
                     UIPasteboard.general.string = val
+                    let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
                 } label: {
                     Text("Copy Version")
                     Image(systemName: "doc.on.doc")
@@ -867,6 +868,7 @@ private struct AboutSectionView: View {
 
                         Button {
                             UIPasteboard.general.string = site
+                            let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
                         } label: {
                             Text("Copy Website")
                             Image(systemName: "doc.on.doc")
@@ -945,6 +947,7 @@ private struct CloudflareAccountSectionView: View {
                     .contextMenu {
                         Button {
                             UIPasteboard.general.string = cloudflareClient.accountId
+                            let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
                         } label: {
                             Text("Copy Account ID")
                             Image(systemName: "doc.on.doc")
@@ -1071,6 +1074,7 @@ private struct PrimaryZoneSectionView: View {
                     .contextMenu {
                         Button {
                             UIPasteboard.general.string = cloudflareClient.zoneId
+                            let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
                         } label: {
                             Text("Copy Zone ID")
                             Image(systemName: "doc.on.doc")

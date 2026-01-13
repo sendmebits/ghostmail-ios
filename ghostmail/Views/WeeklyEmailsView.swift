@@ -346,12 +346,14 @@ struct WeeklyEmailsView: View {
             .contextMenu {
                 Button {
                     UIPasteboard.general.string = email.from
+                    let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
                     showCopyToast = true
                 } label: {
                     Label("Copy Sender", systemImage: "doc.on.doc")
                 }
                 Button {
                     UIPasteboard.general.string = email.to
+                    let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
                     showCopyToast = true
                 } label: {
                     Label("Copy Recipient", systemImage: "doc.on.doc")

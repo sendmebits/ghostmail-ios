@@ -188,6 +188,7 @@ struct EmailStatisticsDetailView: View {
                             .contextMenu {
                                 Button {
                                     UIPasteboard.general.string = detail.from
+                                    let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
                                 } label: {
                                     Text("Copy Email Address")
                                     Image(systemName: "doc.on.doc")

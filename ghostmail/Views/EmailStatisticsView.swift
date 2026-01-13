@@ -396,12 +396,14 @@ private struct StatisticRowView: View {
         .contextMenu {
             Button {
                 UIPasteboard.general.string = stat.emailAddress
+                let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
             } label: {
                 Text("Copy Email")
                 Image(systemName: "doc.on.doc")
             }
             Button {
                 UIPasteboard.general.string = "\(stat.count)"
+                let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
             } label: {
                 Text("Copy Count")
                 Image(systemName: "number")
