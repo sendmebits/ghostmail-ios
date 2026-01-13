@@ -164,10 +164,14 @@ struct DailyEmailsView: View {
                         .padding(.vertical, 16)
                     } else {
                         ForEach(filteredEmails) { email in
+                            let alias = emailAliases.first { $0.emailAddress == email.to }
+                            let isCatchAll = emailAliases.isCatchAllAddress(email.to)
+                            
                             EmailRowView(
                                 email: email,
                                 isDropAlias: emailAliases.isDropAlias(for: email.to),
-                                isCatchAll: emailAliases.isCatchAllAddress(email.to)
+                                isCatchAll: isCatchAll,
+                                alias: !isCatchAll ? alias : nil
                             )
                                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                                 .listRowSeparator(.hidden)
@@ -201,7 +205,9 @@ struct DailyEmailsView: View {
         let email: EmailLogItem
         let isDropAlias: Bool
         let isCatchAll: Bool
+        let alias: EmailAlias?
         @State private var showCopyToast = false
+        @State private var navigateToDetail = false
         
         var body: some View {
             HStack(alignment: .top, spacing: 12) {
@@ -347,6 +353,16 @@ struct DailyEmailsView: View {
                             showCopyToast = false
                         }
                     }
+                }
+            }
+            .onTapGesture {
+                if alias != nil {
+                    navigateToDetail = true
+                }
+            }
+            .navigationDestination(isPresented: $navigateToDetail) {
+                if let alias = alias {
+                    EmailDetailView(email: alias, needsRefresh: .constant(false))
                 }
             }
         }
