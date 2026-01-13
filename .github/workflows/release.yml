@@ -1,0 +1,161 @@
+name: Generate Release Notes
+
+on:
+  release:
+    types: [created, published]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Get previous tag
+        id: previoustag
+        run: |
+          CURRENT_TAG="${{ github.event.release.tag_name }}"
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "$CURRENT_TAG" | head -n 1)
+          echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+          echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
+          echo "Previous tag: $PREVIOUS_TAG"
+          echo "Current tag: $CURRENT_TAG"
+      
+      - name: Generate release notes from commits
+        id: generate_notes
+        run: |
+          PREVIOUS_TAG="${{ steps.previoustag.outputs.previous_tag }}"
+          CURRENT_TAG="${{ steps.previoustag.outputs.current_tag }}"
+          
+          if [ -z "$PREVIOUS_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"%s" $CURRENT_TAG)
+          else
+            COMMITS=$(git log --pretty=format:"%s" $PREVIOUS_TAG..$CURRENT_TAG)
+          fi
+          
+          FEATURES=""
+          FIXES=""
+          DOCS=""
+          UI=""
+          PERF=""
+          REFACTOR=""
+          IOS=""
+          OTHERS=""
+          
+          while IFS= read -r commit; do
+            # Skip empty lines and merge commits
+            [ -z "$commit" ] && continue
+            [[ "$commit" == Merge* ]] && continue
+            
+            # Categorize based on commit message prefix or keywords
+            case "$commit" in
+              feat:*|feature:*|add:*)
+                FEATURES="${FEATURES}- ${commit#*:}\n"
+                ;;
+              fix:*|bugfix:*|hotfix:*)
+                FIXES="${FIXES}- ${commit#*:}\n"
+                ;;
+              docs:*|doc:*)
+                DOCS="${DOCS}- ${commit#*:}\n"
+                ;;
+              ui:*|ux:*|style:*)
+                UI="${UI}- ${commit#*:}\n"
+                ;;
+              perf:*|performance:*)
+                PERF="${PERF}- ${commit#*:}\n"
+                ;;
+              refactor:*|chore:*)
+                REFACTOR="${REFACTOR}- ${commit#*:}\n"
+                ;;
+              ios:*|swift:*|swiftui:*)
+                IOS="${IOS}- ${commit#*:}\n"
+                ;;
+              *)
+                # Try to categorize by keywords in message
+                commit_lower=$(echo "$commit" | tr '[:upper:]' '[:lower:]')
+                case "$commit_lower" in
+                  *"add "*|*"implement "*|*"new "*|*" feature"*)
+                    FEATURES="${FEATURES}- ${commit}\n"
+                    ;;
+                  *"fix "*|*"resolve "*|*"crash"*|*"bug"*)
+                    FIXES="${FIXES}- ${commit}\n"
+                    ;;
+                  *"refactor"*|*"cleanup"*|*"clean up"*|*"remove unused"*)
+                    REFACTOR="${REFACTOR}- ${commit}\n"
+                    ;;
+                  *"update"*"ui"*|*"enhance"*"button"*|*"improve"*"style"*)
+                    UI="${UI}- ${commit}\n"
+                    ;;
+                  *"readme"*|*"documentation"*)
+                    DOCS="${DOCS}- ${commit}\n"
+                    ;;
+                  *)
+                    OTHERS="${OTHERS}- ${commit}\n"
+                    ;;
+                esac
+                ;;
+            esac
+          done <<< "$COMMITS"
+          
+          # Build release notes
+          RELEASE_NOTES="## What's Changed\n\n"
+          
+          if [ -n "$FEATURES" ]; then
+            RELEASE_NOTES="${RELEASE_NOTES}### 🚀 New Features\n${FEATURES}\n"
+          fi
+          
+          if [ -n "$FIXES" ]; then
+            RELEASE_NOTES="${RELEASE_NOTES}### 🐛 Bug Fixes\n${FIXES}\n"
+          fi
+          
+          if [ -n "$UI" ]; then
+            RELEASE_NOTES="${RELEASE_NOTES}### 🎨 UI/UX Improvements\n${UI}\n"
+          fi
+          
+          if [ -n "$PERF" ]; then
+            RELEASE_NOTES="${RELEASE_NOTES}### ⚡ Performance Improvements\n${PERF}\n"
+          fi
+          
+          if [ -n "$REFACTOR" ]; then
+            RELEASE_NOTES="${RELEASE_NOTES}### 🔧 Maintenance\n${REFACTOR}\n"
+          fi
+          
+          if [ -n "$IOS" ]; then
+            RELEASE_NOTES="${RELEASE_NOTES}### 📱 iOS Specific\n${IOS}\n"
+          fi
+          
+          if [ -n "$DOCS" ]; then
+            RELEASE_NOTES="${RELEASE_NOTES}### 📚 Documentation\n${DOCS}\n"
+          fi
+          
+          if [ -n "$OTHERS" ]; then
+            RELEASE_NOTES="${RELEASE_NOTES}### Other Changes\n${OTHERS}\n"
+          fi
+          
+          RELEASE_NOTES="${RELEASE_NOTES}\n**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${CURRENT_TAG}"
+          
+          # Save to file and output
+          echo -e "$RELEASE_NOTES" > release_notes.md
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          cat release_notes.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: Update Release
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const release_notes = fs.readFileSync('release_notes.md', 'utf8');
+            
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ github.event.release.id }},
+              body: release_notes
+            });

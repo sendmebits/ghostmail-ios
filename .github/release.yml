@@ -1,0 +1,55 @@
+# GitHub Release Notes Configuration
+# Auto-categorizes pull requests when generating release notes via GitHub UI
+# The workflow at .github/workflows/release.yml handles commit-based categorization
+# See: https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+
+changelog:
+  categories:
+    - title: 🚀 New Features
+      labels:
+        - feature
+        - enhancement
+        - new-feature
+    - title: 🐛 Bug Fixes
+      labels:
+        - bug
+        - fix
+        - bugfix
+        - hotfix
+    - title: 📚 Documentation
+      labels:
+        - documentation
+        - docs
+    - title: 🎨 UI/UX Improvements
+      labels:
+        - ui
+        - ux
+        - design
+        - ui/ux
+    - title: ⚡ Performance Improvements
+      labels:
+        - performance
+        - optimization
+    - title: 🔧 Maintenance
+      labels:
+        - maintenance
+        - refactor
+        - refactoring
+        - chore
+    - title: 📱 iOS Specific
+      labels:
+        - ios
+        - swiftui
+        - swift
+    - title: Other Changes
+      labels:
+        - "*"
+  exclude:
+    labels:
+      - ignore-for-release
+      - dependencies
+      - duplicate
+      - invalid
+      - wontfix
+    authors:
+      - dependabot
