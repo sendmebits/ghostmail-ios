@@ -66,8 +66,8 @@ struct EmailStatisticsDetailView: View {
             // Chart Section
             Section {
                 EmailTrendChartView(statistics: [statistic])
-                    .frame(height: 200)
-                    .padding(.vertical, 8)
+                    .frame(height: 160)
+                    .padding(.vertical, 4)
             } header: {
                 Text("7-Day Trend")
             }

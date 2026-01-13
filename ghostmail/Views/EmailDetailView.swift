@@ -274,7 +274,7 @@ struct EmailDetailView: View {
                                     VStack(spacing: 0) {
                                         EmailTrendChartView(statistics: [statistic])
                                             .frame(height: 160)
-                                            .padding(.vertical, 8)
+                                            .padding(.vertical, 4)
                                     }
                                     .padding()
                                     .background(.regularMaterial)

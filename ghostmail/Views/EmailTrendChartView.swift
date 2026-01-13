@@ -36,19 +36,17 @@ struct EmailTrendChartView: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Total count badge (optional)
+        VStack(alignment: .leading, spacing: 8) {
+            // Total count badge (optional) - compact single-line layout
             if showTotalBadge {
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Total Emails")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("\(dailyCounts.reduce(0) { $0 + $1.count })")
-                            .font(.system(.title2, design: .rounded, weight: .bold))
-                            .foregroundColor(.primary)
-                    }
+                    Text("Total Emails")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
                     Spacer()
+                    Text("\(dailyCounts.reduce(0) { $0 + $1.count })")
+                        .font(.system(.title3, design: .rounded, weight: .bold))
+                        .foregroundColor(.primary)
                 }
                 .padding(.horizontal, 4)
             }
@@ -107,8 +105,8 @@ struct EmailTrendChartView: View {
             }
             .frame(height: 140)
         }
-        .padding(.top, showTotalBadge ? 8 : 0)
-        .padding(.bottom, showTotalBadge ? 8 : 0)
+        .padding(.top, showTotalBadge ? 4 : 0)
+        .padding(.bottom, 4)
     }
     
     private func dayLabel(for date: Date) -> String {
