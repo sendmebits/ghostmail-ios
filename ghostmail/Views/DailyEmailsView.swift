@@ -7,7 +7,10 @@ struct DailyEmailsView: View {
     @Query private var emailAliases: [EmailAlias]
     
     private func isDropAlias(for emailAddress: String) -> Bool {
-        emailAliases.first { $0.emailAddress == emailAddress }?.actionType != .forward
+        guard let alias = emailAliases.first(where: { $0.emailAddress == emailAddress }) else {
+            return false  // Not an alias at all (catch-all) - not a drop alias
+        }
+        return alias.actionType != .forward
     }
     
     /// Check if an email address is a catch-all (not defined as any alias)

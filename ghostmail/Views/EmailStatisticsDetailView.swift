@@ -6,7 +6,15 @@ struct EmailStatisticsDetailView: View {
     @Query private var emailAliases: [EmailAlias]
     
     private var isDropAlias: Bool {
-        emailAliases.first { $0.emailAddress == statistic.emailAddress }?.actionType != .forward
+        guard let alias = emailAliases.first(where: { $0.emailAddress == statistic.emailAddress }) else {
+            return false  // Not an alias at all (catch-all) - not a drop alias
+        }
+        return alias.actionType != .forward
+    }
+    
+    /// Check if this email address is a catch-all (not defined as any alias)
+    private var isCatchAll: Bool {
+        !emailAliases.contains { $0.emailAddress == statistic.emailAddress }
     }
     
     // Filter state for action type
@@ -207,9 +215,24 @@ struct EmailStatisticsDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text(statistic.emailAddress)
-                    .font(.headline)
-                    .foregroundStyle(isDropAlias ? .red : .primary)
+                HStack(spacing: 4) {
+                    Text(statistic.emailAddress)
+                        .font(.headline)
+                        .foregroundStyle(isDropAlias ? .red : (isCatchAll ? .purple : .primary))
+                    
+                    // Catch-all indicator badge in toolbar
+                    if isCatchAll {
+                        Text("Catch-All")
+                            .font(.system(.caption2, design: .rounded, weight: .semibold))
+                            .foregroundStyle(.purple)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(Color.purple.opacity(0.15))
+                            )
+                    }
+                }
             }
         }
     }

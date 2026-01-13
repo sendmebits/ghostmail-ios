@@ -30,6 +30,11 @@ struct EmailStatisticsView: View {
         return .forward  // Default to forward if no alias found
     }
     
+    /// Check if an email address is a catch-all (not defined as any alias)
+    private func isCatchAllAddress(_ emailAddress: String) -> Bool {
+        !emailAliases.contains { $0.emailAddress == emailAddress }
+    }
+    
     /// Returns the destination (forwardTo) address for a given alias email address
     private func destinationAddress(for emailAddress: String) -> String? {
         emailAliases.first(where: { $0.emailAddress == emailAddress })?.forwardTo
@@ -196,7 +201,11 @@ struct EmailStatisticsView: View {
                         NavigationLink {
                             EmailStatisticsDetailView(statistic: stat)
                         } label: {
-                            StatisticRowView(stat: stat, isDropAlias: actionType(for: stat.emailAddress) != .forward)
+                            StatisticRowView(
+                                stat: stat,
+                                isDropAlias: actionType(for: stat.emailAddress) != .forward,
+                                isCatchAll: isCatchAllAddress(stat.emailAddress)
+                            )
                         }
                     }
                 }
@@ -332,6 +341,7 @@ struct EmailStatisticsView: View {
 private struct StatisticRowView: View {
     let stat: EmailStatistic
     let isDropAlias: Bool
+    let isCatchAll: Bool
     
     // Calculate action counts
     private var actionCounts: (forwarded: Int, dropped: Int, rejected: Int) {
@@ -350,10 +360,25 @@ private struct StatisticRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(stat.emailAddress)
-                    .font(.body)
-                    .foregroundStyle(isDropAlias ? .red : .primary)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(stat.emailAddress)
+                        .font(.body)
+                        .foregroundStyle(isDropAlias ? .red : (isCatchAll ? .purple : .primary))
+                        .lineLimit(1)
+                    
+                    // Catch-all indicator badge
+                    if isCatchAll {
+                        Text("Catch-All")
+                            .font(.system(.caption2, design: .rounded, weight: .semibold))
+                            .foregroundStyle(.purple)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(Color.purple.opacity(0.15))
+                            )
+                    }
+                }
                 Spacer()
                 Text("\(stat.count)")
                     .font(.monospacedDigit(.body)())
