@@ -759,6 +759,8 @@ private struct SettingsListContentView: View {
         List {
             AboutSectionView()
             
+            SupportDevelopmentSectionView()
+            
             if showAnalytics {
                 StatisticsSectionView()
             }
@@ -873,6 +875,51 @@ private struct AboutSectionView: View {
             }
         } header: {
             Text("About")
+                .textCase(.uppercase)
+                .font(.system(.footnote, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct SupportDevelopmentSectionView: View {
+    @Environment(\.openURL) private var openURL
+    
+    private let donateURL = "https://buymeacoffee.com/sendmebits"
+    
+    var body: some View {
+        Section {
+            Button {
+                if let url = URL(string: donateURL) {
+                    openURL(url)
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.pink)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Support Ghost Mail Development")
+                            .font(.system(.body, design: .rounded))
+                            .foregroundStyle(.primary)
+                        
+                        Text("Buy me a coffee ☕️")
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.vertical, 4)
+            }
+            .buttonStyle(.plain)
+        } header: {
+            Text("Support")
                 .textCase(.uppercase)
                 .font(.system(.footnote, design: .rounded))
                 .foregroundStyle(.secondary)
