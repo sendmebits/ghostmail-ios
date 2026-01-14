@@ -1,71 +1,93 @@
 # Copilot Instructions for Ghost Mail iOS
 
 ## Overview
-Ghost Mail is a SwiftUI iOS app for managing Cloudflare Email Routing aliases. It supports multi-zone configurations, iCloud sync, email statistics, and sending emails via SMTP.
+Ghost Mail is a SwiftUI iOS app for managing Cloudflare Email Routing aliases. Supports multi-zone configurations, iCloud sync, email statistics, and SMTP sending.
 
-## Architecture
+## Project Structure
 
-### Core Components
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| CloudflareClient | `Services/CloudflareClient.swift` | All Cloudflare API interactions, multi-zone support, pagination |
-| SwiftData Models | `Models/` | `EmailAlias`, `EmailStatistic`, `SMTPSettings` |
-| KeychainHelper | `Services/KeychainHelper.swift` | Secure credential storage (tokens stored as `apiToken_<zoneId>`) |
-| StatisticsCache | `Services/StatisticsCache.swift` | 24-hour cache for email analytics |
-| IconCache | `Services/IconCache.swift` | Website favicon caching with SVG rasterization |
-| DeepLinkRouter | `Services/DeepLinkRouter.swift` | Handles `ghostmail://create?url=` deep links |
+### Services (`ghostmail/Services/`)
+| File | Purpose |
+|------|---------|
+| `CloudflareClient.swift` | All Cloudflare API calls, multi-zone support, pagination (100/page) |
+| `KeychainHelper.swift` | Secure token storage (`apiToken_<zoneId>`) |
+| `StatisticsCache.swift` | 24-hour cache for email analytics |
+| `IconCache.swift` | Favicon caching with SVG rasterization |
+| `DeepLinkRouter.swift` | `ghostmail://create?url=` deep links |
+| `SMTPService.swift` | Email sending via configured SMTP |
+| `LogBuffer.swift` | Debug logging buffer |
 
-### Data Flow
-- **Persistence:** SwiftData with optional CloudKit mirroring (`iCloudSyncEnabled` AppStorage)
-- **Sync:** Background refresh every 2 minutes + immediate sync on foreground return (30s cooldown)
-- **Startup:** Parallel loading of domain names, forwarding addresses, and subdomains
+### Models (`ghostmail/Models/`)
+| Model | Key Properties |
+|-------|----------------|
+| `EmailAlias` | `emailAddress`, `forwardTo`, `actionType`, `zoneId`, `website` |
+| `EmailStatistic` | `emailAddress`, `receivedDates`, `emailDetails` |
+| `SMTPSettings` | SMTP server configuration |
+
+### Views (`ghostmail/Views/`)
+| View | Purpose |
+|------|---------|
+| `EmailListView` | Main alias list with filtering, search, charts |
+| `EmailDetailView` | Alias details, editing, statistics |
+| `EmailCreateView` | Create new alias with AI suggestions |
+| `SettingsView` | App settings, zone management |
+| `ZoneDetailView` | Per-zone settings, catch-all toggle |
+| `EmailStatisticsView` | All email statistics overview |
+| `EmailTrendChartView` | 7-day bar chart component |
+| `DailyEmailsView` / `WeeklyEmailsView` | Statistics drill-down views |
+| `EmailStatisticsShared.swift` | Shared types: `EmailLogItem`, `ActionSummaryBadge`, Array extensions |
 
 ## Key Patterns
 
-### Do
-- Use `@EnvironmentObject` for `CloudflareClient` access in views
-- Store secrets in Keychain via `KeychainHelper`
-- Use staged filter pattern (pending → apply button) in filter sheets
-- Fetch Cloudflare data in pages of 100 (`per_page=100`)
-- Deduplicate aliases by email address
-- Validate image dimensions before caching (avoid 0-dimension images)
-- Test UI changes in dark mode (app uses `.preferredColorScheme(.dark)`)
+### UI Conventions
+- **Typography:** Use `.font(.system(.size, design: .rounded, weight: .weight))`
+- **Haptics:** Use `UIImpactFeedbackGenerator(style: .light)` for copy actions
+- **Navigation:** Use `navigationDestination(isPresented:)` for programmatic navigation
+- **Copy actions:** Add both `onLongPressGesture` and `contextMenu` with haptic feedback
+- **Theme:** App uses dark mode by default (`.preferredColorScheme(.dark)`)
 
-### Don't
-- Add an AccentColor asset (use `.tint()` modifier instead)
-- Auto-apply filter selections
-- Block the main thread during network calls
-- Store tokens in UserDefaults (migrate to Keychain)
+### Data Patterns
+- **State:** `@State` for local, `@Binding` for parent-owned, `@EnvironmentObject` for CloudflareClient
+- **Persistence:** SwiftData with optional CloudKit (`iCloudSyncEnabled` AppStorage)
+- **Sync:** Background refresh every 2 minutes + foreground sync (30s cooldown)
 
-## App Extensions
-- **ShareExtension:** Creates aliases from Safari share sheet → opens main app via deep link
-- **ActionExtension:** Similar flow for action extensions
-
-## Common Changes
-
-| Task | Files to Edit |
-|------|---------------|
-| Add Cloudflare endpoint | `CloudflareClient.swift` — follow existing pagination/error handling |
-| Add SwiftData field | `Models/*.swift` — use migration-friendly defaults |
-| Add new view | `Views/` — use `@State`, `@Binding`, `@EnvironmentObject` |
-| Modify sync behavior | `ghostmailApp.swift` — see `performForegroundSyncIfNeeded`, `performBackgroundUpdateIfNeeded` |
-
-## Settings & Feature Flags
-| AppStorage Key | Default | Purpose |
-|----------------|---------|---------|
+### Common AppStorage Keys
+| Key | Default | Purpose |
+|-----|---------|---------|
 | `iCloudSyncEnabled` | `true` | CloudKit mirroring |
 | `showAnalytics` | `false` | Email statistics charts |
-| `themePreference` | `"Auto"` | Light/Dark/Auto theme |
-| `shouldShowWebsiteLogos` | varies | Favicon display in list |
+| `themePreference` | `"Auto"` | Light/Dark/Auto |
+| `defaultZoneId` / `defaultDomain` | `""` | Default zone for new aliases |
+| `showWebsiteLogo` | `true` | Favicon display |
 
-## Build & Test
-- Open `ghostmail.xcodeproj` in Xcode, run on simulator or device
-- No unit tests — manual testing with Cloudflare test account
-- CloudKit testing: toggle sync in Settings, watch console logs
+## Do / Don't
 
----
+### Do
+- Store tokens in Keychain via `KeychainHelper`
+- Use staged filter pattern (pending → apply button) in sheets
+- Fetch Cloudflare data with `per_page=100`
+- Add haptic feedback to all copy/paste actions
+- Use `EmailStatisticsShared.swift` extensions for alias lookups
+
+### Don't
+- Add AccentColor asset (use `.tint()` modifier)
+- Auto-apply filter selections
+- Block main thread with network calls
+- Store tokens in UserDefaults
+- Duplicate code already in `EmailStatisticsShared.swift`
+
+## App Extensions
+- **ShareExtension / ActionExtension:** Create aliases via Safari share sheet → deep link to main app
+
+## Common Edit Locations
+| Task | Files |
+|------|-------|
+| Add Cloudflare endpoint | `CloudflareClient.swift` |
+| Add SwiftData field | `Models/*.swift` (use migration-friendly defaults) |
+| Add settings option | `SettingsView.swift` + AppStorage |
+| Modify sync | `ghostmailApp.swift` |
+| Add shared stats helper | `EmailStatisticsShared.swift`
+
 ## Agent Instructions
 - Present multi-step plans using `#planReview` before executing
-- Present walkthroughs using `#walkthroughReview`
 - Always confirm completion with `#askUser`
 
