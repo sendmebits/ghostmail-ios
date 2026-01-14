@@ -30,9 +30,7 @@ final class DeepLinkRouter: ObservableObject {
             // Validate and sanitize the URL parameter
             let sanitized = urlItem.trimmingCharacters(in: .whitespacesAndNewlines)
             // Only allow http/https schemes to prevent javascript: or other malicious schemes
-            guard !sanitized.lowercased().hasPrefix("javascript:"),
-                  !sanitized.lowercased().hasPrefix("data:"),
-                  !sanitized.lowercased().hasPrefix("file:") else {
+            guard ValidationUtils.isSafeURLScheme(sanitized) else {
                 print("[Security] Blocked potentially malicious URL scheme in deep link: \(sanitized.prefix(20))...")
                 return nil
             }
@@ -45,9 +43,7 @@ final class DeepLinkRouter: ObservableObject {
             // Accept raw host strings too, but validate them
             let sanitized = websiteItem.trimmingCharacters(in: .whitespacesAndNewlines)
             // Block potentially malicious schemes
-            guard !sanitized.lowercased().hasPrefix("javascript:"),
-                  !sanitized.lowercased().hasPrefix("data:"),
-                  !sanitized.lowercased().hasPrefix("file:") else {
+            guard ValidationUtils.isSafeURLScheme(sanitized) else {
                 print("[Security] Blocked potentially malicious URL scheme in deep link: \(sanitized.prefix(20))...")
                 return nil
             }

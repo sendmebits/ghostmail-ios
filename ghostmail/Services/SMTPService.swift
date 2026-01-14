@@ -24,6 +24,30 @@ class SMTPService: @unchecked Sendable {
     
     private init() {}
     
+    // MARK: - TLS Configuration Helper
+    
+    /// Configures TLS options with certificate validation and minimum TLS version
+    private func configureTLSOptions() -> NWProtocolTLS.Options {
+        let tlsOptions = NWProtocolTLS.Options()
+        
+        // Enable certificate verification for security
+        sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { (sec_protocol_metadata, sec_trust, sec_protocol_verify_complete) in
+            let trust = sec_trust_copy_ref(sec_trust).takeRetainedValue()
+            var error: CFError?
+            if SecTrustEvaluateWithError(trust, &error) {
+                sec_protocol_verify_complete(true)
+            } else {
+                print("SMTP TLS certificate verification failed: \(error?.localizedDescription ?? "unknown error")")
+                sec_protocol_verify_complete(false)
+            }
+        }, DispatchQueue.global())
+        
+        // Set minimum TLS version to 1.2 for security
+        sec_protocol_options_set_min_tls_protocol_version(tlsOptions.securityProtocolOptions, .TLSv12)
+        
+        return tlsOptions
+    }
+    
     func saveSettings(_ settings: SMTPSettings) {
         do {
             let encoder = JSONEncoder()
@@ -68,10 +92,10 @@ class SMTPService: @unchecked Sendable {
         }
         
         // Validate email addresses to prevent injection
-        guard isValidEmailAddress(from) else {
+        guard ValidationUtils.isValidEmailAddress(from) else {
             throw SMTPError.invalidSettings
         }
-        guard isValidEmailAddress(to) else {
+        guard ValidationUtils.isValidEmailAddress(to) else {
             throw SMTPError.invalidSettings
         }
         
@@ -89,23 +113,7 @@ class SMTPService: @unchecked Sendable {
         // Configure TLS parameters if enabled
         let parameters: NWParameters
         if settings.useTLS {
-            let tlsOptions = NWProtocolTLS.Options()
-            // Enable certificate verification for security
-            sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { (sec_protocol_metadata, sec_trust, sec_protocol_verify_complete) in
-                let trust = sec_trust_copy_ref(sec_trust).takeRetainedValue()
-                var error: CFError?
-                if SecTrustEvaluateWithError(trust, &error) {
-                    sec_protocol_verify_complete(true)
-                } else {
-                    print("SMTP TLS certificate verification failed: \(error?.localizedDescription ?? "unknown error")")
-                    sec_protocol_verify_complete(false)
-                }
-            }, DispatchQueue.global())
-            
-            // Set minimum TLS version to 1.2 for security
-            sec_protocol_options_set_min_tls_protocol_version(tlsOptions.securityProtocolOptions, .TLSv12)
-            
-            parameters = NWParameters(tls: tlsOptions)
+            parameters = NWParameters(tls: configureTLSOptions())
         } else {
             parameters = .tcp
         }
@@ -197,23 +205,7 @@ class SMTPService: @unchecked Sendable {
         // Configure TLS parameters if enabled
         let parameters: NWParameters
         if settings.useTLS {
-            let tlsOptions = NWProtocolTLS.Options()
-            // Enable certificate verification for security
-            sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { (sec_protocol_metadata, sec_trust, sec_protocol_verify_complete) in
-                let trust = sec_trust_copy_ref(sec_trust).takeRetainedValue()
-                var error: CFError?
-                if SecTrustEvaluateWithError(trust, &error) {
-                    sec_protocol_verify_complete(true)
-                } else {
-                    print("SMTP TLS certificate verification failed: \(error?.localizedDescription ?? "unknown error")")
-                    sec_protocol_verify_complete(false)
-                }
-            }, DispatchQueue.global())
-            
-            // Set minimum TLS version to 1.2 for security
-            sec_protocol_options_set_min_tls_protocol_version(tlsOptions.securityProtocolOptions, .TLSv12)
-            
-            parameters = NWParameters(tls: tlsOptions)
+            parameters = NWParameters(tls: configureTLSOptions())
         } else {
             parameters = .tcp
         }
@@ -535,13 +527,6 @@ class SMTPService: @unchecked Sendable {
             return "=?UTF-8?B?\(Data(header.utf8).base64EncodedString())?="
         }
         return header
-    }
-    
-    /// Validates email address format to prevent injection attacks
-    private func isValidEmailAddress(_ email: String) -> Bool {
-        let emailPattern = "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
-        let emailPredicate = NSPredicate(format: "SELF MATCHES %@", emailPattern)
-        return emailPredicate.evaluate(with: email)
     }
 }
 

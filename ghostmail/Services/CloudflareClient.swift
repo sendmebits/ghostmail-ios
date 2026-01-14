@@ -196,18 +196,9 @@ class CloudflareClient: ObservableObject {
     // MARK: - Input Validation
     
     /// Validates email address format to prevent injection attacks
-    /// Uses a simple but effective regex pattern that covers most valid email formats
+    /// Uses shared validation utility for consistency
     private func isValidEmailAddress(_ email: String) -> Bool {
-        let emailPattern = "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
-        let emailPredicate = NSPredicate(format: "SELF MATCHES %@", emailPattern)
-        return emailPredicate.evaluate(with: email)
-    }
-    
-    /// Sanitizes input to prevent potential injection attacks
-    private func sanitizeInput(_ input: String) -> String {
-        // Remove potentially dangerous characters that could be used in injection attacks
-        let dangerousChars = CharacterSet(charactersIn: "\n\r\t<>\"'\\")
-        return input.components(separatedBy: dangerousChars).joined()
+        return ValidationUtils.isValidEmailAddress(email)
     }
     
     private var headers: [String: String] {
