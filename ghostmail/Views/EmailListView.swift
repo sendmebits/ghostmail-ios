@@ -641,19 +641,7 @@ struct EmailListView: View {
                         if !isLoadingStatistics || !emailStatistics.isEmpty {
                             // Show chart with data or empty chart (all zeros)
                             Section {
-                                EmailTrendChartView(
-                                    statistics: emailStatistics,
-                                    showTotalBadge: false,
-                                    onDayTapped: { date in
-                                        selectedDate = date
-                                        showDailyEmails = true
-                                    }
-                                )
-                                .frame(height: 180)
-                                .padding(.top, -28)
-                                .padding(.bottom, -8)
-                                .opacity(isLoadingStatistics && isUsingCachedStatistics ? 0.7 : 1.0)
-                            } header: {
+                                // Chart header row (not pinned - part of content)
                                 Button {
                                     showWeeklyEmails = true
                                 } label: {
@@ -687,27 +675,55 @@ struct EmailListView: View {
                                     }
                                 }
                                 .buttonStyle(.plain)
+                                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 4, trailing: 16))
+                                .listRowSeparator(.hidden)
+                                
+                                // The chart itself
+                                EmailTrendChartView(
+                                    statistics: emailStatistics,
+                                    showTotalBadge: false,
+                                    onDayTapped: { date in
+                                        selectedDate = date
+                                        showDailyEmails = true
+                                    }
+                                )
+                                .frame(height: 180)
+                                .padding(.top, -24)
+                                .padding(.bottom, -8)
+                                .opacity(isLoadingStatistics && isUsingCachedStatistics ? 0.7 : 1.0)
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
+                                .listRowSeparator(.hidden)
                             }
                         } else if isLoadingStatistics {
                             // Placeholder skeleton while loading (only shown if no cache available)
                             Section {
-                                VStack(spacing: 0) {
-                                    // Skeleton chart placeholder
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Color.secondary.opacity(0.1))
-                                        .frame(height: 180)
-                                        .overlay(
-                                            ProgressView()
-                                        )
-                                }
-                                .padding(.top, -28)
-                            } header: {
+                                // Header row (not pinned)
                                 HStack {
-                                    Text("7-Day Trend")
+                                    HStack(spacing: 5) {
+                                        Image(systemName: "chart.bar.fill")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundStyle(Color.accentColor)
+                                        Text("7-Day Trend")
+                                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                            .foregroundStyle(Color.accentColor)
+                                    }
                                     ProgressView()
                                         .scaleEffect(0.7)
                                     Spacer()
                                 }
+                                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 4, trailing: 16))
+                                .listRowSeparator(.hidden)
+                                
+                                // Skeleton chart placeholder
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.secondary.opacity(0.1))
+                                    .frame(height: 180)
+                                    .overlay(
+                                        ProgressView()
+                                    )
+                                    .padding(.top, -24)
+                                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
+                                    .listRowSeparator(.hidden)
                             }
                         }
                     }
