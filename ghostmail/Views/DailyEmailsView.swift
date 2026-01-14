@@ -63,6 +63,10 @@ struct DailyEmailsView: View {
     // Filter state for action type
     @State private var selectedActionFilter: EmailRoutingAction? = nil
     
+    // Navigation state for email detail (moved from row to parent)
+    @State private var selectedAlias: EmailAlias? = nil
+    @State private var navigateToDetail = false
+    
     // Filtered emails based on selected action
     private var filteredEmails: [EmailLogItem] {
         guard let filter = selectedActionFilter else { return emailsForDay }
@@ -171,7 +175,11 @@ struct DailyEmailsView: View {
                                 email: email,
                                 isDropAlias: emailAliases.isDropAlias(for: email.to),
                                 isCatchAll: isCatchAll,
-                                alias: !isCatchAll ? alias : nil
+                                alias: !isCatchAll ? alias : nil,
+                                onTapAlias: { tappedAlias in
+                                    selectedAlias = tappedAlias
+                                    navigateToDetail = true
+                                }
                             )
                                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                                 .listRowSeparator(.hidden)
@@ -198,6 +206,11 @@ struct DailyEmailsView: View {
         .listStyle(.plain)
         .navigationTitle(formattedDate)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $navigateToDetail) {
+            if let alias = selectedAlias {
+                EmailDetailView(email: alias, needsRefresh: .constant(false))
+            }
+        }
     }
     
     // Individual email row view
@@ -206,8 +219,8 @@ struct DailyEmailsView: View {
         let isDropAlias: Bool
         let isCatchAll: Bool
         let alias: EmailAlias?
+        let onTapAlias: (EmailAlias) -> Void  // Callback for navigation
         @State private var showCopyToast = false
-        @State private var navigateToDetail = false
         
         var body: some View {
             HStack(alignment: .top, spacing: 12) {
@@ -356,13 +369,8 @@ struct DailyEmailsView: View {
                 }
             }
             .onTapGesture {
-                if alias != nil {
-                    navigateToDetail = true
-                }
-            }
-            .navigationDestination(isPresented: $navigateToDetail) {
                 if let alias = alias {
-                    EmailDetailView(email: alias, needsRefresh: .constant(false))
+                    onTapAlias(alias)
                 }
             }
         }
