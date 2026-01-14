@@ -26,14 +26,34 @@ final class DeepLinkRouter: ObservableObject {
     private func extractWebsite(from url: URL) -> String? {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         let qp = components.queryItems ?? []
-        if let urlItem = qp.first(where: { $0.name == "url" })?.value,
-           let shared = URL(string: urlItem) ?? URL(string: urlItem.removingPercentEncoding ?? "") {
-            return normalizeHost(from: shared)
+        if let urlItem = qp.first(where: { $0.name == "url" })?.value {
+            // Validate and sanitize the URL parameter
+            let sanitized = urlItem.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Only allow http/https schemes to prevent javascript: or other malicious schemes
+            guard !sanitized.lowercased().hasPrefix("javascript:"),
+                  !sanitized.lowercased().hasPrefix("data:"),
+                  !sanitized.lowercased().hasPrefix("file:") else {
+                print("[Security] Blocked potentially malicious URL scheme in deep link: \(sanitized.prefix(20))...")
+                return nil
+            }
+            
+            if let shared = URL(string: sanitized) ?? URL(string: sanitized.removingPercentEncoding ?? "") {
+                return normalizeHost(from: shared)
+            }
         }
         if let websiteItem = qp.first(where: { $0.name == "website" })?.value {
-            // Accept raw host strings too
-            if let asUrl = URL(string: websiteItem), let host = asUrl.host { return host }
-            return websiteItem.replacingOccurrences(of: "https://", with: "")
+            // Accept raw host strings too, but validate them
+            let sanitized = websiteItem.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Block potentially malicious schemes
+            guard !sanitized.lowercased().hasPrefix("javascript:"),
+                  !sanitized.lowercased().hasPrefix("data:"),
+                  !sanitized.lowercased().hasPrefix("file:") else {
+                print("[Security] Blocked potentially malicious URL scheme in deep link: \(sanitized.prefix(20))...")
+                return nil
+            }
+            
+            if let asUrl = URL(string: sanitized), let host = asUrl.host { return host }
+            return sanitized.replacingOccurrences(of: "https://", with: "")
                 .replacingOccurrences(of: "http://", with: "")
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
         }

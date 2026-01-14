@@ -193,6 +193,23 @@ class CloudflareClient: ObservableObject {
         return s
     }
     
+    // MARK: - Input Validation
+    
+    /// Validates email address format to prevent injection attacks
+    /// Uses a simple but effective regex pattern that covers most valid email formats
+    private func isValidEmailAddress(_ email: String) -> Bool {
+        let emailPattern = "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
+        let emailPredicate = NSPredicate(format: "SELF MATCHES %@", emailPattern)
+        return emailPredicate.evaluate(with: email)
+    }
+    
+    /// Sanitizes input to prevent potential injection attacks
+    private func sanitizeInput(_ input: String) -> String {
+        // Remove potentially dangerous characters that could be used in injection attacks
+        let dangerousChars = CharacterSet(charactersIn: "\n\r\t<>\"'\\")
+        return input.components(separatedBy: dangerousChars).joined()
+    }
+    
     private var headers: [String: String] {
         [
             "Authorization": "Bearer \(apiToken)",
@@ -254,9 +271,8 @@ class CloudflareClient: ObservableObject {
             }
             
             if httpResponse.statusCode == 200 {
-                if let responseString = String(data: data, encoding: .utf8) {
-                    print("[Cloudflare] User token verification successful: \(responseString)")
-                }
+                // Success - don't log response body as it may contain sensitive token info
+                print("[Cloudflare] User token verification successful")
                 return (true, nil)
             } else {
                 let responseBody = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
@@ -486,6 +502,14 @@ class CloudflareClient: ObservableObject {
     }
     
     func createEmailRule(emailAddress: String, forwardTo: String) async throws -> EmailRule {
+        // Validate email addresses to prevent injection attacks
+        guard isValidEmailAddress(emailAddress) else {
+            throw CloudflareError(message: "Invalid email address format")
+        }
+        guard isValidEmailAddress(forwardTo) else {
+            throw CloudflareError(message: "Invalid forward-to email address format")
+        }
+        
         let url = URL(string: "\(baseURL)/zones/\(zoneId)/email/routing/rules")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -518,6 +542,14 @@ class CloudflareClient: ObservableObject {
 
     // Overload to create a rule in a specified zone using that zone's token
     func createEmailRule(emailAddress: String, forwardTo: String, in zone: CloudflareZone) async throws -> EmailRule {
+        // Validate email addresses to prevent injection attacks
+        guard isValidEmailAddress(emailAddress) else {
+            throw CloudflareError(message: "Invalid email address format")
+        }
+        guard isValidEmailAddress(forwardTo) else {
+            throw CloudflareError(message: "Invalid forward-to email address format")
+        }
+        
         let url = URL(string: "\(baseURL)/zones/\(zone.zoneId)/email/routing/rules")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -1087,16 +1119,37 @@ class CloudflareClient: ObservableObject {
         lastForwardingAddressesFetch = .distantPast
         
         let defaults = UserDefaults.standard
-        // Remove from Keychain
+        // Remove from Keychain - clean up all zone tokens
         KeychainHelper.shared.delete(service: "ghostmail", account: "accountId")
         KeychainHelper.shared.delete(service: "ghostmail", account: "zoneId")
         KeychainHelper.shared.delete(service: "ghostmail", account: "apiToken")
+        
+        // Remove all zone-specific tokens from Keychain
+        for zone in zones {
+            KeychainHelper.shared.delete(service: "ghostmail", account: "apiToken_\(zone.zoneId)")
+        }
+        
         defaults.removeObject(forKey: "isAuthenticated")
-    zones = []
-    defaults.removeObject(forKey: "cloudflareZones")
+        zones = []
+        defaults.removeObject(forKey: "cloudflareZones")
     }
     
     func updateEmailRule(tag: String, emailAddress: String, isEnabled: Bool, forwardTo: String, actionType: String = "forward") async throws {
+        // Validate email addresses for forward action
+        if actionType == "forward" {
+            guard isValidEmailAddress(emailAddress) else {
+                throw CloudflareError(message: "Invalid email address format")
+            }
+            guard isValidEmailAddress(forwardTo) else {
+                throw CloudflareError(message: "Invalid forward-to email address format")
+            }
+        } else {
+            // For drop/reject, only validate the email address
+            guard isValidEmailAddress(emailAddress) else {
+                throw CloudflareError(message: "Invalid email address format")
+            }
+        }
+        
         let url = URL(string: "\(baseURL)/zones/\(zoneId)/email/routing/rules/\(tag)")!
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
@@ -1137,6 +1190,21 @@ class CloudflareClient: ObservableObject {
 
     // Overload to update a rule in a specified zone using that zone's token
     func updateEmailRule(tag: String, emailAddress: String, isEnabled: Bool, forwardTo: String, in zone: CloudflareZone, actionType: String = "forward") async throws {
+        // Validate email addresses for forward action
+        if actionType == "forward" {
+            guard isValidEmailAddress(emailAddress) else {
+                throw CloudflareError(message: "Invalid email address format")
+            }
+            guard isValidEmailAddress(forwardTo) else {
+                throw CloudflareError(message: "Invalid forward-to email address format")
+            }
+        } else {
+            // For drop/reject, only validate the email address
+            guard isValidEmailAddress(emailAddress) else {
+                throw CloudflareError(message: "Invalid email address format")
+            }
+        }
+        
         let url = URL(string: "\(baseURL)/zones/\(zone.zoneId)/email/routing/rules/\(tag)")!
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
