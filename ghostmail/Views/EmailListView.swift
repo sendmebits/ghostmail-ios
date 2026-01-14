@@ -60,6 +60,21 @@ struct EmailListView: View {
     @State private var showDailyEmails = false
     @State private var showWeeklyEmails = false
     @State private var lastCacheCheckTime: Date = .distantPast
+    
+    // Missing token detection state (for iCloud restore scenarios)
+    @State private var zonesWithMissingTokens: [CloudflareClient.CloudflareZone] = []
+    @State private var showMissingTokenAlert = false
+    @State private var zoneToAddToken: CloudflareClient.CloudflareZone? = nil
+    @State private var hasCheckedForMissingTokens = false
+    
+    /// Alert message for missing token prompt
+    private var missingTokenAlertMessage: String {
+        if let firstZone = zonesWithMissingTokens.first {
+            let domainName = firstZone.domainName.isEmpty ? "a domain" : firstZone.domainName
+            return "The API token for \(domainName) is missing. This can happen after restoring from iCloud backup. Please re-enter the token to enable syncing for this domain."
+        }
+        return "Some API tokens are missing and need to be re-entered."
+    }
 
     // Derived UI state
     private var isFilterActive: Bool {
@@ -809,6 +824,17 @@ struct EmailListView: View {
     }
 
     var body: some View {
+        bodyContent
+            .missingTokenHandling(
+                showMissingTokenAlert: $showMissingTokenAlert,
+                zonesWithMissingTokens: $zonesWithMissingTokens,
+                zoneToAddToken: $zoneToAddToken,
+                missingTokenAlertMessage: missingTokenAlertMessage
+            )
+    }
+    
+    @ViewBuilder
+    private var bodyContent: some View {
         content
             .background(Color(.systemBackground).ignoresSafeArea())
             .preferredColorScheme(themeColorScheme)
@@ -935,6 +961,27 @@ struct EmailListView: View {
         
         // Load statistics
         await loadStatistics()
+        
+        // Check for zones with missing API tokens (e.g., after iCloud restore)
+        checkForMissingTokens()
+    }
+    
+    /// Check if any configured zones are missing their API tokens
+    /// This can happen when restoring from iCloud backup since tokens are stored in Keychain
+    private func checkForMissingTokens() {
+        // Only check once per app session to avoid repeatedly prompting
+        guard !hasCheckedForMissingTokens else { return }
+        hasCheckedForMissingTokens = true
+        
+        // Find zones with missing tokens
+        let missingTokenZones = cloudflareClient.zones.filter { zone in
+            zone.apiToken.isEmpty
+        }
+        
+        if !missingTokenZones.isEmpty {
+            zonesWithMissingTokens = missingTokenZones
+            showMissingTokenAlert = true
+        }
     }
     
     private func handleZoneChange() async {
@@ -1249,6 +1296,196 @@ private struct FilterSheetView: View {
                         .padding(.bottom)
                     }
                     .background(.ultraThinMaterial)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Missing Token View Modifier
+
+/// View modifier to handle missing API token alerts and sheets
+private struct MissingTokenModifier: ViewModifier {
+    @Binding var showMissingTokenAlert: Bool
+    @Binding var zonesWithMissingTokens: [CloudflareClient.CloudflareZone]
+    @Binding var zoneToAddToken: CloudflareClient.CloudflareZone?
+    let missingTokenAlertMessage: String
+    
+    func body(content: Content) -> some View {
+        content
+            .alert("API Token Required", isPresented: $showMissingTokenAlert) {
+                Button("Add Token") {
+                    if let firstZone = zonesWithMissingTokens.first {
+                        zoneToAddToken = firstZone
+                    }
+                }
+                Button("Later", role: .cancel) {
+                    // Remove the first zone from the list and show next if available
+                    if !zonesWithMissingTokens.isEmpty {
+                        zonesWithMissingTokens.removeFirst()
+                    }
+                    if !zonesWithMissingTokens.isEmpty {
+                        // Show alert for the next zone after a brief delay
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            showMissingTokenAlert = true
+                        }
+                    }
+                }
+            } message: {
+                Text(missingTokenAlertMessage)
+            }
+            .sheet(item: $zoneToAddToken) { zone in
+                MissingTokenSheet(zone: zone) {
+                    // After successfully adding token, remove from list and check for more
+                    zonesWithMissingTokens.removeAll { $0.zoneId == zone.zoneId }
+                    if !zonesWithMissingTokens.isEmpty {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            showMissingTokenAlert = true
+                        }
+                    }
+                }
+            }
+    }
+}
+
+private extension View {
+    func missingTokenHandling(
+        showMissingTokenAlert: Binding<Bool>,
+        zonesWithMissingTokens: Binding<[CloudflareClient.CloudflareZone]>,
+        zoneToAddToken: Binding<CloudflareClient.CloudflareZone?>,
+        missingTokenAlertMessage: String
+    ) -> some View {
+        modifier(MissingTokenModifier(
+            showMissingTokenAlert: showMissingTokenAlert,
+            zonesWithMissingTokens: zonesWithMissingTokens,
+            zoneToAddToken: zoneToAddToken,
+            missingTokenAlertMessage: missingTokenAlertMessage
+        ))
+    }
+}
+
+/// Sheet for re-entering a missing API token (displayed after iCloud restore)
+private struct MissingTokenSheet: View {
+    @EnvironmentObject private var cloudflareClient: CloudflareClient
+    let zone: CloudflareClient.CloudflareZone
+    let onSuccess: () -> Void
+    
+    @State private var apiToken = ""
+    @State private var isLoading = false
+    @State private var errorMessage = ""
+    @State private var showError = false
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                                .font(.title2)
+                            Text("API Token Missing")
+                                .font(.system(.headline, design: .rounded))
+                        }
+                        Text("The API token for this domain was not found. This typically happens after restoring from an iCloud backup. Please re-enter your Cloudflare API token.")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                Section {
+                    HStack {
+                        Text("Domain")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(zone.domainName.isEmpty ? "Unknown" : zone.domainName)
+                            .font(.system(.body, design: .rounded))
+                    }
+                    
+                    HStack {
+                        Text("Zone ID")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(zone.zoneId.prefix(6))...\(zone.zoneId.suffix(4))")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                
+                Section {
+                    SecureField("API Token", text: $apiToken)
+                        .textContentType(.password)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                } footer: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Create a token in Cloudflare with Email Routing permissions")
+                            .font(.system(.caption, design: .rounded))
+                        Link("Create API Token on Cloudflare →", destination: URL(string: "https://dash.cloudflare.com/profile/api-tokens")!)
+                            .font(.system(.caption, design: .rounded))
+                    }
+                }
+                
+                Section {
+                    Button {
+                        saveToken()
+                    } label: {
+                        HStack {
+                            Spacer()
+                            if isLoading {
+                                ProgressView()
+                            } else {
+                                Text("Save Token")
+                                    .font(.system(.body, design: .rounded, weight: .semibold))
+                            }
+                            Spacer()
+                        }
+                    }
+                    .disabled(apiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isLoading)
+                }
+            }
+            .navigationTitle(zone.domainName.isEmpty ? "Add Token" : zone.domainName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Skip") {
+                        dismiss()
+                    }
+                }
+            }
+            .alert("Error", isPresented: $showError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(errorMessage)
+            }
+        }
+    }
+    
+    private func saveToken() {
+        isLoading = true
+        
+        Task {
+            do {
+                try await cloudflareClient.updateZoneToken(
+                    zoneId: zone.zoneId,
+                    apiToken: apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                
+                // Check and auto-enable analytics if this zone's API has permission
+                await cloudflareClient.checkAndEnableAnalyticsIfPermitted()
+                
+                await MainActor.run {
+                    isLoading = false
+                    onSuccess()
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isLoading = false
+                    errorMessage = error.localizedDescription
+                    showError = true
                 }
             }
         }

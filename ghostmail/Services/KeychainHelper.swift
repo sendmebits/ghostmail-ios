@@ -1,30 +1,6 @@
 import Foundation
 import Security
 
-/// Keychain error types for better error handling
-enum KeychainError: LocalizedError {
-    case saveFailed(OSStatus)
-    case updateFailed(OSStatus)
-    case deleteFailed(OSStatus)
-    case readFailed(OSStatus)
-    case dataConversionFailed
-    
-    var errorDescription: String? {
-        switch self {
-        case .saveFailed(let status):
-            return "Failed to save to Keychain (OSStatus: \(status))"
-        case .updateFailed(let status):
-            return "Failed to update Keychain item (OSStatus: \(status))"
-        case .deleteFailed(let status):
-            return "Failed to delete from Keychain (OSStatus: \(status))"
-        case .readFailed(let status):
-            return "Failed to read from Keychain (OSStatus: \(status))"
-        case .dataConversionFailed:
-            return "Failed to convert data for Keychain storage"
-        }
-    }
-}
-
 final class KeychainHelper {
     static let shared = KeychainHelper()
     private init() {}

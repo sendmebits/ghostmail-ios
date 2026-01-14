@@ -6,14 +6,6 @@ enum EmailRuleActionType: String, Codable {
     case forward = "forward"
     case drop = "drop"
     case reject = "reject"
-    
-    var displayName: String {
-        switch self {
-        case .forward: return "Forward"
-        case .drop: return "Drop"
-        case .reject: return "Reject"
-        }
-    }
 }
 
 @Model

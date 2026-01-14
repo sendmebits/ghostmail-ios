@@ -34,31 +34,6 @@ extension Array where Element == EmailAlias {
     }
 }
 
-// MARK: - Date Formatting Helpers
-
-extension Date {
-    /// Format date for email statistics headers (Today, Yesterday, or medium date style)
-    var emailStatisticsDateHeader: String {
-        let calendar = Calendar.current
-        if calendar.isDateInToday(self) {
-            return "Today"
-        } else if calendar.isDateInYesterday(self) {
-            return "Yesterday"
-        } else {
-            let formatter = DateFormatter()
-            formatter.dateStyle = .medium
-            return formatter.string(from: self)
-        }
-    }
-    
-    /// Format time only (e.g., "3:45 PM")
-    var emailTimeString: String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: self)
-    }
-}
-
 // MARK: - Shared ActionSummaryBadge View
 
 /// Tappable filter badge showing action counts (Forwarded/Dropped/Rejected)
