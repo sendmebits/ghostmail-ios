@@ -401,62 +401,70 @@ struct EmailListView: View {
             return
         }
         
-        // Set loading state FIRST to prevent race conditions
-        isLoadingStatistics = true
-        
-        // Try to load from cache first for instant display
-        var cachedStats: [EmailStatistic]? = nil
-        var cacheTimestamp: Date? = nil
-        var cacheIsStale = true
-        
+        // Check cache freshness BEFORE setting loading state to avoid spinner flicker
         if useCache, let cached = StatisticsCache.shared.load() {
-            cachedStats = cached.statistics
-            cacheTimestamp = UserDefaults.standard.object(forKey: "EmailStatisticsCacheTimestamp") as? Date
-            cacheIsStale = cached.isStale
+            let cacheTimestamp = UserDefaults.standard.object(forKey: "EmailStatisticsCacheTimestamp") as? Date
             
             // Update last check time
             if let ts = cacheTimestamp {
                 lastCacheCheckTime = ts
             }
             
-            // Display cached data immediately - don't wait for network
-            await MainActor.run {
-                self.unfilteredStatistics = cached.statistics
-                self.emailStatistics = filterStatistics(cached.statistics)
-                self.isUsingCachedStatistics = true
-            }
-            
-            // If cache is fresh (< 24 hours), we're done - no need to fetch
-            if !cacheIsStale {
+            // If cache is fresh, just use it without showing loading state
+            if !cached.isStale {
                 print("📊 Cache is fresh, skipping network fetch")
-                await MainActor.run {
-                    self.isLoadingStatistics = false
+                
+                // Only update if data actually changed to prevent unnecessary re-renders
+                let newFiltered = filterStatistics(cached.statistics)
+                let hasChanged = newFiltered.count != emailStatistics.count ||
+                    zip(newFiltered, emailStatistics).contains { $0.emailAddress != $1.emailAddress || $0.count != $1.count }
+                
+                if hasChanged {
+                    await MainActor.run {
+                        self.unfilteredStatistics = cached.statistics
+                        self.emailStatistics = newFiltered
+                        self.isUsingCachedStatistics = true
+                    }
                 }
                 return
             }
-            // If stale, continue to fetch fresh data in background with delta optimization
+            
+            // Cache is stale - show cached data immediately while we fetch fresh data
+            let newFiltered = filterStatistics(cached.statistics)
+            let hasChanged = newFiltered.count != emailStatistics.count ||
+                zip(newFiltered, emailStatistics).contains { $0.emailAddress != $1.emailAddress || $0.count != $1.count }
+            
+            if hasChanged {
+                await MainActor.run {
+                    self.unfilteredStatistics = cached.statistics
+                    self.emailStatistics = newFiltered
+                    self.isUsingCachedStatistics = true
+                }
+            } else {
+                await MainActor.run {
+                    self.isUsingCachedStatistics = true
+                }
+            }
+            
             print("📊 Cache is stale, fetching fresh data while showing cached")
         }
         
+        // Set loading state only when we need to fetch from network
+        isLoadingStatistics = true
+        
         // Fetch statistics for all zones in parallel for faster refresh
-        // Pass cached data and timestamp to enable smart delta fetching
         var allStats: [EmailStatistic] = []
         let zones = cloudflareClient.zones
         let forceFull = !useCache  // Force full fetch on manual refresh
         
         await withTaskGroup(of: [EmailStatistic].self) { group in
             for zone in zones {
-                // For delta fetch, filter cached data to only include this zone's addresses
-                // (we can't easily know which addresses belong to which zone, so pass all)
-                let zoneCache = cachedStats
-                let zoneCacheTime = cacheTimestamp
-                
                 group.addTask {
                     do {
                         return try await self.cloudflareClient.fetchEmailStatistics(
                             for: zone,
-                            cachedData: zoneCache,
-                            cacheTimestamp: zoneCacheTime,
+                            cachedData: nil,
+                            cacheTimestamp: nil,
                             forceFull: forceFull
                         )
                     } catch {
@@ -612,9 +620,20 @@ struct EmailListView: View {
             return
         }
         
+        let newFiltered = filterStatistics(cached.statistics)
+        
+        // Only update if data actually changed to prevent unnecessary re-renders
+        let hasChanged = newFiltered.count != emailStatistics.count ||
+            zip(newFiltered, emailStatistics).contains { $0.emailAddress != $1.emailAddress || $0.count != $1.count }
+        
+        guard hasChanged else {
+            print("📊 Statistics unchanged, skipping update")
+            return
+        }
+        
         await MainActor.run {
             self.unfilteredStatistics = cached.statistics
-            self.emailStatistics = filterStatistics(cached.statistics)
+            self.emailStatistics = newFiltered
             print("Statistics refreshed from updated cache (\(cached.statistics.count) addresses)")
         }
     }
