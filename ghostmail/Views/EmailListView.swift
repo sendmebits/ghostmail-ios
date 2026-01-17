@@ -592,6 +592,25 @@ struct EmailListView: View {
         }.sorted { $0.count > $1.count }
     }
     
+    /// Count emails from the last 7 days only (to match chart display)
+    private var last7DaysEmailCount: Int {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        
+        var count = 0
+        for stat in emailStatistics {
+            for date in stat.receivedDates {
+                let dayStart = calendar.startOfDay(for: date)
+                // Only count emails from the last 7 days
+                if let daysAgo = calendar.dateComponents([.day], from: dayStart, to: today).day,
+                   daysAgo >= 0 && daysAgo < 7 {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+    
     /// Check if cache has been updated since we last loaded and reload if so
     private func checkAndReloadIfCacheUpdated() {
         guard showAnalytics else { return }
@@ -684,7 +703,7 @@ struct EmailListView: View {
                                         Spacer()
                                         // Right side: Total count with envelope icon (no pill)
                                         HStack(spacing: 5) {
-                                            Text("\(emailStatistics.reduce(0) { $0 + $1.count })")
+                                            Text("\(last7DaysEmailCount)")
                                                 .font(.system(.subheadline, design: .rounded, weight: .bold))
                                                 .foregroundStyle(Color.accentColor)
                                             Image(systemName: "envelope.fill")
