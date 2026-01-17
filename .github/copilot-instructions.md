@@ -88,6 +88,7 @@ Ghost Mail is a SwiftUI iOS app for managing Cloudflare Email Routing aliases. S
 | Add shared stats helper | `EmailStatisticsShared.swift`
 
 ## Agent Instructions
-- Present multi-step plans using `#planReview` before executing
-- *CRITICAL* - Always confirm completion with `#askUser`
-
+When the task requires multiple steps or non-trivial changes, present a detailed plan using #planReview and wait for approval before executing.
+If the plan is rejected, incorporate the comments and submit an updated plan with #planReview.
+When the user asks for a step-by-step guide or walkthrough, present it using #walkthroughReview.
+Always use #askUser before completing any task to confirm the result matches what the user asked for.
