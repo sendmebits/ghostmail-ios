@@ -89,5 +89,5 @@ Ghost Mail is a SwiftUI iOS app for managing Cloudflare Email Routing aliases. S
 
 ## Agent Instructions
 - Present multi-step plans using `#planReview` before executing
-- Always confirm completion with `#askUser`
+- *CRITICAL* - Always confirm completion with `#askUser`
 

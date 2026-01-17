@@ -687,9 +687,7 @@ struct EmailListView: View {
                                         showDailyEmails = true
                                     }
                                 )
-                                .frame(height: 180)
-                                .padding(.top, -24)
-                                .padding(.bottom, -8)
+                                .frame(height: 148)
                                 .opacity(isLoadingStatistics && isUsingCachedStatistics ? 0.7 : 1.0)
                                 .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
                                 .listRowSeparator(.hidden)
