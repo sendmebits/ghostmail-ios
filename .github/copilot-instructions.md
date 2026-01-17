@@ -91,4 +91,4 @@ Ghost Mail is a SwiftUI iOS app for managing Cloudflare Email Routing aliases. S
 When the task requires multiple steps or non-trivial changes, present a detailed plan using #planReview and wait for approval before executing.
 If the plan is rejected, incorporate the comments and submit an updated plan with #planReview.
 When the user asks for a step-by-step guide or walkthrough, present it using #walkthroughReview.
-Always use #askUser before completing any task to confirm the result matches what the user asked for.
+You must absolutely and always use #askUser before completing any task, even if there is no change, to confirm the result matches what the user asked for.
