@@ -7,6 +7,7 @@ struct SMTPSettingsView: View {
     @State private var username: String = ""
     @State private var password: String = ""
     @State private var useTLS: Bool = true
+    @State private var requireValidCertificate: Bool = true
     @State private var showPassword: Bool = false
     @State private var isLoading: Bool = false
     @State private var error: Error?
@@ -29,10 +30,19 @@ struct SMTPSettingsView: View {
                     
                     Toggle("Use TLS", isOn: $useTLS)
                         .tint(.accentColor)
+                    
+                    if useTLS {
+                        Toggle("Require Valid TLS Certificate", isOn: $requireValidCertificate)
+                            .tint(.accentColor)
+                    }
                 } header: {
                     Text("Server Settings")
                 } footer: {
-                    Text("Use port 587 without TLS, or port 465 with TLS enabled (implicit SSL/TLS)")
+                    if useTLS && !requireValidCertificate {
+                        Text("⚠️ Certificate validation is disabled. This allows self-signed certificates but is less secure. Only disable this if you trust the server.")
+                    } else {
+                        Text("Use port 587 without TLS, or port 465 with TLS enabled (implicit SSL/TLS)")
+                    }
                 }
                 
                 Section {
@@ -146,6 +156,7 @@ struct SMTPSettingsView: View {
             username = settings.username
             password = settings.password
             useTLS = settings.useTLS
+            requireValidCertificate = settings.requireValidCertificate
         }
     }
     
@@ -161,7 +172,8 @@ struct SMTPSettingsView: View {
             port: portInt,
             username: username.trimmingCharacters(in: .whitespacesAndNewlines),
             password: password,
-            useTLS: useTLS
+            useTLS: useTLS,
+            requireValidCertificate: requireValidCertificate
         )
         
         SMTPService.shared.saveSettings(settings)
@@ -175,6 +187,7 @@ struct SMTPSettingsView: View {
         username = ""
         password = ""
         useTLS = true
+        requireValidCertificate = true
     }
     
     private func testConnection() {
@@ -189,7 +202,8 @@ struct SMTPSettingsView: View {
             port: portInt,
             username: username.trimmingCharacters(in: .whitespacesAndNewlines),
             password: password,
-            useTLS: useTLS
+            useTLS: useTLS,
+            requireValidCertificate: requireValidCertificate
         )
         
         isTesting = true

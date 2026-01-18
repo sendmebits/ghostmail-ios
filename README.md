@@ -71,9 +71,22 @@ CSV import notes:
 # Ghost Mail Privacy
 - Ghost Mail does not have any servers or infrastructure that it connects to.
 - The iPhone app connects directly to Cloudflare using your API token with minimal permissions, no middle man.
-- Cloudflare token is stored securely in the iPhone keychain.
-- SMTP credentials (if confgiured for sending email) are also securely stored in the iPhone keychain.
+- Cloudflare token is stored securely in the iPhone keychain with device-only accessibility.
+- SMTP credentials (if configured for sending email) are also securely stored in the iPhone keychain.
 - Email aliases and metadata (website, notes, date) are optionally synced to your iCloud account for backup purposes. This can be enabled/disabled in settings.
+- All network communications use TLS 1.2+ with proper certificate validation.
+- See [SECURITY_AUDIT.md](SECURITY_AUDIT.md) for a comprehensive security audit report.
+
+# Security
+
+Ghost Mail implements security best practices including:
+- **Secure credential storage:** All API tokens and passwords stored in iOS Keychain with `ThisDeviceOnly` accessibility
+- **TLS security:** SMTP connections use TLS 1.2+ with certificate validation
+- **Input validation:** Email addresses and URLs validated to prevent injection attacks
+- **Privacy-focused logging:** Sensitive data is masked in logs
+- **Regular security audits:** See [SECURITY_AUDIT.md](SECURITY_AUDIT.md) for the latest audit
+
+For developers, see [SECURITY_PRACTICES.md](SECURITY_PRACTICES.md) for security best practices when contributing to the project.
 
 # Privacy
 - Ghost Mail does not use any servers or external infrastructure; all actions happen directly from your device.

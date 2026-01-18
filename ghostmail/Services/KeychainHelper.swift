@@ -7,7 +7,7 @@ final class KeychainHelper {
     
     // MARK: - Public API (with error handling)
     
-    /// Save data to Keychain with proper error handling
+    /// Save data to Keychain with proper error handling and enhanced security
     /// - Returns: true on success, false on failure
     @discardableResult
     func save(_ data: Data, service: String, account: String) -> Bool {
@@ -16,7 +16,9 @@ final class KeychainHelper {
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
-            kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked
+            // Use WhenUnlockedThisDeviceOnly for better security - data won't sync via iCloud Keychain
+            // and is only accessible when device is unlocked
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ] as [CFString: Any]
         
         // Add item to keychain
@@ -34,7 +36,7 @@ final class KeychainHelper {
             
             let attributesToUpdate = [
                 kSecValueData: data,
-                kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked
+                kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
             ] as [CFString: Any]
             
             let updateStatus = SecItemUpdate(searchQuery as CFDictionary, attributesToUpdate as CFDictionary)

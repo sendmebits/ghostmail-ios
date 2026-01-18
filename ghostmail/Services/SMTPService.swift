@@ -24,6 +24,39 @@ class SMTPService: @unchecked Sendable {
     
     private init() {}
     
+    // MARK: - TLS Configuration Helper
+    
+    /// Configures TLS options with optional certificate validation and minimum TLS version
+    /// - Parameter requireValidCertificate: When true, validates the server certificate. When false, accepts any certificate (including self-signed)
+    private func configureTLSOptions(requireValidCertificate: Bool) -> NWProtocolTLS.Options {
+        let tlsOptions = NWProtocolTLS.Options()
+        
+        if requireValidCertificate {
+            // Enable certificate verification for security
+            sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { (sec_protocol_metadata, sec_trust, sec_protocol_verify_complete) in
+                let trust = sec_trust_copy_ref(sec_trust).takeRetainedValue()
+                var error: CFError?
+                if SecTrustEvaluateWithError(trust, &error) {
+                    sec_protocol_verify_complete(true)
+                } else {
+                    print("SMTP TLS certificate verification failed: \(error?.localizedDescription ?? "unknown error")")
+                    sec_protocol_verify_complete(false)
+                }
+            }, DispatchQueue.global())
+        } else {
+            // Skip certificate verification - allows self-signed certificates
+            // WARNING: This is less secure and should only be used when necessary
+            sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { (_, _, sec_protocol_verify_complete) in
+                sec_protocol_verify_complete(true)
+            }, DispatchQueue.global())
+        }
+        
+        // Set minimum TLS version to 1.2 for security
+        sec_protocol_options_set_min_tls_protocol_version(tlsOptions.securityProtocolOptions, .TLSv12)
+        
+        return tlsOptions
+    }
+    
     func saveSettings(_ settings: SMTPSettings) {
         do {
             let encoder = JSONEncoder()
@@ -67,6 +100,14 @@ class SMTPService: @unchecked Sendable {
             throw SMTPError.invalidSettings
         }
         
+        // Validate email addresses to prevent injection
+        guard ValidationUtils.isValidEmailAddress(from) else {
+            throw SMTPError.invalidSettings
+        }
+        guard ValidationUtils.isValidEmailAddress(to) else {
+            throw SMTPError.invalidSettings
+        }
+        
         // Create the email message in RFC 2822 format
         let message = createEmailMessage(from: from, to: to, subject: subject, body: body)
         
@@ -81,8 +122,7 @@ class SMTPService: @unchecked Sendable {
         // Configure TLS parameters if enabled
         let parameters: NWParameters
         if settings.useTLS {
-            let tlsOptions = NWProtocolTLS.Options()
-            parameters = NWParameters(tls: tlsOptions)
+            parameters = NWParameters(tls: configureTLSOptions(requireValidCertificate: settings.requireValidCertificate))
         } else {
             parameters = .tcp
         }
@@ -174,8 +214,7 @@ class SMTPService: @unchecked Sendable {
         // Configure TLS parameters if enabled
         let parameters: NWParameters
         if settings.useTLS {
-            let tlsOptions = NWProtocolTLS.Options()
-            parameters = NWParameters(tls: tlsOptions)
+            parameters = NWParameters(tls: configureTLSOptions(requireValidCertificate: settings.requireValidCertificate))
         } else {
             parameters = .tcp
         }
