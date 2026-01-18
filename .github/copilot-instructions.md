@@ -1,7 +1,7 @@
 # Copilot Instructions for Ghost Mail iOS
 
 ## Overview
-Ghost Mail is a SwiftUI iOS app for managing Cloudflare Email Routing aliases. Supports multi-zone configurations, iCloud sync, email statistics, and SMTP sending.
+Ghost Mail is a SwiftUI iOS app for managing Cloudflare Email Routing aliases. Supports multi-zone configurations, sub-domains, iCloud sync, email statistics, and SMTP sending.
 
 ## Project Structure
 
