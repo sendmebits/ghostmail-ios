@@ -193,6 +193,21 @@ class CloudflareClient: ObservableObject {
         return s
     }
     
+    // MARK: - Email Address Helpers
+    
+    /// Normalize plus-addressed email to base address: "aaa+tag@domain.com" → "aaa@domain.com"
+    /// Used to group plus-addressed emails with their base alias in statistics
+    static func normalizeEmailAddress(_ email: String) -> String {
+        guard let atIndex = email.firstIndex(of: "@") else { return email }
+        let localPart = String(email[..<atIndex])
+        let domain = String(email[atIndex...])
+        
+        if let plusIndex = localPart.firstIndex(of: "+") {
+            return String(localPart[..<plusIndex]) + domain
+        }
+        return email
+    }
+    
     private var headers: [String: String] {
         [
             "Authorization": "Bearer \(apiToken)",
@@ -702,14 +717,29 @@ class CloudflareClient: ObservableObject {
                 
                 return logs.reduce(into: [String: [EmailStatistic.EmailDetail]]()) { result, log in
                     let action = EmailRoutingAction(from: log.action)
+                    
+                    // Normalize email for grouping: aaa+tag@domain.com → aaa@domain.com
+                    let normalizedEmail = Self.normalizeEmailAddress(log.to)
+                    let isPlusAddressed = normalizedEmail != log.to
+                    
                     if let date = taskIsoFormatter.date(from: log.datetime) {
-                        result[log.to, default: []].append(EmailStatistic.EmailDetail(from: log.from, date: date, action: action))
+                        result[normalizedEmail, default: []].append(EmailStatistic.EmailDetail(
+                            from: log.from,
+                            date: date,
+                            action: action,
+                            originalTo: isPlusAddressed ? log.to : nil
+                        ))
                     } else {
                         // Fallback for dates without fractional seconds
                         let fallbackFormatter = ISO8601DateFormatter()
                         fallbackFormatter.formatOptions = [.withInternetDateTime]
                         if let date = fallbackFormatter.date(from: log.datetime) {
-                            result[log.to, default: []].append(EmailStatistic.EmailDetail(from: log.from, date: date, action: action))
+                            result[normalizedEmail, default: []].append(EmailStatistic.EmailDetail(
+                                from: log.from,
+                                date: date,
+                                action: action,
+                                originalTo: isPlusAddressed ? log.to : nil
+                            ))
                         }
                     }
                 }

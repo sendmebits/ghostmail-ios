@@ -23,7 +23,8 @@ struct DailyEmailsView: View {
                     from: detail.from,
                     to: stat.emailAddress,
                     date: detail.date,
-                    action: detail.action
+                    action: detail.action,
+                    originalTo: detail.originalTo
                 ))
             }
         }
@@ -265,6 +266,19 @@ struct DailyEmailsView: View {
                                     .font(.system(.subheadline, design: .rounded, weight: .medium))
                                     .foregroundStyle(isDropAlias ? .red : (isCatchAll ? .purple : .primary))
                                     .fixedSize(horizontal: true, vertical: false)
+                                
+                                // Plus-address tag badge
+                                if let plusTag = email.plusTag {
+                                    Text("+\(plusTag)")
+                                        .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                        .foregroundStyle(.blue)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color.blue.opacity(0.15))
+                                        )
+                                }
                                 
                                 // Catch-all indicator badge
                                 if isCatchAll {

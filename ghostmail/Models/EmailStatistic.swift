@@ -64,11 +64,27 @@ struct EmailStatistic: Identifiable, Hashable {
         let from: String
         let date: Date
         let action: EmailRoutingAction
+        /// The actual recipient address (may include plus-addressing like aaa+tag@domain.com)
+        /// When nil, the email was sent directly to the base address
+        let originalTo: String?
         
-        init(from: String, date: Date, action: EmailRoutingAction = .forwarded) {
+        /// The plus-addressed tag portion (e.g., "newsletter" for aaa+newsletter@domain.com)
+        /// Returns nil if no plus-addressing was used
+        var plusTag: String? {
+            guard let to = originalTo,
+                  let atIndex = to.firstIndex(of: "@"),
+                  let plusIndex = to.firstIndex(of: "+"),
+                  plusIndex < atIndex else {
+                return nil
+            }
+            return String(to[to.index(after: plusIndex)..<atIndex])
+        }
+        
+        init(from: String, date: Date, action: EmailRoutingAction = .forwarded, originalTo: String? = nil) {
             self.from = from
             self.date = date
             self.action = action
+            self.originalTo = originalTo
         }
     }
 }

@@ -168,6 +168,19 @@ struct EmailStatisticsDetailView: View {
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                         
+                                        // Plus-address tag badge
+                                        if let plusTag = detail.plusTag {
+                                            Text("+\(plusTag)")
+                                                .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                                .foregroundStyle(.blue)
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1)
+                                                .background(
+                                                    Capsule()
+                                                        .fill(Color.blue.opacity(0.15))
+                                                )
+                                        }
+                                        
                                         // Status badge
                                         Text(detail.action.label)
                                             .font(.system(.caption2, design: .rounded, weight: .medium))
