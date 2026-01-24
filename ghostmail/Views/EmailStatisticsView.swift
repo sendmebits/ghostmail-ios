@@ -277,11 +277,37 @@ struct EmailStatisticsView: View {
                 }
             } catch {
                 await MainActor.run {
-                    self.errorMessage = error.localizedDescription
+                    // Ignore non-fatal network errors (timeouts, connection lost) that occur during background transitions
+                    if !isNonFatalNetworkError(error) {
+                        self.errorMessage = error.localizedDescription
+                    }
                     self.isLoading = false
                 }
             }
         }
+    }
+    
+    /// Determines if an error is non-fatal and shouldn't be shown to the user.
+    /// Includes timeouts and connection issues which commonly occur during background/foreground transitions.
+    private func isNonFatalNetworkError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cancelled, .timedOut, .networkConnectionLost, .notConnectedToInternet:
+                return true
+            default:
+                break
+            }
+        }
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorCancelled, NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost, NSURLErrorNotConnectedToInternet:
+                return true
+            default:
+                break
+            }
+        }
+        return false
     }
     
     private func loadAllZonesStatistics(useCache: Bool) {
@@ -320,7 +346,10 @@ struct EmailStatisticsView: View {
                 }
             } catch {
                 await MainActor.run {
-                    self.errorMessage = error.localizedDescription
+                    // Ignore non-fatal network errors (timeouts, connection lost) that occur during background transitions
+                    if !isNonFatalNetworkError(error) {
+                        self.errorMessage = error.localizedDescription
+                    }
                     self.isLoading = false
                 }
             }

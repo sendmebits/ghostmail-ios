@@ -327,9 +327,10 @@ struct EmailListView: View {
         do {
             try await cloudflareClient.syncEmailRules(modelContext: modelContext)
         } catch {
-            // Treat user-initiated cancellations (URLError.cancelled / -999) as non-fatal
-            if isCancellationError(error) {
-                print("Refresh cancelled (ignored)")
+            // Treat user-initiated cancellations and timeouts as non-fatal
+            // Timeouts are common when returning from background as the network wakes up
+            if isNonFatalNetworkError(error) {
+                print("Refresh failed with non-fatal error (ignored): \(error.localizedDescription)")
             } else {
                 print("Error during refresh: \(error)")
                 self.error = error
@@ -341,10 +342,28 @@ struct EmailListView: View {
         isNetworking = false
         isInitialLoad = false
     }
-    private func isCancellationError(_ error: Error) -> Bool {
-        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+    
+    /// Determines if an error is non-fatal and shouldn't be shown to the user.
+    /// Includes cancellations and timeouts which commonly occur during background/foreground transitions.
+    private func isNonFatalNetworkError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cancelled, .timedOut, .networkConnectionLost, .notConnectedToInternet:
+                return true
+            default:
+                break
+            }
+        }
         let nsError = error as NSError
-        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorCancelled, NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost, NSURLErrorNotConnectedToInternet:
+                return true
+            default:
+                break
+            }
+        }
+        return false
     }
     
     private func showToastWithTimer(_ email: String) {
