@@ -350,16 +350,26 @@ struct ghostmailApp: App {
         lastUpdateCheck = now // Also reset background timer to avoid double-syncing
         isUpdating = true
         
-        do {
-            // Sync email rules - this runs in background and updates SwiftData
-            try await cloudflareClient.syncEmailRules(modelContext: modelContainer.mainContext)
-            
-            // Sync statistics if analytics are enabled
-            if showAnalytics {
-                await syncEmailStatisticsInBackground()
+        // Capture the model context before parallel execution to stay on main actor
+        let modelContext = modelContainer.mainContext
+        
+        // Run email rules and statistics sync in parallel for faster updates
+        await withTaskGroup(of: Void.self) { group in
+            // Task 1: Sync email rules (needs to run on main actor for model context)
+            group.addTask { @MainActor in
+                do {
+                    try await self.cloudflareClient.syncEmailRules(modelContext: modelContext)
+                } catch {
+                    print("Foreground sync email rules failed: \(error)")
+                }
             }
-        } catch {
-            print("Foreground sync failed: \(error)")
+            
+            // Task 2: Sync statistics (if enabled) - runs in parallel
+            if showAnalytics {
+                group.addTask {
+                    await self.syncEmailStatisticsInBackground()
+                }
+            }
         }
         
         isUpdating = false
@@ -419,35 +429,42 @@ struct ghostmailApp: App {
         isSyncingStatistics = true
         defer { isSyncingStatistics = false }
         
-        var allStats: [EmailStatistic] = []
-        
         // Load cached data for smart delta fetching
         let cachedData = StatisticsCache.shared.load()
         let cacheTimestamp = UserDefaults.standard.object(forKey: "EmailStatisticsCacheTimestamp") as? Date
         
-        // Fetch statistics for all zones with delta optimization
-        for zone in cloudflareClient.zones {
-            do {
-                let stats = try await cloudflareClient.fetchEmailStatistics(
-                    for: zone,
-                    cachedData: cachedData?.statistics,
-                    cacheTimestamp: cacheTimestamp,
-                    forceFull: false
-                )
-                allStats.append(contentsOf: stats)
-            } catch {
-                print("Background update: Failed to fetch statistics for zone \(zone.zoneId): \(error)")
-                // Continue with other zones even if one fails
+        // Fetch statistics for all zones in parallel for faster updates
+        let allStats = await withTaskGroup(of: [EmailStatistic].self) { group in
+            for zone in cloudflareClient.zones {
+                group.addTask {
+                    do {
+                        return try await self.cloudflareClient.fetchEmailStatistics(
+                            for: zone,
+                            cachedData: cachedData?.statistics,
+                            cacheTimestamp: cacheTimestamp,
+                            forceFull: false
+                        )
+                    } catch {
+                        print("Background update: Failed to fetch statistics for zone \(zone.zoneId): \(error)")
+                        return []
+                    }
+                }
             }
+            
+            var results: [EmailStatistic] = []
+            for await stats in group {
+                results.append(contentsOf: stats)
+            }
+            return results
         }
         
         // Deduplicate statistics before saving to cache
-        allStats = deduplicateStatistics(allStats)
+        let deduplicatedStats = deduplicateStatistics(allStats)
         
         // Update the cache with fresh statistics
-        if !allStats.isEmpty {
-            StatisticsCache.shared.save(allStats)
-            print("Background update: Statistics cache updated with \(allStats.count) email addresses")
+        if !deduplicatedStats.isEmpty {
+            StatisticsCache.shared.save(deduplicatedStats)
+            print("Background update: Statistics cache updated with \(deduplicatedStats.count) email addresses")
         } else {
             print("Background update: No statistics to cache")
         }

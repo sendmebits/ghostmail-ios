@@ -605,8 +605,9 @@ class CloudflareClient: ObservableObject {
         var tasks: [Task<[String: [EmailStatistic.EmailDetail]], Error>] = []
         
         // Smart delta fetch optimization:
-        // If we have recent cached data (< 24 hours old), only fetch today's data
-        // and merge with cached historical data. This reduces API calls from 7 to 1.
+        // If we have recent cached data (< 24 hours old), only fetch the last 24 hours.
+        // The merge logic will combine fresh data with cached historical data and deduplicate.
+        // Cloudflare's API has a 24-hour limit per query, so this is the optimal single-request delta.
         let daysToFetch: Int
         let useDeltaFetch: Bool
         
@@ -618,13 +619,17 @@ class CloudflareClient: ObservableObject {
             let cacheAgeHours = cacheAge / 3600
             
             if cacheAgeHours < 24 {
-                // Cache is fresh enough - only fetch today, yesterday, and day before for overlap safety
-                // This ensures we have full coverage at day boundaries
-                daysToFetch = 3
+                // Cache is fresh - only fetch the last 24 hours (single API call)
+                // The merge logic below will combine with cached data and deduplicate
+                daysToFetch = 1
                 useDeltaFetch = true
-                print("📊 Delta fetch: Cache is \(Int(cacheAgeHours))h old, fetching \(daysToFetch) days only")
+                if cacheAgeHours < 1 {
+                    print("📊 Delta fetch: Cache is \(Int(cacheAge / 60))m old, fetching last 24h only")
+                } else {
+                    print("📊 Delta fetch: Cache is \(Int(cacheAgeHours))h old, fetching last 24h only")
+                }
             } else {
-                // Cache is too old, do full fetch
+                // Cache is too old, do full 7-day fetch
                 daysToFetch = 7
                 useDeltaFetch = false
                 print("📊 Full fetch: Cache is \(Int(cacheAgeHours))h old")
