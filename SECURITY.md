@@ -1,6 +1,6 @@
 # Security Policy
 
-Ghost Mail is a free and open-source iOS app for managing email aliases for Cloudflare-hosted domains. [web:1]
+Ghost Mail is a free and open-source iOS app for managing email aliases for Cloudflare-hosted domains.
 
 ## Supported Versions
 
@@ -18,7 +18,7 @@ Security fixes are provided for the latest released version on the App Store/Tes
 Please **do not** open a public GitHub Issue for security-sensitive reports. Instead, report vulnerabilities privately.
 
 ### Preferred: GitHub private reporting
-Use GitHub’s “Report a vulnerability” feature (Security → Advisories) for this repository. This keeps discussion private while we triage and coordinate a fix. [page:1]
+Use GitHub’s “Report a vulnerability” feature (Security → Advisories) for this repository. This keeps discussion private while we triage and coordinate a fix.
 
 ### Alternate: Email
 If GitHub private reporting isn’t possible, email: **security@YOURDOMAIN** (or another dedicated address you control).
