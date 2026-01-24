@@ -267,19 +267,6 @@ struct DailyEmailsView: View {
                                     .foregroundStyle(isDropAlias ? .red : (isCatchAll ? .purple : .primary))
                                     .fixedSize(horizontal: true, vertical: false)
                                 
-                                // Plus-address tag badge
-                                if let plusTag = email.plusTag {
-                                    Text("+\(plusTag)")
-                                        .font(.system(.caption2, design: .rounded, weight: .semibold))
-                                        .foregroundStyle(.blue)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            Capsule()
-                                                .fill(Color.blue.opacity(0.15))
-                                        )
-                                }
-                                
                                 // Catch-all indicator badge
                                 if isCatchAll {
                                     Text("Catch-All")
@@ -297,7 +284,7 @@ struct DailyEmailsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     
-                    // Date/Time and Status line
+                    // Date/Time, Plus-tag, and Status line
                     HStack(spacing: 8) {
                         HStack(spacing: 4) {
                             Image(systemName: "clock.fill")
@@ -306,6 +293,19 @@ struct DailyEmailsView: View {
                             Text(formatTime(email.date))
                                 .font(.system(.caption, design: .rounded, weight: .medium))
                                 .foregroundStyle(.secondary)
+                        }
+                        
+                        // Plus-address tag badge (moved to metadata row for better visibility)
+                        if let plusTag = email.plusTag {
+                            Text("+\(plusTag)")
+                                .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.blue)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.blue.opacity(0.15))
+                                )
                         }
                         
                         // Status badge
