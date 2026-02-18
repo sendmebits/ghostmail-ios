@@ -1825,6 +1825,21 @@ class CloudflareClient: ObservableObject {
     
     @MainActor
     func syncEmailRules(modelContext: ModelContext) async throws {
+        // ──────────────────────────────────────────────────────────────────────
+        // STEP 0: Merge any iCloud-delivered duplicates BEFORE we build our map.
+        // This is critical because the other device may have created its own
+        // EmailAlias records (with metadata like notes/website). CloudKit syncs
+        // them as separate records (different persistent IDs). If we don't merge
+        // first, we'll build our map from the bare local record and miss the
+        // rich iCloud record, causing metadata to appear "lost".
+        // ──────────────────────────────────────────────────────────────────────
+        do {
+            let merged = try EmailAlias.deduplicate(in: modelContext)
+            if merged > 0 { print("Pre-sync deduplication merged \(merged) iCloud duplicates") }
+        } catch {
+            print("Pre-sync deduplication error: \(error)")
+        }
+        
         var cloudflareRules = try await getEmailRulesAllZones()
         
         // Handle potential duplicates in Cloudflare rules
@@ -1845,7 +1860,9 @@ class CloudflareClient: ObservableObject {
         )
         
         // Build dictionary for existing aliases across zones, including logged-out ones
-        // so we can reactivate instead of creating duplicates
+        // so we can reactivate instead of creating duplicates.
+        // After the dedupe above, each email should have at most one record with the
+        // richest metadata (notes, website, etc.) from any device.
         var existingAliasesMap: [String: EmailAlias] = [:]
         do {
             let descriptor = FetchDescriptor<EmailAlias>()
@@ -1873,14 +1890,12 @@ class CloudflareClient: ObservableObject {
         
         // Remove deleted aliases, but only those that belong to configured zones and are missing there
         let configuredZoneIds = Set(zones.map { $0.zoneId })
-        // We need to fetch all aliases again or use the map values to check for deletion
-        // Using a fresh fetch to be safe and iterate
         let descriptor = FetchDescriptor<EmailAlias>()
         if let allAliases = try? modelContext.fetch(descriptor) {
             for alias in allAliases {
                 // Only consider deleting if alias has a zoneId and belongs to a configured zone
                 guard !alias.zoneId.isEmpty, configuredZoneIds.contains(alias.zoneId) else { continue }
-                // If no matching rule exists for that email in the aggregated set AND the email does not exist under any zone, delete
+                // If no matching rule exists for that email in the aggregated set, delete
                 if cloudflareRulesByEmail[alias.emailAddress] == nil {
                     print("Deleting alias not found in any configured zones: \(alias.emailAddress) [zone: \(alias.zoneId)]")
                     modelContext.delete(alias)
@@ -1895,41 +1910,62 @@ class CloudflareClient: ObservableObject {
             let actionType = EmailRuleActionType(rawValue: rule.actionType) ?? .forward
             
             if let existing = existingAliasesMap[emailAddress] {
-                // Reactivate if it was logged out and update fields
+                // Update existing alias — preserves local-only metadata (notes, website, created)
+                // IMPORTANT: Only set properties that actually changed to avoid marking
+                // the SwiftData record as dirty. A dirty record triggers a full CloudKit
+                // export (including notes/website), which can overwrite metadata from
+                // the other device that hasn't been imported yet.
                 let newZoneId = rule.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
-                // Note: withAnimation is a View modifier, we shouldn't use it here in the logic layer.
-                // The View observing the data will animate changes if configured to do so.
-                existing.isLoggedOut = false
-                existing.cloudflareTag = rule.cloudflareTag
-                existing.isEnabled = rule.isEnabled
-                existing.forwardTo = forwardTo
-                existing.actionType = actionType
-                existing.sortIndex = index + 1
-                existing.zoneId = newZoneId
+                if existing.isLoggedOut { existing.isLoggedOut = false }
+                if existing.cloudflareTag != rule.cloudflareTag { existing.cloudflareTag = rule.cloudflareTag }
+                if existing.isEnabled != rule.isEnabled { existing.isEnabled = rule.isEnabled }
+                if existing.forwardTo != forwardTo { existing.forwardTo = forwardTo }
+                if existing.actionType != actionType { existing.actionType = actionType }
+                if existing.sortIndex != index + 1 { existing.sortIndex = index + 1 }
+                if existing.zoneId != newZoneId { existing.zoneId = newZoneId }
             } else {
-                // Create new alias with proper properties
-                let newAlias = EmailAlias(
-                    emailAddress: emailAddress,
-                    forwardTo: forwardTo,
-                    zoneId: rule.zoneId,
-                    actionType: actionType
-                )
-                newAlias.cloudflareTag = rule.cloudflareTag
-                newAlias.isEnabled = rule.isEnabled
-                newAlias.sortIndex = index + 1
-                
-                // Set the user identifier to ensure cross-device ownership
-                newAlias.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
-                
-                modelContext.insert(newAlias)
+                // Before creating a brand-new record, do a targeted re-fetch.
+                // CloudKit may have delivered an iCloud record for this email between
+                // our initial fetch and now. Adopting it avoids creating a bare duplicate
+                // that would overwrite the rich iCloud record in the UI.
+                let checkPredicate = #Predicate<EmailAlias> { $0.emailAddress == emailAddress }
+                let checkDescriptor = FetchDescriptor<EmailAlias>(predicate: checkPredicate)
+                if let arrivedFromICloud = try? modelContext.fetch(checkDescriptor).first {
+                    // Adopt the iCloud-delivered record — update Cloudflare fields, keep metadata
+                    // Only set changed properties to avoid dirtying the record needlessly
+                    // (see note above about preventing CloudKit metadata overwrite)
+                    print("Adopting iCloud-delivered record for: \(emailAddress)")
+                    let adoptZoneId = rule.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if arrivedFromICloud.isLoggedOut { arrivedFromICloud.isLoggedOut = false }
+                    if arrivedFromICloud.cloudflareTag != rule.cloudflareTag { arrivedFromICloud.cloudflareTag = rule.cloudflareTag }
+                    if arrivedFromICloud.isEnabled != rule.isEnabled { arrivedFromICloud.isEnabled = rule.isEnabled }
+                    if arrivedFromICloud.forwardTo != forwardTo { arrivedFromICloud.forwardTo = forwardTo }
+                    if arrivedFromICloud.actionType != actionType { arrivedFromICloud.actionType = actionType }
+                    if arrivedFromICloud.sortIndex != index + 1 { arrivedFromICloud.sortIndex = index + 1 }
+                    if arrivedFromICloud.zoneId != adoptZoneId { arrivedFromICloud.zoneId = adoptZoneId }
+                } else {
+                    // Truly new — no local or iCloud record exists
+                    let newAlias = EmailAlias(
+                        emailAddress: emailAddress,
+                        forwardTo: forwardTo,
+                        zoneId: rule.zoneId,
+                        actionType: actionType
+                    )
+                    newAlias.cloudflareTag = rule.cloudflareTag
+                    newAlias.isEnabled = rule.isEnabled
+                    newAlias.sortIndex = index + 1
+                    newAlias.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
+                    modelContext.insert(newAlias)
+                }
             }
         }
         
-        // Save once after all updates and run a quick dedup pass to merge any stragglers
+        // Save once after all updates
         try modelContext.save()
+        // Final dedup pass to merge any stragglers that arrived during the loop
         do {
             let removed = try EmailAlias.deduplicate(in: modelContext)
-            if removed > 0 { print("Deduplicated \(removed) aliases during refresh (post-reactivation)") }
+            if removed > 0 { print("Post-sync deduplication merged \(removed) aliases") }
         } catch {
             print("Deduplication error: \(error)")
         }

@@ -3,6 +3,8 @@ import SwiftUI
 
 extension Notification.Name {
     static let ghostmailOpenCreate = Notification.Name("GhostMailOpenCreate")
+    /// Post after syncEmailRules (e.g. from list refresh) so the app runs pullMetadataFromCloudKit.
+    static let requestCloudKitMetadataPull = Notification.Name("GhostMailRequestCloudKitMetadataPull")
 }
 
 // Bridge UIApplicationDelegate to SwiftUI App to handle Home Screen Quick Actions
@@ -17,7 +19,28 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             // Return false to prevent the system from calling performActionFor
             return false
         }
+        
+        // Register for remote notifications so CloudKit can push
+        // iCloud data changes between devices (notes, website, etc.)
+        application.registerForRemoteNotifications()
+        
         return true
+    }
+    
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        print("Registered for remote notifications (CloudKit sync)")
+    }
+    
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("Failed to register for remote notifications: \(error.localizedDescription)")
+    }
+    
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable : Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        // CloudKit sends silent push notifications when data changes on the server.
+        // SwiftData/Core Data's CloudKit integration handles the actual data merge
+        // automatically — we just need to acknowledge the notification.
+        print("Received remote notification (CloudKit sync)")
+        completionHandler(.newData)
     }
     
     func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {

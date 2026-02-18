@@ -20,9 +20,6 @@ Please **do not** open a public GitHub Issue for security-sensitive reports. Ins
 ### Preferred: GitHub private reporting
 Use GitHub’s “Report a vulnerability” feature (Security → Advisories) for this repository. This keeps discussion private while we triage and coordinate a fix.
 
-### Alternate: Email
-If GitHub private reporting isn’t possible, email: **security@YOURDOMAIN** (or another dedicated address you control).
-
 ### What to include
 - A clear description of the issue and potential impact (e.g., token exposure, unauthorized Cloudflare changes).
 - Steps to reproduce (proof-of-concept preferred).

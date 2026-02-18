@@ -326,6 +326,8 @@ struct EmailListView: View {
         
         do {
             try await cloudflareClient.syncEmailRules(modelContext: modelContext)
+            // So new aliases from other devices get metadata: ask app to pull from CloudKit
+            NotificationCenter.default.post(name: .requestCloudKitMetadataPull, object: nil)
         } catch {
             // Treat user-initiated cancellations and timeouts as non-fatal
             // Timeouts are common when returning from background as the network wakes up

@@ -41,7 +41,6 @@ struct ghostmailApp: App {
             syncEnabled = true
             UserDefaults.standard.set(true, forKey: "iCloudSyncEnabled")
         }
-        print("iCloud sync setting: \(syncEnabled ? "enabled" : "disabled")")
         
         // Create a unique user identifier if it doesn't exist yet
         if UserDefaults.standard.string(forKey: "userIdentifier")?.isEmpty ?? true {
@@ -59,29 +58,33 @@ struct ghostmailApp: App {
                     schema: schema, 
                     cloudKitDatabase: .automatic
                 )
-                print("Initialized with CloudKit configuration and explicit schema")
             } else {
-                // Local-only configuration
                 config = ModelConfiguration(isStoredInMemoryOnly: false)
-                print("Initialized with local-only configuration")
             }
             
             // Initialize the ModelContainer with the correct class and configuration
             modelContainer = try ModelContainer(for: EmailAlias.self, configurations: config)
             
-            // After initializing modelContainer, we can now use self safely
-            
-            // Log CloudKit container setup
-            if syncEnabled {
-                print("Setting up CloudKit with container: iCloud.com.sendmebits.ghostmail")
-            } else {
-                print("CloudKit sync is disabled, using local storage only")
-            }
-            
             // Set up observers only if sync is enabled
             if syncEnabled {
-                // CloudKit sync is handled automatically by SwiftData
-                print("CloudKit sync enabled - SwiftData will handle sync automatically")
+                let container = modelContainer
+                // When iCloud pushes changes, debounce and run dedup, then pull metadata.
+                var remoteChangeTask: Task<Void, Never>?
+                NotificationCenter.default.addObserver(
+                    forName: Notification.Name("NSPersistentStoreRemoteChangeNotification"),
+                    object: nil,
+                    queue: .main
+                ) { _ in
+                    remoteChangeTask?.cancel()
+                    remoteChangeTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        guard !Task.isCancelled else { return }
+                        do {
+                            _ = try EmailAlias.deduplicate(in: container.mainContext)
+                        } catch { }
+                        NotificationCenter.default.post(name: .requestCloudKitMetadataPull, object: nil)
+                    }
+                }
             }
         } catch {
             print("Failed to initialize ModelContainer: \(error)")
@@ -89,12 +92,10 @@ struct ghostmailApp: App {
         }
     }
     
-    // Function to ensure all aliases have a user identifier - optimized for background execution
-    private static func updateUserIdentifiers(modelContainer: ModelContainer) async {
+    /// Ensures all aliases have a user identifier so CloudKit can sync them.
+    /// Uses the provided context (prefer mainContext so UI and iCloud stay in sync).
+    private static func updateUserIdentifiers(modelContext: ModelContext) async {
         let userId = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
-        
-        // Create a background context
-        let context = ModelContext(modelContainer)
         
         do {
             let descriptor = FetchDescriptor<EmailAlias>(
@@ -102,85 +103,93 @@ struct ghostmailApp: App {
                     alias.userIdentifier.isEmpty
                 }
             )
-            let aliasesNeedingUpdate = try context.fetch(descriptor)
+            let aliasesNeedingUpdate = try modelContext.fetch(descriptor)
             
             if !aliasesNeedingUpdate.isEmpty {
                 for alias in aliasesNeedingUpdate {
                     alias.userIdentifier = userId
                 }
-                try context.save()
-                print("Updated user identifiers for \(aliasesNeedingUpdate.count) aliases (background)")
+                try modelContext.save()
             }
-        } catch {
-            print("Error updating user identifiers: \(error)")
-        }
+        } catch { }
     }
     
-    // Function to force sync of existing data to CloudKit - optimized for background execution
-    private static func forceSyncExistingData(modelContainer: ModelContainer) async {
-        print("Checking for data that needs CloudKit sync (background)...")
-        // Create a background context
-        let context = ModelContext(modelContainer)
-        
-        do {
-            // Only sync aliases that don't have a user identifier or have recent changes
-            let descriptor = FetchDescriptor<EmailAlias>(
-                predicate: #Predicate<EmailAlias> { alias in
-                    alias.userIdentifier.isEmpty
-                }
-            )
-            let aliasesNeedingSync = try context.fetch(descriptor)
-            
-            if !aliasesNeedingSync.isEmpty {
-                print("Found \(aliasesNeedingSync.count) aliases needing sync")
-                
-                // Update user identifier if empty
-                for alias in aliasesNeedingSync {
-                    if alias.userIdentifier.isEmpty {
-                        alias.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
-                    }
-                }
-                
-                // Save the context to trigger CloudKit sync
-                try context.save()
-                print("Successfully saved context, triggering CloudKit sync for \(aliasesNeedingSync.count) aliases")
-            } else {
-                print("No aliases need CloudKit sync")
-            }
-            
-        } catch {
-            print("Error syncing existing data: \(error)")
-        }
-    }
-    
-    // Function to check CloudKit sync status - now asynchronous and non-blocking
+    /// Pulls metadata (notes, website, created) from CloudKit and applies it to
+    /// local SwiftData aliases that are missing that metadata.
+    /// Called at startup AND after every Cloudflare sync so newly-arrived aliases
+    /// pick up metadata from the other device.
     @MainActor
-    private func checkCloudKitSyncStatus() async {
-        print("Checking CloudKit sync status...")
+    private func pullMetadataFromCloudKit() async {
         let cloudContainer = CKContainer.default()
         do {
             let status = try await cloudContainer.accountStatus()
-            print("CloudKit account status: \(status)")
+            guard status == .available else { return }
             
-            // Only perform detailed checks if account is available
-            if status == .available {
-                // Check if we can access the private database
-                let database = cloudContainer.privateCloudDatabase
-                do {
-                    let zones = try await database.allRecordZones()
-                    print("Found \(zones.count) CloudKit record zones")
-                } catch {
-                    print("Error checking CloudKit database: \(error)")
+            let database = cloudContainer.privateCloudDatabase
+            let zones = try await database.allRecordZones()
+            var cloudMetadata: [String: (notes: String, website: String, created: Date?)] = [:]
+            
+            for zone in zones {
+                var cursor: CKQueryOperation.Cursor? = nil
+                repeat {
+                    let results: [(CKRecord.ID, Result<CKRecord, Error>)]
+                    let nextCursor: CKQueryOperation.Cursor?
+                    if let existingCursor = cursor {
+                        (results, nextCursor) = try await database.records(continuingMatchFrom: existingCursor, resultsLimit: 200)
+                    } else {
+                        let query = CKQuery(recordType: "CD_EmailAlias", predicate: NSPredicate(value: true))
+                        (results, nextCursor) = try await database.records(matching: query, inZoneWith: zone.zoneID, resultsLimit: 200)
+                    }
+                    cursor = nextCursor
+                    let records = results.compactMap { try? $0.1.get() }
+                    for record in records {
+                        let email = (record["CD_emailAddress"] as? String ?? "").lowercased()
+                        guard !email.isEmpty else { continue }
+                        let notes = record["CD_notes"] as? String ?? ""
+                        let website = record["CD_website"] as? String ?? ""
+                        let created = record["CD_created"] as? Date
+                        if let existing = cloudMetadata[email] {
+                            let existingRichness = (existing.notes.isEmpty ? 0 : 1) + (existing.website.isEmpty ? 0 : 1)
+                            let newRichness = (notes.isEmpty ? 0 : 1) + (website.isEmpty ? 0 : 1)
+                            if newRichness > existingRichness {
+                                cloudMetadata[email] = (notes: notes, website: website, created: created)
+                            }
+                        } else {
+                            cloudMetadata[email] = (notes: notes, website: website, created: created)
+                        }
+                    }
+                } while cursor != nil
+            }
+            
+            let withMetadata = cloudMetadata.filter { !$0.value.notes.isEmpty || !$0.value.website.isEmpty }
+            guard !withMetadata.isEmpty else { return }
+            
+            let descriptor = FetchDescriptor<EmailAlias>()
+            let localAliases = try modelContainer.mainContext.fetch(descriptor)
+            var updated = 0
+            for alias in localAliases {
+                let key = alias.emailAddress.lowercased()
+                guard let meta = cloudMetadata[key] else { continue }
+                var changed = false
+                if alias.notes.isEmpty && !meta.notes.isEmpty {
+                    alias.notes = meta.notes
+                    changed = true
                 }
-            } else if status == .noAccount {
-                print("CloudKit account not signed in. Please sign in to iCloud.")
-            } else if status == .restricted {
-                print("CloudKit account restricted. Please check settings.")
-            } else if status == .temporarilyUnavailable {
-                print("CloudKit account temporarily unavailable. Please try again later.")
+                if alias.website.isEmpty && !meta.website.isEmpty {
+                    alias.website = meta.website
+                    changed = true
+                }
+                if alias.created == nil, let created = meta.created {
+                    alias.created = created
+                    changed = true
+                }
+                if changed { updated += 1 }
+            }
+            if updated > 0 {
+                try modelContainer.mainContext.save()
             }
         } catch {
-            print("Error checking CloudKit status: \(error)")
+            // CloudKit unavailable or transient error; no need to log
         }
     }
     
@@ -189,6 +198,14 @@ struct ghostmailApp: App {
             ContentView()
                 .environmentObject(cloudflareClient)
                 .environmentObject(deepLinkRouter)
+                .onReceive(NotificationCenter.default.publisher(for: .requestCloudKitMetadataPull)) { _ in
+                    Task { @MainActor in
+                        guard iCloudSyncEnabled else { return }
+                        await pullMetadataFromCloudKit()
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                        await pullMetadataFromCloudKit()
+                    }
+                }
                 .task {
                     // Perform startup operations asynchronously to avoid blocking UI
                     // If app was launched via Create Alias quick action, route to create view now
@@ -262,21 +279,22 @@ struct ghostmailApp: App {
                         }
                     }
                     
-                    // Update user identifiers and trigger sync on app launch - now non-blocking
+                    // iCloud: allow CloudKit a moment to push remote changes before we dedupe/sync
                     if iCloudSyncEnabled {
-                        // First, clean up any duplicate records so sync doesn't propagate dups
+                        // Brief delay so other devices' changes can land before we dedupe (reduces races)
+                        try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5 seconds
                         do {
                             let deleted = try EmailAlias.deduplicate(in: modelContainer.mainContext)
                             if deleted > 0 { print("Deduplicated \(deleted) aliases on startup") }
                         } catch {
                             print("Error during startup deduplication: \(error)")
                         }
-
-                        Task.detached(priority: .utility) {
-                            await ghostmailApp.updateUserIdentifiers(modelContainer: modelContainer)
-                            await ghostmailApp.forceSyncExistingData(modelContainer: modelContainer)
-                        }
-                        await checkCloudKitSyncStatus()
+                        await ghostmailApp.updateUserIdentifiers(modelContext: modelContainer.mainContext)
+                        await pullMetadataFromCloudKit()
+                        
+                        // Pull metadata from CloudKit so local aliases get notes/website
+                        // from the other device if they arrived during startup.
+                        await pullMetadataFromCloudKit()
                     }
                 }
                 .onOpenURL { url in
@@ -293,6 +311,18 @@ struct ghostmailApp: App {
         .modelContainer(modelContainer)
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .active {
+                // Let iCloud settle then merge duplicates so UI shows latest from other devices
+                if iCloudSyncEnabled {
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 s
+                        do {
+                            let deleted = try EmailAlias.deduplicate(in: modelContainer.mainContext)
+                            if deleted > 0 { print("Deduplicated \(deleted) aliases after foreground (iCloud)") }
+                        } catch {
+                            print("Foreground deduplication error: \(error)")
+                        }
+                    }
+                }
                 // Trigger immediate foreground sync for snappy data updates
                 Task {
                     await performForegroundSyncIfNeeded()
@@ -317,7 +347,7 @@ struct ghostmailApp: App {
     
     private func startUpdateTimer() {
         stopUpdateTimer()
-        // Check every minute
+        // Fire every 60s; performBackgroundUpdateIfNeeded only runs when updateInterval (120s) has elapsed
         updateTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
             Task {
                 await performBackgroundUpdateIfNeeded()
@@ -373,6 +403,13 @@ struct ghostmailApp: App {
         }
         
         isUpdating = false
+        
+        // After Cloudflare sync, pull metadata from CloudKit for any newly-arrived aliases.
+        // Cloudflare creates bare records (no notes/website); CloudKit has the metadata
+        // from the other device. This bridges the gap.
+        if iCloudSyncEnabled {
+            await pullMetadataFromCloudKit()
+        }
     }
     
     // MARK: - Background Polling (Timer-based)
@@ -386,6 +423,17 @@ struct ghostmailApp: App {
         let now = Date()
         let timeSinceLastUpdate = now.timeIntervalSince(lastUpdateCheck)
         
+        // Always run a quick dedupe pass on the timer — iCloud may have delivered
+        // records from the other device since the last check
+        if iCloudSyncEnabled {
+            do {
+                let merged = try EmailAlias.deduplicate(in: modelContainer.mainContext)
+                if merged > 0 { print("Background timer dedup merged \(merged) iCloud records") }
+            } catch {
+                print("Background timer dedup error: \(error)")
+            }
+        }
+        
         if timeSinceLastUpdate >= updateInterval {
             // Set flags immediately to prevent race conditions
             isUpdating = true
@@ -394,6 +442,11 @@ struct ghostmailApp: App {
             do {
                 // Sync email rules from Cloudflare
                 try await cloudflareClient.syncEmailRules(modelContext: modelContainer.mainContext)
+                
+                // Pull metadata from CloudKit for newly-arrived aliases
+                if iCloudSyncEnabled {
+                    await pullMetadataFromCloudKit()
+                }
                 
                 // Also sync statistics if analytics are enabled
                 if showAnalytics {

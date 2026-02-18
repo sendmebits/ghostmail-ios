@@ -794,7 +794,6 @@ struct EmailDetailView: View {
 
             // Save to SwiftData
             try modelContext.save()
-            print("Successfully saved to SwiftData, triggering CloudKit sync")
             
             // Update Cloudflare with email-related changes, enabled state, and action type
             if let tag = email.cloudflareTag {
