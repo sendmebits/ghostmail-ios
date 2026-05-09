@@ -22,6 +22,8 @@ struct EmailListView: View {
     @State private var showingCreateSheet = false
     @State private var showingComposeSheet = false
     @State private var showingSettings = false
+    @State private var showingSMTPSettings = false
+    @State private var showSMTPSetupAlert = false
     @State private var isLoading = false
     @State private var isInitialLoad = true
     @State private var isNetworking = false
@@ -814,7 +816,7 @@ struct EmailListView: View {
                     Spacer()
                     Menu {
                         Button {
-                            showingComposeSheet = true
+                            openComposeIfSMTPConfigured()
                         } label: {
                             Label("Send Mail", systemImage: "paperplane")
                         }
@@ -943,6 +945,9 @@ struct EmailListView: View {
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
             }
+            .sheet(isPresented: $showingSMTPSettings) {
+                SMTPSettingsView()
+            }
             .sheet(isPresented: $showFilterSheet) {
                 FilterSheetView(
                     pendingDestinationFilter: $pendingDestinationFilter,
@@ -968,6 +973,14 @@ struct EmailListView: View {
                 Button("OK", role: .cancel) { }
             } message: { error in
                 Text(error.localizedDescription)
+            }
+            .alert("SMTP Server Required", isPresented: $showSMTPSetupAlert) {
+                Button("Settings") {
+                    showingSMTPSettings = true
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Configure SMTP email sending in Settings before sending mail.")
             }
             .task {
                 await initialLoad()
@@ -1005,6 +1018,15 @@ struct EmailListView: View {
             fromEmail: defaultEmail,
             availableEmails: enabledAliases
         )
+    }
+    
+    private func openComposeIfSMTPConfigured() {
+        guard SMTPService.shared.loadSettings()?.isValid == true else {
+            showSMTPSetupAlert = true
+            return
+        }
+        
+        showingComposeSheet = true
     }
     
     private func initialLoad() async {
