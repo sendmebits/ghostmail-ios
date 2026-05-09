@@ -906,14 +906,19 @@ struct EmailListView: View {
             )
     }
     
-    @ViewBuilder
-    private var bodyContent: some View {
+    /// Split from `bodyContent` so the compiler can type-check the main list chrome separately from lifecycle modifiers.
+    private var contentWithNavigationChrome: some View {
         content
             .background(Color(.systemBackground).ignoresSafeArea())
             .preferredColorScheme(themeColorScheme)
             .toolbar { mainToolbar }
             .navigationTitle("\(sortedEmails.count) Email Alias\(sortedEmails.count == 1 ? "" : "es")")
             .searchable(text: $searchText, prompt: "Search emails or websites")
+    }
+
+    @ViewBuilder
+    private var bodyContent: some View {
+        contentWithNavigationChrome
             .onChange(of: sortOrder) { _, newValue in
                 persistSortOrder(newValue)
             }
