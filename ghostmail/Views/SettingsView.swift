@@ -322,8 +322,6 @@ struct SettingsView: View {
         exit(0)
     }
     
-    // (Removed debug/testing helper functions related to CloudKit testing and diagnostics)
-    
     private func disableICloudSync() {
         // Update app storage setting
         iCloudSyncEnabled = false
@@ -452,25 +450,6 @@ struct SettingsView: View {
         }
     }
     
-    
-    // Computed view for complex settings section to help type-checking
-    private var settingsSection: some View {
-        SettingsSectionView(
-            defaultZoneId: $defaultZoneId,
-            defaultDomain: $defaultDomain,
-            selectedDefaultAddress: $selectedDefaultAddress,
-            showWebsites: $showWebsites,
-            showWebsiteLogo: $showWebsiteLogo,
-            iCloudSyncEnabled: $iCloudSyncEnabled,
-            showAnalytics: $showAnalytics,
-            isLoading: isLoading,
-            showDeleteICloudDataConfirmation: $showDeleteICloudDataConfirmation,
-            sortedForwardingAddresses: sortedForwardingAddresses,
-            toggleICloudSync: toggleICloudSync
-        )
-    }
-    
-    // (Removed debug/testing helper functions related to CloudKit testing and diagnostics)
     
     // Isolate the complex List subtree to help the type-checker
     private var listContent: AnyView {
@@ -700,10 +679,6 @@ struct CSVDocument: FileDocument {
         try FileWrapper(url: url, options: .immediate)
     }
 }
-
-// Duplicate ZoneCard removed
-
-// ZoneCard removed; using native Section groupings
 
 // A compact subview to isolate the complex List tree and help the type-checker
 private struct SettingsListContentView: View {

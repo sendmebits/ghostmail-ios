@@ -8,7 +8,6 @@
 import SwiftUI
 import SwiftData
 import CloudKit
-import Combine
 
 @main
 struct ghostmailApp: App {

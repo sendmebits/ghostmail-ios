@@ -97,14 +97,6 @@ struct EmailComposeView: View {
         }
     }
     
-    private var filteredFromEmails: [String] {
-        if searchText.isEmpty {
-            return availableEmails
-        } else {
-            return availableEmails.filter { $0.localizedCaseInsensitiveContains(searchText) }
-        }
-    }
-    
     private var isFormValid: Bool {
         !to.isEmpty && !subject.isEmpty && !bodyText.isEmpty
     }

@@ -38,10 +38,6 @@ struct EmailCreateView: View {
         }
     }
 
-    private var hasMultipleZones: Bool {
-        cloudflareClient.zones.count > 1
-    }
-
     private var selectedZone: CloudflareClient.CloudflareZone? {
         cloudflareClient.zones.first(where: { $0.zoneId == selectedZoneId })
     }
