@@ -4,6 +4,12 @@
 .vscode/
 .build/
 .cursor/
+.env
+
+# Secrets / signing (never commit)
+AuthKey_*.p8
+*.p12
+*.mobileprovision
 
 # Xcode
 build/
@@ -16,7 +22,6 @@ xcuserdata/
 .swiftpm/xcode/xcuserdata/
 *.xcworkspace/
 
-
 # Common iOS/Swift
 *.swp
 *.moved-aside
@@ -27,4 +32,3 @@ playground.xcworkspace
 *.dSYM.zip
 *.dSYM
 .swiftpm/
-
