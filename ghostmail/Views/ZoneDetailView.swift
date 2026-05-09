@@ -5,14 +5,10 @@ import SwiftData
 struct ZoneDetailView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var modelContext
     @Query(sort: \EmailAlias.emailAddress) private var emailAliases: [EmailAlias]
     
     let zone: CloudflareClient.CloudflareZone
-    @Binding var zoneToRemove: CloudflareClient.CloudflareZone?
-    @Binding var showRemoveZoneAlert: Bool
-    @Binding var zoneToEditToken: CloudflareClient.CloudflareZone?
-    @Binding var zoneToAddToken: CloudflareClient.CloudflareZone?
+    let removeZone: (CloudflareClient.CloudflareZone) -> Void
     
     // Catch-All state
     @State private var catchAllStatus: CatchAllStatus?
@@ -25,6 +21,11 @@ struct ZoneDetailView: View {
     // Subdomain state
     @State private var showSubdomainError = false
     @State private var subdomainErrorMessage = ""
+
+    // Zone actions
+    @State private var showRemoveZoneAlert = false
+    @State private var showAddTokenSheet = false
+    @State private var showEditTokenSheet = false
     
     private var domainName: String {
         zone.domainName.isEmpty ? zone.zoneId : zone.domainName
@@ -62,7 +63,7 @@ struct ZoneDetailView: View {
                     .padding(.vertical, 8)
                     
                     Button {
-                        zoneToAddToken = zone
+                        showAddTokenSheet = true
                     } label: {
                         Label("Add API Token", systemImage: "key.fill")
                     }
@@ -179,13 +180,13 @@ struct ZoneDetailView: View {
             Section("API Token") {
                 if isMissingToken {
                     Button {
-                        zoneToAddToken = zone
+                        showAddTokenSheet = true
                     } label: {
                         Label("Add API Token", systemImage: "key.fill")
                     }
                 } else {
                     Button {
-                        zoneToEditToken = zone
+                        showEditTokenSheet = true
                     } label: {
                         Label("Edit API Token", systemImage: "key.fill")
                     }
@@ -195,7 +196,6 @@ struct ZoneDetailView: View {
             // Danger Zone
             Section {
                 Button(role: .destructive) {
-                    zoneToRemove = zone
                     showRemoveZoneAlert = true
                 } label: {
                     Label("Remove This Zone", systemImage: "trash")
@@ -223,6 +223,15 @@ struct ZoneDetailView: View {
         } message: {
             Text(catchAllErrorMessage)
         }
+        .alert("Remove Zone?", isPresented: $showRemoveZoneAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Remove", role: .destructive) {
+                removeZone(zone)
+                dismiss()
+            }
+        } message: {
+            Text("This will remove \(domainName) from this device. Your Cloudflare configuration and iCloud data will remain intact.")
+        }
         .confirmationDialog("Enable Catch-All", isPresented: $showCatchAllOptions, titleVisibility: .visible) {
             Button("Drop (Discard Emails)") {
                 Task { await updateCatchAll(enabled: true, action: "drop") }
@@ -233,6 +242,12 @@ struct ZoneDetailView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("Choose what happens to emails sent to addresses that don't have a routing rule.")
+        }
+        .sheet(isPresented: $showAddTokenSheet) {
+            AddZoneTokenSheet(zone: zone)
+        }
+        .sheet(isPresented: $showEditTokenSheet) {
+            EditZoneTokenSheet(zone: zone)
         }
     }
     

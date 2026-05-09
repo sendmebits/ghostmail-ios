@@ -30,11 +30,7 @@ struct SettingsView: View {
     @State private var showAddZoneSheet = false
     @AppStorage("defaultZoneId") private var defaultZoneId: String = ""
     @AppStorage("defaultDomain") private var defaultDomain: String = ""
-    @State private var zoneToRemove: CloudflareClient.CloudflareZone? = nil
-    @State private var showRemoveZoneAlert: Bool = false
     @AppStorage("showAnalytics") private var showAnalytics: Bool = false
-    @State private var zoneToEditToken: CloudflareClient.CloudflareZone? = nil
-    @State private var zoneToAddToken: CloudflareClient.CloudflareZone? = nil
     
     init() {
         // Initialize selectedDefaultAddress with the current saved value
@@ -95,6 +91,28 @@ struct SettingsView: View {
     
     private func showCSVImporter() {
         showFileImporter = true
+    }
+
+    private func removeZone(_ zone: CloudflareClient.CloudflareZone) {
+        let targetZoneId = zone.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
+        for alias in emailAliases where alias.zoneId == targetZoneId {
+            alias.isLoggedOut = true
+        }
+        try? modelContext.save()
+        cloudflareClient.removeZone(zoneId: targetZoneId)
+        if defaultZoneId == targetZoneId {
+            defaultZoneId = cloudflareClient.zoneId
+        }
+
+        // Clear domain filter if it was filtering on a domain from the removed zone.
+        let ud = UserDefaults.standard
+        if let filterDomain = ud.string(forKey: "EmailListView.domainFilterDomain") {
+            if zone.domainName.lowercased() == filterDomain.lowercased() ||
+               zone.subdomains.contains(where: { $0.lowercased() == filterDomain.lowercased() }) {
+                ud.set("all", forKey: "EmailListView.domainFilterType")
+                ud.removeObject(forKey: "EmailListView.domainFilterDomain")
+            }
+        }
     }
     
     private func importFromCSV(url: URL) {
@@ -460,11 +478,7 @@ struct SettingsView: View {
         SettingsListContentView(
             additionalZones: additionalZones,
             primaryEntryCount: entryCount(for: primaryZoneId),
-            zoneToRemove: $zoneToRemove,
-            showRemoveZoneAlert: $showRemoveZoneAlert,
             showAddZoneSheet: $showAddZoneSheet,
-            zoneToEditToken: $zoneToEditToken,
-            zoneToAddToken: $zoneToAddToken,
             defaultZoneId: $defaultZoneId,
             defaultDomain: $defaultDomain,
             selectedDefaultAddress: $selectedDefaultAddress,
@@ -479,6 +493,7 @@ struct SettingsView: View {
             exportToCSV: { () -> Void in exportToCSV() },
             showCSVImporter: { () -> Void in showCSVImporter() },
             logout: { () -> Void in showLogoutAlert = true },
+            removeZone: { (zone: CloudflareClient.CloudflareZone) -> Void in removeZone(zone) },
             entryCount: { (zoneId: String) -> Int in entryCount(for: zoneId) }
         ))
     }
@@ -535,32 +550,6 @@ struct SettingsView: View {
                     }
                 } message: {
                     Text("This will clear all local data and you'll need to sign in again.")
-                }
-                .alert("Remove Zone?", isPresented: $showRemoveZoneAlert) {
-                    Button("Cancel", role: .cancel) { zoneToRemove = nil }
-                    Button("Remove", role: .destructive) {
-                        guard let z = zoneToRemove else { return }
-                        let targetZoneId = z.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
-                        for alias in emailAliases where alias.zoneId == targetZoneId { alias.isLoggedOut = true }
-                        try? modelContext.save()
-                        cloudflareClient.removeZone(zoneId: targetZoneId)
-                        if defaultZoneId == targetZoneId { defaultZoneId = cloudflareClient.zoneId }
-                        
-                        // Clear domain filter if it was filtering on a domain from the removed zone
-                        let ud = UserDefaults.standard
-                        if let filterDomain = ud.string(forKey: "EmailListView.domainFilterDomain") {
-                            // Check if the filtered domain belongs to the removed zone
-                            if z.domainName.lowercased() == filterDomain.lowercased() || 
-                               z.subdomains.contains(where: { $0.lowercased() == filterDomain.lowercased() }) {
-                                ud.set("all", forKey: "EmailListView.domainFilterType")
-                                ud.removeObject(forKey: "EmailListView.domainFilterDomain")
-                            }
-                        }
-                        zoneToRemove = nil
-                    }
-                } message: {
-                    let name = zoneToRemove?.domainName.isEmpty == false ? zoneToRemove!.domainName : (zoneToRemove?.zoneId ?? "this zone")
-                    Text("This will remove \(name) from this device. Your Cloudflare configuration and iCloud data will remain intact.")
                 }
                 .alert("Import Error", isPresented: $showImportError, presenting: importError) { _ in
                     Button("OK", role: .cancel) { }
@@ -639,12 +628,6 @@ struct SettingsView: View {
                                 }
                             }
                     }
-                }
-                .sheet(item: $zoneToEditToken) { zone in
-                    EditZoneTokenSheet(zone: zone)
-                }
-                .sheet(item: $zoneToAddToken) { zone in
-                    AddZoneTokenSheet(zone: zone)
                 }
         )
     }
@@ -728,11 +711,7 @@ private struct SettingsListContentView: View {
 
     let additionalZones: [CloudflareClient.CloudflareZone]
     let primaryEntryCount: Int
-    @Binding var zoneToRemove: CloudflareClient.CloudflareZone?
-    @Binding var showRemoveZoneAlert: Bool
     @Binding var showAddZoneSheet: Bool
-    @Binding var zoneToEditToken: CloudflareClient.CloudflareZone?
-    @Binding var zoneToAddToken: CloudflareClient.CloudflareZone?
 
     // Settings section bindings/props
     @Binding var defaultZoneId: String
@@ -751,6 +730,7 @@ private struct SettingsListContentView: View {
     let exportToCSV: () -> Void
     let showCSVImporter: () -> Void
     let logout: () -> Void
+    let removeZone: (CloudflareClient.CloudflareZone) -> Void
 
     // Utilities
     let entryCount: (String) -> Int
@@ -769,11 +749,8 @@ private struct SettingsListContentView: View {
             
             // New unified domain list section
             DomainListSectionView(
-                zoneToRemove: $zoneToRemove,
-                showRemoveZoneAlert: $showRemoveZoneAlert,
-                zoneToEditToken: $zoneToEditToken,
-                zoneToAddToken: $zoneToAddToken,
                 showAddZoneSheet: $showAddZoneSheet,
+                removeZone: removeZone,
                 entryCount: entryCount
             )
 
@@ -968,11 +945,8 @@ private struct DomainListSectionView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Query(sort: \EmailAlias.emailAddress) private var emailAliases: [EmailAlias]
     
-    @Binding var zoneToRemove: CloudflareClient.CloudflareZone?
-    @Binding var showRemoveZoneAlert: Bool
-    @Binding var zoneToEditToken: CloudflareClient.CloudflareZone?
-    @Binding var zoneToAddToken: CloudflareClient.CloudflareZone?
     @Binding var showAddZoneSheet: Bool
+    let removeZone: (CloudflareClient.CloudflareZone) -> Void
     let entryCount: (String) -> Int
     
     private func domainName(for zone: CloudflareClient.CloudflareZone) -> String {
@@ -993,10 +967,7 @@ private struct DomainListSectionView: View {
                 NavigationLink {
                     ZoneDetailView(
                         zone: zone,
-                        zoneToRemove: $zoneToRemove,
-                        showRemoveZoneAlert: $showRemoveZoneAlert,
-                        zoneToEditToken: $zoneToEditToken,
-                        zoneToAddToken: $zoneToAddToken
+                        removeZone: removeZone
                     )
                 } label: {
                     HStack {
@@ -1439,272 +1410,3 @@ private struct StatisticsSectionView: View {
     }
 }
 
-/// Sheet for adding an API token to a zone that's missing one (e.g., after iCloud restore)
-private struct AddZoneTokenSheet: View {
-    @EnvironmentObject private var cloudflareClient: CloudflareClient
-    let zone: CloudflareClient.CloudflareZone
-    
-    @State private var apiToken = ""
-    @State private var isLoading = false
-    @State private var errorMessage = ""
-    @State private var showError = false
-    @Environment(\.dismiss) private var dismiss
-    
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Add API Token")
-                            .font(.system(.headline, design: .rounded))
-                        Text("Enter the Cloudflare API token for this zone to enable syncing.")
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
-                }
-                
-                Section {
-                    HStack {
-                        Text("Domain")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text(zone.domainName.isEmpty ? "Unknown" : zone.domainName)
-                            .font(.system(.body, design: .rounded))
-                    }
-                    
-                    HStack {
-                        Text("Zone ID")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text("\(zone.zoneId.prefix(6))...\(zone.zoneId.suffix(4))")
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                
-                Section {
-                    SecureField("API Token", text: $apiToken)
-                        .textContentType(.password)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                } footer: {
-                    Text("Create a token in Cloudflare with Email Routing permissions")
-                        .font(.system(.caption, design: .rounded))
-                }
-                
-                Section {
-                    Button {
-                        saveToken()
-                    } label: {
-                        HStack {
-                            Spacer()
-                            if isLoading {
-                                ProgressView()
-                            } else {
-                                Text("Save Token")
-                                    .font(.system(.body, design: .rounded, weight: .semibold))
-                            }
-                            Spacer()
-                        }
-                    }
-                    .disabled(apiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isLoading)
-                }
-            }
-            .navigationTitle(zone.domainName.isEmpty ? "Add Token" : zone.domainName)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-            }
-            .alert("Error", isPresented: $showError) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(errorMessage)
-            }
-        }
-    }
-    
-    private func saveToken() {
-        isLoading = true
-        
-        Task {
-            do {
-                try await cloudflareClient.updateZoneToken(
-                    zoneId: zone.zoneId,
-                    apiToken: apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
-                )
-                
-                // Check and auto-enable analytics if this zone's API has permission
-                await cloudflareClient.checkAndEnableAnalyticsIfPermitted()
-                
-                await MainActor.run {
-                    isLoading = false
-                    dismiss()
-                }
-            } catch {
-                await MainActor.run {
-                    isLoading = false
-                    errorMessage = error.localizedDescription
-                    showError = true
-                }
-            }
-        }
-    }
-}
-
-/// Sheet for editing an existing API token for a zone
-private struct EditZoneTokenSheet: View {
-    @EnvironmentObject private var cloudflareClient: CloudflareClient
-    let zone: CloudflareClient.CloudflareZone
-    
-    @State private var apiToken = ""
-    @State private var isLoading = false
-    @State private var errorMessage = ""
-    @State private var showError = false
-    @State private var showSuccessToast = false
-    @Environment(\.dismiss) private var dismiss
-    
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "key.fill")
-                                .foregroundStyle(Color.accentColor)
-                            Text("Update API Token")
-                                .font(.system(.headline, design: .rounded))
-                        }
-                        Text("Enter a new Cloudflare API token for this zone. The previous token will be replaced.")
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
-                }
-                
-                Section {
-                    HStack {
-                        Text("Domain")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text(zone.domainName.isEmpty ? "Unknown" : zone.domainName)
-                            .font(.system(.body, design: .rounded))
-                    }
-                    
-                    HStack {
-                        Text("Zone ID")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text("\(zone.zoneId.prefix(6))...\(zone.zoneId.suffix(4))")
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text("Zone Info")
-                }
-                
-                Section {
-                    SecureField("New API Token", text: $apiToken)
-                        .textContentType(.password)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                } header: {
-                    Text("New Token")
-                } footer: {
-                    Text("Create a token in Cloudflare Dashboard → API Tokens with Email Routing edit permissions")
-                        .font(.system(.caption, design: .rounded))
-                }
-                
-                Section {
-                    Button {
-                        updateToken()
-                    } label: {
-                        HStack {
-                            Spacer()
-                            if isLoading {
-                                ProgressView()
-                            } else {
-                                Text("Update Token")
-                                    .font(.system(.body, design: .rounded, weight: .semibold))
-                            }
-                            Spacer()
-                        }
-                    }
-                    .disabled(apiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isLoading)
-                }
-            }
-            .navigationTitle(zone.domainName.isEmpty ? "Edit Token" : zone.domainName)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-            }
-            .alert("Error", isPresented: $showError) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(errorMessage)
-            }
-            .overlay(
-                Group {
-                    if showSuccessToast {
-                        VStack {
-                            Spacer()
-                            HStack(spacing: 8) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                                Text("Token Updated")
-                                    .font(.system(.subheadline, design: .rounded, weight: .medium))
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Capsule())
-                            .padding(.bottom, 32)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                        }
-                    }
-                }
-                .animation(.easeInOut(duration: 0.3), value: showSuccessToast)
-            )
-        }
-    }
-    
-    private func updateToken() {
-        isLoading = true
-        
-        Task {
-            do {
-                try await cloudflareClient.updateZoneToken(
-                    zoneId: zone.zoneId,
-                    apiToken: apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
-                )
-                
-                // Check and auto-enable analytics if this zone's API has permission
-                await cloudflareClient.checkAndEnableAnalyticsIfPermitted()
-                
-                await MainActor.run {
-                    isLoading = false
-                    showSuccessToast = true
-                    
-                    // Dismiss after a short delay to show success
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        dismiss()
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    isLoading = false
-                    errorMessage = error.localizedDescription
-                    showError = true
-                }
-            }
-        }
-    }
-}
