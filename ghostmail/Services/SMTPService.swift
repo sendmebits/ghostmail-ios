@@ -384,7 +384,7 @@ class SMTPService: @unchecked Sendable {
             guard statusCode == 354 else { throw SMTPError.sendFailed }
             switch mode {
             case .send(let message, _, _):
-                sendCommand("\(message)\r\n.\r\n", connection: connection)
+                sendCommand(prepareDATAPayload(message), connection: connection)
                 state = .messageSent
                 return .stayOpen
             case .test:
@@ -432,6 +432,24 @@ class SMTPService: @unchecked Sendable {
         message += "\r\n"
 
         return message
+    }
+
+    /// Prepares a message for inclusion in an SMTP DATA command. Normalizes line
+    /// endings to CRLF (RFC 5321 §4.1.1.4), applies dot-stuffing so a body line
+    /// beginning with "." cannot be misread as the end-of-data marker (§4.5.2),
+    /// and appends the `<CRLF>.<CRLF>` terminator.
+    private func prepareDATAPayload(_ message: String) -> String {
+        let normalized = message
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\n", with: "\r\n")
+
+        var stuffed = normalized.replacingOccurrences(of: "\r\n.", with: "\r\n..")
+        if stuffed.hasPrefix(".") {
+            stuffed = "." + stuffed
+        }
+
+        return stuffed + "\r\n.\r\n"
     }
 
     private func encodeHeader(_ header: String) -> String {
