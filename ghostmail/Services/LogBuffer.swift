@@ -25,3 +25,17 @@ final class LogBuffer {
         return snapshot.joined(separator: "\n")
     }
 }
+
+/// Prints `message` only in DEBUG builds. In Release this is a no-op so
+/// internal diagnostics never reach the unified system log on user devices.
+///
+/// Use this for any service-layer trace logging. For user-actionable errors
+/// that should always be recorded, post to `LogBuffer.shared.add` instead
+/// (the in-memory buffer powers the in-app "Copy Logs" support feature, and
+/// callers are expected to redact identifiers before adding).
+@inlinable
+func debugLog(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    print(message())
+    #endif
+}

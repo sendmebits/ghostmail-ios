@@ -203,7 +203,7 @@ struct ZoneDetailView: View {
             } header: {
                 Text("Danger Zone")
             } footer: {
-                Text("Removing this zone will delete all local data for aliases under this domain. Your Cloudflare settings will not be affected.")
+                Text("Removing this zone will hide its aliases on this device. Your alias data is preserved and will reappear if you re-add this zone. Your Cloudflare settings are not affected.")
             }
         }
         .navigationTitle(domainName)
@@ -230,7 +230,7 @@ struct ZoneDetailView: View {
                 dismiss()
             }
         } message: {
-            Text("This will remove \(domainName) from this device. Your Cloudflare configuration and iCloud data will remain intact.")
+            Text("This will remove \(domainName) from this device. Your alias data (notes, websites, dates) is preserved locally (unless you delete the app) and in iCloud. Your Cloudflare configuration is not affected.")
         }
         .confirmationDialog("Enable Catch-All", isPresented: $showCatchAllOptions, titleVisibility: .visible) {
             Button("Drop (Discard Emails)") {

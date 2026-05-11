@@ -122,7 +122,8 @@ struct AuthenticationView: View {
                     AuthTextField(
                         text: $quickAuthString,
                         placeholder: "Account ID:Zone ID:Token",
-                        systemImage: "key.fill"
+                        systemImage: "key.fill",
+                        isSecure: true
                     )
                 } else {
                     VStack(spacing: 16) {
@@ -196,7 +197,8 @@ struct AuthenticationView: View {
                             2) Zone > Email Routing Rules > Edit
                             3) Zone > Zone Settings > Read
                             """,
-                            helpURL: "https://dash.cloudflare.com/profile/api-tokens"
+                            helpURL: "https://dash.cloudflare.com/profile/api-tokens",
+                            isSecure: true
                         )
                         
                         // Quick link to create API token with pre-selected permissions
@@ -366,6 +368,10 @@ struct AuthenticationView: View {
                 
                 // Verify the token
                 let isValid = try await cloudflareClient.verifyToken()
+                if isValid {
+                    // Run the permission probe before showing the main UI so Settings reflects the default immediately.
+                    await cloudflareClient.checkAndEnableAnalyticsIfPermitted()
+                }
                 
                 await MainActor.run {
                     if isValid {
@@ -520,19 +526,50 @@ struct AuthTextField: View {
     var helpTitle: String = ""
     var helpMessage: String = ""
     var helpURL: String = ""
+    /// When `true`, the field renders as a `SecureField` so the value is hidden
+    /// on screen, opted out of predictive text/autocorrect, and treated as a
+    /// password by the system. Used for the Cloudflare API token.
+    var isSecure: Bool = false
     @State private var showingHelp = false
-    
+    @State private var revealSecret: Bool = false
+
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: systemImage)
                 .font(.system(size: 20, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 24)
-            
-            TextField(placeholder, text: $text)
-                .submitLabel(.next)
-                .autocorrectionDisabled()
-            
+
+            if isSecure {
+                Group {
+                    if revealSecret {
+                        TextField(placeholder, text: $text)
+                            .textContentType(.password)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .submitLabel(.next)
+                    } else {
+                        SecureField(placeholder, text: $text)
+                            .textContentType(.password)
+                            .textInputAutocapitalization(.never)
+                            .submitLabel(.next)
+                    }
+                }
+
+                Button {
+                    revealSecret.toggle()
+                } label: {
+                    Image(systemName: revealSecret ? "eye.slash" : "eye")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 20))
+                }
+                .accessibilityLabel(revealSecret ? "Hide" : "Show")
+            } else {
+                TextField(placeholder, text: $text)
+                    .submitLabel(.next)
+                    .autocorrectionDisabled()
+            }
+
             if !helpMessage.isEmpty {
                 Button {
                     showingHelp = true
@@ -555,4 +592,4 @@ struct AuthTextField: View {
         .background(.gray.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
-} 
+}

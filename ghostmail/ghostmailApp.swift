@@ -86,7 +86,7 @@ struct ghostmailApp: App {
                 }
             }
         } catch {
-            print("Failed to initialize ModelContainer: \(error)")
+            debugLog("Failed to initialize ModelContainer: \(error)")
             fatalError("Could not initialize ModelContainer: \(error)")
         }
     }
@@ -231,7 +231,7 @@ struct ghostmailApp: App {
                                             try await cloudflareClient.fetchDomainName()
                                         }
                                     } catch {
-                                        print("App startup: Domain name fetch failed: \(error)")
+                                        debugLog("App startup: Domain name fetch failed: \(error)")
                                     }
                                 }
                             }
@@ -243,7 +243,7 @@ struct ghostmailApp: App {
                                         try await cloudflareClient.refreshForwardingAddresses()
                                     }
                                 } catch {
-                                    print("App startup: Forwarding addresses refresh failed: \(error)")
+                                    debugLog("App startup: Forwarding addresses refresh failed: \(error)")
                                 }
                             }
                             
@@ -256,7 +256,7 @@ struct ghostmailApp: App {
                                             try await cloudflareClient.refreshSubdomainsAllZones()
                                         }
                                     } catch {
-                                        print("App startup: Subdomains refresh failed: \(error)")
+                                        debugLog("App startup: Subdomains refresh failed: \(error)")
                                     }
                                 }
                             }
@@ -271,7 +271,7 @@ struct ghostmailApp: App {
                                             await self.preloadEmailStatistics()
                                         }
                                     } catch {
-                                        print("App startup: Statistics preload failed: \(error)")
+                                        debugLog("App startup: Statistics preload failed: \(error)")
                                     }
                                 }
                             }
@@ -284,9 +284,9 @@ struct ghostmailApp: App {
                         try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5 seconds
                         do {
                             let deleted = try EmailAlias.deduplicate(in: modelContainer.mainContext)
-                            if deleted > 0 { print("Deduplicated \(deleted) aliases on startup") }
+                            if deleted > 0 { debugLog("Deduplicated \(deleted) aliases on startup") }
                         } catch {
-                            print("Error during startup deduplication: \(error)")
+                            debugLog("Error during startup deduplication: \(error)")
                         }
                         await ghostmailApp.updateUserIdentifiers(modelContext: modelContainer.mainContext)
                         await pullMetadataFromCloudKit()
@@ -301,7 +301,7 @@ struct ghostmailApp: App {
                     deepLinkRouter.handle(url: url)
                 }
                 .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
-                    print("🌐 ghostmailApp: onContinueUserActivity called")
+                    debugLog("🌐 ghostmailApp: onContinueUserActivity called")
                     if let url = userActivity.webpageURL {
                         deepLinkRouter.handle(url: url)
                     }
@@ -316,9 +316,9 @@ struct ghostmailApp: App {
                         try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 s
                         do {
                             let deleted = try EmailAlias.deduplicate(in: modelContainer.mainContext)
-                            if deleted > 0 { print("Deduplicated \(deleted) aliases after foreground (iCloud)") }
+                            if deleted > 0 { debugLog("Deduplicated \(deleted) aliases after foreground (iCloud)") }
                         } catch {
-                            print("Foreground deduplication error: \(error)")
+                            debugLog("Foreground deduplication error: \(error)")
                         }
                     }
                 }
@@ -389,7 +389,7 @@ struct ghostmailApp: App {
                 do {
                     try await self.cloudflareClient.syncEmailRules(modelContext: modelContext)
                 } catch {
-                    print("Foreground sync email rules failed: \(error)")
+                    debugLog("Foreground sync email rules failed: \(error)")
                 }
             }
             
@@ -427,9 +427,9 @@ struct ghostmailApp: App {
         if iCloudSyncEnabled {
             do {
                 let merged = try EmailAlias.deduplicate(in: modelContainer.mainContext)
-                if merged > 0 { print("Background timer dedup merged \(merged) iCloud records") }
+                if merged > 0 { debugLog("Background timer dedup merged \(merged) iCloud records") }
             } catch {
-                print("Background timer dedup error: \(error)")
+                debugLog("Background timer dedup error: \(error)")
             }
         }
         
@@ -452,7 +452,7 @@ struct ghostmailApp: App {
                     await syncEmailStatisticsInBackground()
                 }
             } catch {
-                print("Background update failed: \(error)")
+                debugLog("Background update failed: \(error)")
             }
             
             isUpdating = false
@@ -464,9 +464,9 @@ struct ghostmailApp: App {
     /// Preload email statistics at app startup for faster perceived load time
     /// Uses delta fetching to minimize API calls
     private func preloadEmailStatistics() async {
-        print("App startup: Preloading email statistics...")
+        debugLog("App startup: Preloading email statistics...")
         await syncEmailStatisticsInBackground()
-        print("App startup: Statistics preload complete")
+        debugLog("App startup: Statistics preload complete")
     }
     
     /// Sync email statistics in the background and update the cache
@@ -475,7 +475,7 @@ struct ghostmailApp: App {
     private func syncEmailStatisticsInBackground() async {
         // Prevent concurrent statistics syncing
         guard !isSyncingStatistics else {
-            print("📊 Statistics sync already in progress, skipping")
+            debugLog("📊 Statistics sync already in progress, skipping")
             return
         }
         isSyncingStatistics = true
@@ -497,7 +497,7 @@ struct ghostmailApp: App {
                             forceFull: false
                         )
                     } catch {
-                        print("Background update: Failed to fetch statistics for zone \(zone.zoneId): \(error)")
+                        debugLog("Background update: Failed to fetch statistics for zone \(zone.zoneId): \(error)")
                         return []
                     }
                 }
@@ -516,9 +516,9 @@ struct ghostmailApp: App {
         // Update the cache with fresh statistics
         if !deduplicatedStats.isEmpty {
             StatisticsCache.shared.save(deduplicatedStats)
-            print("Background update: Statistics cache updated with \(deduplicatedStats.count) email addresses")
+            debugLog("Background update: Statistics cache updated with \(deduplicatedStats.count) email addresses")
         } else {
-            print("Background update: No statistics to cache")
+            debugLog("Background update: No statistics to cache")
         }
     }
     

@@ -1,5 +1,34 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
+
+// MARK: - Secure Pasteboard Helper
+
+/// Pasteboard helpers that apply both `localOnly` (no Universal Clipboard sync
+/// to other Apple devices) and an `expirationDate` so the value is auto-cleared
+/// shortly after being copied.
+///
+/// Use `copySensitive` for any value that could identify the user, their
+/// destination mailbox, or otherwise reveal data that should not linger in the
+/// shared system pasteboard. Use plain `UIPasteboard.general.string` for
+/// values explicitly meant to be pasted into another app and used immediately
+/// (alias addresses, version strings, public URLs).
+enum Pasteboard {
+    /// Default expiration window for sensitive copies.
+    static let defaultExpiration: TimeInterval = 60
+
+    /// Copy `text` to the general pasteboard with `localOnly: true` and an
+    /// expiration so it disappears after `expiresIn` seconds.
+    static func copySensitive(_ text: String, expiresIn seconds: TimeInterval = defaultExpiration) {
+        UIPasteboard.general.setItems(
+            [[UTType.utf8PlainText.identifier: text]],
+            options: [
+                .localOnly: true,
+                .expirationDate: Date().addingTimeInterval(seconds)
+            ]
+        )
+    }
+}
 
 // MARK: - Shared Data Types
 

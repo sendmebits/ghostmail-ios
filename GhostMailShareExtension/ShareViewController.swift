@@ -1,6 +1,16 @@
 import UIKit
 import UniformTypeIdentifiers
 
+/// Logs only in DEBUG builds. Release ship-builds do not write share-extension
+/// diagnostics (which previously included full shared URLs) to the unified
+/// system log.
+@inline(__always)
+private func debugLog(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    print(message())
+    #endif
+}
+
 class ShareViewController: UIViewController {
     private var websiteDomain: String?
     private var titleLabel: UILabel!
@@ -87,7 +97,7 @@ class ShareViewController: UIViewController {
     }
     
     @objc private func createTapped() {
-        print("[GhostMailShareExt] createTapped")
+        debugLog("[GhostMailShareExt] createTapped")
         handleInputAndOpenHostApp()
     }
 
@@ -122,27 +132,29 @@ class ShareViewController: UIViewController {
     }
 
     private func handleInputAndOpenHostApp() {
-        print("[GhostMailShareExt] handleInputAndOpenHostApp start")
-        guard let extensionItem = self.extensionContext?.inputItems.first as? NSExtensionItem else { print("[GhostMailShareExt] No extension item"); completeRequest(); return }
+        debugLog("[GhostMailShareExt] handleInputAndOpenHostApp start")
+        guard let extensionItem = self.extensionContext?.inputItems.first as? NSExtensionItem else {
+            debugLog("[GhostMailShareExt] No extension item")
+            completeRequest()
+            return
+        }
         let providers = extensionItem.attachments ?? []
-        print("[GhostMailShareExt] attachments count=\(providers.count)")
+        debugLog("[GhostMailShareExt] attachments count=\(providers.count)")
         if let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.url.identifier) }) {
-            print("[GhostMailShareExt] Found URL provider")
+            debugLog("[GhostMailShareExt] Found URL provider")
             provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, _ in
                 let url = (item as? URL) ?? (item as? NSURL) as URL?
-                print("[GhostMailShareExt] Loaded URL=\(url?.absoluteString ?? "nil")")
                 self.openHostApp(with: url)
             }
         } else if let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) }) {
-            print("[GhostMailShareExt] Found plain text provider")
+            debugLog("[GhostMailShareExt] Found plain text provider")
             provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { item, _ in
                 let text = item as? String
                 let url = text.flatMap { URL(string: $0) }
-                print("[GhostMailShareExt] Loaded text=\(text ?? "nil") url=\(url?.absoluteString ?? "nil")")
                 self.openHostApp(with: url)
             }
         } else {
-            print("[GhostMailShareExt] No suitable provider, opening without URL")
+            debugLog("[GhostMailShareExt] No suitable provider, opening without URL")
             self.openHostApp(with: nil)
         }
     }
@@ -154,20 +166,21 @@ class ShareViewController: UIViewController {
         if let u = url?.absoluteString, !u.isEmpty {
             components.queryItems = [URLQueryItem(name: "url", value: u)]
         }
-        guard let openURL = components.url else { print("[GhostMailShareExt] Failed to build deep link"); completeRequest(); return }
-        print("[GhostMailShareExt] Opening URL=\(openURL.absoluteString)")
+        guard let openURL = components.url else {
+            debugLog("[GhostMailShareExt] Failed to build deep link")
+            completeRequest()
+            return
+        }
         DispatchQueue.main.async {
+            // Use the supported `extensionContext.open(_:completionHandler:)`
+            // path. We previously had a `UIApplication.value(forKeyPath:)` KVC
+            // fallback here, which is a private-API access pattern that risks
+            // App Store review and obscures the security boundary between the
+            // extension and the host app. If the standard call fails, we just
+            // surface that to the user via completion (no fallback).
             self.extensionContext?.open(openURL, completionHandler: { success in
-                print("[GhostMailShareExt] extensionContext open success=\(success)")
-                if !success {
-                    // Try direct UIApplication.open as fallback
-                    print("[GhostMailShareExt] Falling back to UIApplication.open")
-                    if let app = UIApplication.value(forKeyPath: "sharedApplication") as? UIApplication {
-                        app.open(openURL, options: [:], completionHandler: nil)
-                    }
-                }
+                debugLog("[GhostMailShareExt] extensionContext open success=\(success)")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                    print("[GhostMailShareExt] Completing request")
                     self.completeRequest()
                 }
             })

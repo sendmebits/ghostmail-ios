@@ -200,7 +200,7 @@ struct EmailStatisticsDetailView: View {
                             .contentShape(Rectangle())
                             .contextMenu {
                                 Button {
-                                    UIPasteboard.general.string = detail.from
+                                    Pasteboard.copySensitive(detail.from)
                                     let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
                                 } label: {
                                     Text("Copy Email Address")
@@ -208,7 +208,7 @@ struct EmailStatisticsDetailView: View {
                                 }
                             }
                             .onLongPressGesture {
-                                UIPasteboard.general.string = detail.from
+                                Pasteboard.copySensitive(detail.from)
                                 let generator = UIImpactFeedbackGenerator(style: .light)
                                 generator.impactOccurred()
                             }

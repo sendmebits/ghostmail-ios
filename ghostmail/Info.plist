@@ -6,8 +6,6 @@
 	<array>
 		<string>remote-notification</string>
 	</array>
-	<key>aps-environment</key>
-	<string>production</string>
 	<key>UIApplicationShortcutItems</key>
 	<array>
 		<dict>
@@ -29,14 +27,6 @@
 				<string>ghostmail</string>
 			</array>
 		</dict>
-	</array>
-	<key>com.apple.developer.icloud-container-identifiers</key>
-	<array>
-		<string>iCloud.com.sendmebits.ghostmail</string>
-	</array>
-	<key>com.apple.developer.icloud-services</key>
-	<array>
-		<string>CloudKit</string>
 	</array>
 </dict>
 </plist>

@@ -33,20 +33,26 @@ class StatisticsCache {
     /// Save statistics to cache with current timestamp
     func save(_ statistics: [EmailStatistic]) {
         guard let fileURL = cacheFileURL else {
+            #if DEBUG
             print("Failed to get cache file URL")
+            #endif
             return
         }
         
         do {
             let encoder = JSONEncoder()
             let data = try encoder.encode(statistics.map { CachedStatistic(from: $0) })
-            try data.write(to: fileURL, options: .atomic)
+            // `.completeFileProtection` (NSFileProtectionComplete) keeps the
+            // cached email metadata encrypted whenever the device is locked.
+            try data.write(to: fileURL, options: [.atomic, .completeFileProtection])
             UserDefaults.standard.set(Date(), forKey: timestampKey)
             
             // Post notification to inform listeners that cache has been updated
             NotificationCenter.default.post(name: .statisticsCacheUpdated, object: nil)
         } catch {
+            #if DEBUG
             print("Failed to cache statistics: \(error)")
+            #endif
         }
     }
     
@@ -69,7 +75,9 @@ class StatisticsCache {
             
             return (statistics, isStale)
         } catch {
+            #if DEBUG
             print("Failed to load cached statistics: \(error)")
+            #endif
             return nil
         }
     }

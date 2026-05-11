@@ -28,18 +28,18 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     }
     
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        print("Registered for remote notifications (CloudKit sync)")
+        debugLog("Registered for remote notifications (CloudKit sync)")
     }
     
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        print("Failed to register for remote notifications: \(error.localizedDescription)")
+        debugLog("Failed to register for remote notifications: \(error.localizedDescription)")
     }
     
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable : Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
         // CloudKit sends silent push notifications when data changes on the server.
         // SwiftData/Core Data's CloudKit integration handles the actual data merge
         // automatically — we just need to acknowledge the notification.
-        print("Received remote notification (CloudKit sync)")
+        debugLog("Received remote notification (CloudKit sync)")
         completionHandler(.newData)
     }
     

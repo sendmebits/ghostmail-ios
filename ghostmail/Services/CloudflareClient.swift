@@ -53,6 +53,29 @@ class CloudflareClient: ObservableObject {
             KeychainHelper.shared.save(oldApiToken, service: "ghostmail", account: "apiToken")
             defaults.removeObject(forKey: "apiToken")
         }
+
+        // One-time migration: items previously written under
+        // `kSecAttrAccessibleWhenUnlocked` retain that attribute even after the
+        // helper's default changed to `…ThisDeviceOnly`. Re-save them so the
+        // stricter accessibility is applied. Idempotent and gated by a flag so
+        // we don't pay the cost on every launch.
+        let migrationFlag = "keychainAccessibilityMigratedV1"
+        if !defaults.bool(forKey: migrationFlag) {
+            var ghostmailAccounts: [String] = ["accountId", "zoneId", "apiToken"]
+            if let data = defaults.data(forKey: "cloudflareZones"),
+               let persistedZones = try? JSONDecoder().decode([PersistedCloudflareZone].self, from: data) {
+                ghostmailAccounts.append(contentsOf: persistedZones.map { "apiToken_\($0.zoneId)" })
+            }
+            KeychainHelper.shared.migrateAccessibilityToThisDeviceOnly(
+                service: "ghostmail",
+                accounts: ghostmailAccounts
+            )
+            KeychainHelper.shared.migrateAccessibilityToThisDeviceOnly(
+                service: "com.sendmebits.ghostmail.smtp",
+                accounts: ["smtp_settings"]
+            )
+            defaults.set(true, forKey: migrationFlag)
+        }
         
         // Load from Keychain
         self.accountId = (KeychainHelper.shared.readString(service: "ghostmail", account: "accountId") ?? accountId).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -89,7 +112,7 @@ class CloudflareClient: ObservableObject {
             } 
             // Fallback: Try to decode as old insecure zones (migration path)
             else if let oldZones = try? JSONDecoder().decode([CloudflareZone].self, from: data) {
-                print("Migrating zones to secure storage...")
+                debugLog("Migrating zones to secure storage...")
                 self.zones = oldZones
                 // Trigger persistence which will now save tokens to Keychain and strip them from UserDefaults
                 persistZones()
@@ -111,8 +134,8 @@ class CloudflareClient: ObservableObject {
         // After restoring from iCloud backup, UserDefaults syncs but Keychain doesn't.
         // Detect when isAuthenticated is true but tokens are missing.
         if self.isAuthenticated && !hasValidCredentials {
-            print("[CloudflareClient] ⚠️ Credentials missing after iCloud restore. Tokens not found in Keychain.")
-            print("[CloudflareClient] Resetting authentication state - user will need to re-enter credentials.")
+            debugLog("[CloudflareClient] ⚠️ Credentials missing after iCloud restore. Tokens not found in Keychain.")
+            debugLog("[CloudflareClient] Resetting authentication state - user will need to re-enter credentials.")
             LogBuffer.shared.add("[CloudflareClient] Credentials missing (likely iCloud restore). Prompting re-authentication.")
             
             // Reset authentication state but preserve zone configuration (domain names, etc.)
@@ -232,21 +255,21 @@ class CloudflareClient: ObservableObject {
         // First try user token verification
         let userTokenResult = await verifyUserToken(using: token)
         if userTokenResult.isValid {
-            print("[Cloudflare] Token verified as user token")
+            debugLog("[Cloudflare] Token verified as user token")
             return true
         }
         
         // If user token verification fails, try to validate as account token
-        print("[Cloudflare] User token verification failed (\(userTokenResult.error ?? "unknown error")), attempting to validate as account token")
+        debugLog("[Cloudflare] User token verification failed (\(userTokenResult.error ?? "unknown error")), attempting to validate as account token")
         let accountTokenValid = await validateAccountToken(using: token)
         
         if accountTokenValid {
-            print("[Cloudflare] Token verified as account token")
+            debugLog("[Cloudflare] Token verified as account token")
             return true
         }
         
         // Both verification methods failed
-        print("[Cloudflare] Both user and account token verification failed")
+        debugLog("[Cloudflare] Both user and account token verification failed")
         throw CloudflareError(message: "Invalid API token. Please ensure your token has the correct permissions for Email Routing and Zone access.")
     }
     
@@ -259,27 +282,27 @@ class CloudflareClient: ObservableObject {
             "Content-Type": "application/json"
         ]
         
-        print("[Cloudflare] Verifying user token: GET \(url)")
+        debugLog("[Cloudflare] Verifying user token: GET \(url)")
         
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
-                print("[Cloudflare] User token verification failed: Invalid HTTP response")
+                debugLog("[Cloudflare] User token verification failed: Invalid HTTP response")
                 return (false, "Invalid response from server")
             }
             
             if httpResponse.statusCode == 200 {
                 if let responseString = String(data: data, encoding: .utf8) {
-                    print("[Cloudflare] User token verification successful: \(responseString)")
+                    debugLog("[Cloudflare] User token verification successful: \(responseString)")
                 }
                 return (true, nil)
             } else {
                 let responseBody = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-                print("[Cloudflare] User token verification failed: status=\(httpResponse.statusCode), body=\(responseBody)")
+                debugLog("[Cloudflare] User token verification failed: status=\(httpResponse.statusCode), body=\(responseBody)")
                 return (false, "User token verification failed with status \(httpResponse.statusCode)")
             }
         } catch {
-            print("[Cloudflare] User token verification error: \(error)")
+            debugLog("[Cloudflare] User token verification error: \(error)")
             return (false, error.localizedDescription)
         }
     }
@@ -294,25 +317,25 @@ class CloudflareClient: ObservableObject {
             "Content-Type": "application/json"
         ]
         
-        print("[Cloudflare] Validating account token by listing accounts: GET \(url)")
+        debugLog("[Cloudflare] Validating account token by listing accounts: GET \(url)")
         
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
-                print("[Cloudflare] Account token validation failed: Invalid HTTP response")
+                debugLog("[Cloudflare] Account token validation failed: Invalid HTTP response")
                 return false
             }
             
             if httpResponse.statusCode == 200 {
-                print("[Cloudflare] Account token validation successful")
+                debugLog("[Cloudflare] Account token validation successful")
                 return true
             } else {
                 let responseBody = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-                print("[Cloudflare] Account token validation failed: status=\(httpResponse.statusCode), body=\(responseBody)")
+                debugLog("[Cloudflare] Account token validation failed: status=\(httpResponse.statusCode), body=\(responseBody)")
                 return false
             }
         } catch {
-            print("[Cloudflare] Account token validation error: \(error)")
+            debugLog("[Cloudflare] Account token validation error: \(error)")
             return false
         }
     }
@@ -335,7 +358,7 @@ class CloudflareClient: ObservableObject {
             request.allHTTPHeaderFields = headers
             
         let msg1 = "Requesting URL: \(maskedURL(url, zoneId: zoneId))"
-        print(msg1); LogBuffer.shared.add(msg1)
+        debugLog(msg1); LogBuffer.shared.add(msg1)
             
             let (data, response) = try await URLSession.shared.data(for: request)
             
@@ -345,7 +368,7 @@ class CloudflareClient: ObservableObject {
             
             if httpResponse.statusCode != 200 {
                 if let errorString = String(data: data, encoding: .utf8) {
-                    print("Error response: \(errorString)")
+                    debugLog("Error response: \(errorString)")
                 }
                 
                 if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
@@ -375,7 +398,7 @@ class CloudflareClient: ObservableObject {
         }
         
         // Print the total number of rules fetched
-        print("Total email rules fetched: \(allRules.count)")
+        debugLog("Total email rules fetched: \(allRules.count)")
         
         // Collect all unique forwarding addresses and update cache
         let forwards = Set(allRules.compactMap { rule -> String? in
@@ -595,6 +618,19 @@ class CloudflareClient: ObservableObject {
         let action: String  // "forward", "drop", or "reject"
     }
 
+    private struct PermissionCheckData: Decodable {
+        let viewer: PermissionCheckViewer?
+    }
+    private struct PermissionCheckViewer: Decodable {
+        let zones: [PermissionCheckZone]
+    }
+    private struct PermissionCheckZone: Decodable {
+        let emailRoutingAdaptive: [PermissionCheckEntry]
+    }
+    private struct PermissionCheckEntry: Decodable {
+        let to: String?
+    }
+
     /// Fetch email statistics with smart delta optimization
     /// - Parameters:
     ///   - zone: The Cloudflare zone to fetch statistics for
@@ -639,21 +675,21 @@ class CloudflareClient: ObservableObject {
                 daysToFetch = 1
                 useDeltaFetch = true
                 if cacheAgeHours < 1 {
-                    print("📊 Delta fetch: Cache is \(Int(cacheAge / 60))m old, fetching last 24h only")
+                    debugLog("📊 Delta fetch: Cache is \(Int(cacheAge / 60))m old, fetching last 24h only")
                 } else {
-                    print("📊 Delta fetch: Cache is \(Int(cacheAgeHours))h old, fetching last 24h only")
+                    debugLog("📊 Delta fetch: Cache is \(Int(cacheAgeHours))h old, fetching last 24h only")
                 }
             } else {
                 // Cache is too old, do full 7-day fetch
                 daysToFetch = 7
                 useDeltaFetch = false
-                print("📊 Full fetch: Cache is \(Int(cacheAgeHours))h old")
+                debugLog("📊 Full fetch: Cache is \(Int(cacheAgeHours))h old")
             }
         } else {
             // No cache or forced full fetch
             daysToFetch = 7
             useDeltaFetch = false
-            print("📊 Full fetch: No cache available or forced refresh")
+            debugLog("📊 Full fetch: No cache available or forced refresh")
         }
         
         for i in 0..<daysToFetch {
@@ -703,7 +739,7 @@ class CloudflareClient: ObservableObject {
                 
                 if let errors = graphQLResponse.errors, let firstError = errors.first {
                     // Ignore "time range too large" errors if they happen for some reason, just return empty
-                    print("GraphQL Error: \(firstError.message)")
+                    debugLog("GraphQL Error: \(firstError.message)")
                     return [String: [EmailStatistic.EmailDetail]]()
                 }
                 
@@ -756,7 +792,7 @@ class CloudflareClient: ObservableObject {
                     totalDetails[email, default: []].append(contentsOf: details)
                 }
             } catch {
-                print("Failed to fetch chunk: \(error)")
+                debugLog("Failed to fetch chunk: \(error)")
                 // Continue with other chunks
             }
         }
@@ -792,7 +828,7 @@ class CloudflareClient: ObservableObject {
                 }
             }
             
-            print("📊 Delta merge: Added \(addedFromCache) cached entries, combined with fresh data from \(cached.count) cached email addresses")
+            debugLog("📊 Delta merge: Added \(addedFromCache) cached entries, combined with fresh data from \(cached.count) cached email addresses")
         }
         
         return totalDetails.map { 
@@ -809,6 +845,11 @@ class CloudflareClient: ObservableObject {
     
     func validateAnalyticsPermission(for zone: CloudflareZone) async throws -> Bool {
         let url = URL(string: "\(baseURL)/graphql")!
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        let endDateString = isoFormatter.string(from: Date())
+        let startDateString = isoFormatter.string(from: Date().addingTimeInterval(-24 * 60 * 60))
+        
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.allHTTPHeaderFields = [
@@ -816,12 +857,15 @@ class CloudflareClient: ObservableObject {
             "Content-Type": "application/json"
         ]
         
-        // Lightweight query to check permissions
+        // Match the real analytics query shape so the permission probe exercises the same API path.
         let query = """
         query Viewer {
           viewer {
             zones(filter: {zoneTag: "\(zone.zoneId)"}) {
-              emailRoutingAdaptive(limit: 1) {
+              emailRoutingAdaptive(
+                filter: {datetime_geq: "\(startDateString)", datetime_leq: "\(endDateString)"},
+                limit: 1
+              ) {
                 to
               }
             }
@@ -838,14 +882,19 @@ class CloudflareClient: ObservableObject {
              return false
         }
         
-        let graphQLResponse = try JSONDecoder().decode(GraphQLResponse<EmailRoutingAnalyticsData>.self, from: data)
-        
-        if let errors = graphQLResponse.errors, !errors.isEmpty {
-            // If we get errors, likely permission denied or invalid query due to permissions
+        do {
+            let graphQLResponse = try JSONDecoder().decode(GraphQLResponse<PermissionCheckData>.self, from: data)
+            
+            if let errors = graphQLResponse.errors, !errors.isEmpty {
+                debugLog("[Analytics] Permission check GraphQL error: \(errors.map(\.message).joined(separator: "; "))")
+                return false
+            }
+            
+            return true
+        } catch {
+            debugLog("[Analytics] Permission check decode error: \(error.localizedDescription)")
             return false
         }
-        
-        return true
     }
     
     // MARK: - Catch-All Rule
@@ -870,13 +919,13 @@ class CloudflareClient: ObservableObject {
         
         // Log response for debugging
         if let responseString = String(data: data, encoding: .utf8) {
-            print("📧 Catch-all GET response (\(httpResponse.statusCode)): \(responseString.prefix(500))")
+            debugLog("📧 Catch-all GET response (\(httpResponse.statusCode)): \(responseString.prefix(500))")
         }
         
         // Handle different status codes
         if httpResponse.statusCode == 404 {
             // No catch-all rule configured - this is normal for zones without catch-all set up
-            print("📧 No catch-all rule configured for this zone (404)")
+            debugLog("📧 No catch-all rule configured for this zone (404)")
             return .disabled
         }
         
@@ -986,7 +1035,7 @@ class CloudflareClient: ObservableObject {
         
         // Log the response for debugging
         if let responseString = String(data: data, encoding: .utf8) {
-            print("📧 Catch-all update response (\(httpResponse.statusCode)): \(responseString)")
+            debugLog("📧 Catch-all update response (\(httpResponse.statusCode)): \(responseString)")
         }
         
         guard httpResponse.statusCode == 200 else {
@@ -1009,7 +1058,7 @@ class CloudflareClient: ObservableObject {
             throw CloudflareError(message: "Failed to update catch-all rule (HTTP \(httpResponse.statusCode)). This zone may require Email Routing to be configured first in the Cloudflare Dashboard.")
         }
         
-        print("✅ Catch-all rule updated successfully for zone \(zone.zoneId)")
+        debugLog("✅ Catch-all rule updated successfully for zone \(zone.zoneId)")
     }
     
     /// Update catch-all rule using zone ID (convenience method)
@@ -1036,37 +1085,37 @@ class CloudflareClient: ObservableObject {
         // Only auto-enable if currently disabled (first-time setup scenario)
         // If we wanted to always check and potentially enable: remove this early return
         if currentSetting {
-            print("[Analytics] Already enabled, skipping permission check")
+            debugLog("[Analytics] Already enabled, skipping permission check")
             return true
         }
         
         // Get all zones with valid tokens
         let validZones = zones.filter { !$0.apiToken.isEmpty }
         guard !validZones.isEmpty else {
-            print("[Analytics] No zones with valid tokens, cannot check permissions")
+            debugLog("[Analytics] No zones with valid tokens, cannot check permissions")
             return false
         }
         
-        print("[Analytics] Checking analytics permissions for \(validZones.count) zone(s)")
+        debugLog("[Analytics] Checking analytics permissions for \(validZones.count) zone(s)")
         
         // Check if ANY zone has analytics permission
         for zone in validZones {
             do {
                 let hasPermission = try await validateAnalyticsPermission(for: zone)
                 if hasPermission {
-                    print("[Analytics] Permission granted for zone \(zone.domainName.isEmpty ? zone.zoneId : zone.domainName) - enabling analytics")
+                    debugLog("[Analytics] Permission granted for zone \(zone.domainName.isEmpty ? zone.zoneId : zone.domainName) - enabling analytics")
                     await MainActor.run {
                         UserDefaults.standard.set(true, forKey: "showAnalytics")
                     }
                     return true
                 }
             } catch {
-                print("[Analytics] Error checking permissions for zone: \(error.localizedDescription)")
+                debugLog("[Analytics] Error checking permissions for zone: \(error.localizedDescription)")
                 // Continue checking other zones
             }
         }
         
-        print("[Analytics] No zones have analytics permission")
+        debugLog("[Analytics] No zones have analytics permission")
         return false
     }
 
@@ -1091,7 +1140,7 @@ class CloudflareClient: ObservableObject {
             do {
                 try await fetchDomainName()
             } catch {
-                print("Error fetching domain name: \(error)")
+                debugLog("Error fetching domain name: \(error)")
             }
         }
 
@@ -1112,23 +1161,30 @@ class CloudflareClient: ObservableObject {
     
     @MainActor
     func logout() {
+        // Delete all per-zone API tokens from the Keychain BEFORE clearing the
+        // zones array, otherwise we'd have no way to know which keys to remove.
+        // Tokens are stored at "apiToken_<zoneId>" (see persistZones / init).
+        for zone in zones {
+            KeychainHelper.shared.delete(service: "ghostmail", account: "apiToken_\(zone.zoneId)")
+        }
+
         accountId = ""
         zoneId = ""
         apiToken = ""
         isAuthenticated = false
-        
+
         // Clear cache on logout
         forwardingAddressesCache = []
         lastForwardingAddressesFetch = .distantPast
-        
+
         let defaults = UserDefaults.standard
-        // Remove from Keychain
+        // Remove legacy single-zone credentials from Keychain
         KeychainHelper.shared.delete(service: "ghostmail", account: "accountId")
         KeychainHelper.shared.delete(service: "ghostmail", account: "zoneId")
         KeychainHelper.shared.delete(service: "ghostmail", account: "apiToken")
         defaults.removeObject(forKey: "isAuthenticated")
-    zones = []
-    defaults.removeObject(forKey: "cloudflareZones")
+        zones = []
+        defaults.removeObject(forKey: "cloudflareZones")
     }
     
     func updateEmailRule(tag: String, emailAddress: String, isEnabled: Bool, forwardTo: String, actionType: String = "forward") async throws {
@@ -1268,13 +1324,13 @@ class CloudflareClient: ObservableObject {
     }
     
     func setDefaultForwardingAddress(_ address: String) {
-        print("Setting default forwarding address to: \(address)")
+        debugLog("Setting default forwarding address to: \(address)")
         // Only set if it's a valid forwarding address
         if forwardingAddresses.contains(address) || address.isEmpty {
             defaultForwardingAddress = address
-            print("Default forwarding address set successfully")
+            debugLog("Default forwarding address set successfully")
         } else {
-            print("Warning: Attempted to set invalid forwarding address: \(address)")
+            debugLog("Warning: Attempted to set invalid forwarding address: \(address)")
         }
     }
     
@@ -1334,23 +1390,23 @@ class CloudflareClient: ObservableObject {
         var logHeaders = headers
         if logHeaders["Authorization"] != nil { logHeaders["Authorization"] = "Bearer [REDACTED]" }
     let msg2 = "[Cloudflare] GET \(maskedURL(url, zoneId: zoneId)) — headers: \(logHeaders)"
-    print(msg2); LogBuffer.shared.add(msg2)
+    debugLog(msg2); LogBuffer.shared.add(msg2)
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
         // Validate response and log diagnostic details on failure
         guard let httpResponse = response as? HTTPURLResponse else {
             let m = "[Cloudflare] Zone details: invalid HTTP response for zoneId=\(maskId(zoneId))"
-            print(m); LogBuffer.shared.add(m)
+            debugLog(m); LogBuffer.shared.add(m)
             throw CloudflareError(message: "Failed to fetch zone details")
         }
         guard httpResponse.statusCode == 200 else {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
             let m = "[Cloudflare] Zone details fetch failed — zoneId=\(maskId(zoneId)), status=\(httpResponse.statusCode), url=\(maskedURL(url, zoneId: zoneId)), body=\(body)"
-            print(m); LogBuffer.shared.add(m)
+            debugLog(m); LogBuffer.shared.add(m)
             if let apiErr = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data), let first = apiErr.errors.first {
                 let m2 = "[Cloudflare] API error: code=\(first.code) message=\(first.message)"
-                print(m2); LogBuffer.shared.add(m2)
+                debugLog(m2); LogBuffer.shared.add(m2)
             }
             throw CloudflareError(message: "Failed to fetch zone details")
         }
@@ -1372,7 +1428,7 @@ class CloudflareClient: ObservableObject {
 
         if zoneResponse.success {
             let m3 = "[Cloudflare] Zone details OK — zoneId=\(maskId(zoneId)), domain=\(zoneResponse.result.name), account=\(zoneResponse.result.account.name)"
-            print(m3); LogBuffer.shared.add(m3)
+            debugLog(m3); LogBuffer.shared.add(m3)
             await MainActor.run {
                 self.domainName = zoneResponse.result.name
                 self.accountName = zoneResponse.result.account.name
@@ -1385,17 +1441,17 @@ class CloudflareClient: ObservableObject {
         } else {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
             let m4 = "[Cloudflare] Zone details response success=false — zoneId=\(maskId(zoneId)), body=\(body)"
-            print(m4); LogBuffer.shared.add(m4)
+            debugLog(m4); LogBuffer.shared.add(m4)
             throw CloudflareError(message: "Failed to get domain name from zone response")
         }
     }
     
     func refreshForwardingAddresses() async throws {
-        print("Refreshing forwarding addresses...")
+        debugLog("Refreshing forwarding addresses...")
         
         // Check credentials are valid
         if accountId.isEmpty || zoneId.isEmpty || apiToken.isEmpty {
-            print("Error: Missing Cloudflare credentials")
+            debugLog("Error: Missing Cloudflare credentials")
             throw CloudflareError(message: "Missing Cloudflare credentials. Please check your account ID, zone ID, and API token.")
         }
         
@@ -1435,14 +1491,14 @@ class CloudflareClient: ObservableObject {
                     }
                     return "redacted@example.com"
                 }
-                print("Available addresses (sample): \(redactedAddresses.joined(separator: ", "))")
+                debugLog("Available addresses (sample): \(redactedAddresses.joined(separator: ", "))")
             } else {
-                print("Warning: No forwarding addresses found!")
+                debugLog("Warning: No forwarding addresses found!")
             }
         } catch {
-            print("Error refreshing forwarding addresses: \(error.localizedDescription)")
+            debugLog("Error refreshing forwarding addresses: \(error.localizedDescription)")
             if let cfError = error as? CloudflareError {
-                print("Cloudflare API error: \(cfError.message)")
+                debugLog("Cloudflare API error: \(cfError.message)")
             }
             // Re-throw the error so callers can handle it
             throw error
@@ -1451,11 +1507,11 @@ class CloudflareClient: ObservableObject {
     
     func fetchForwardingAddresses() async throws {
     let msgFA0 = "Fetching forwarding addresses directly from Cloudflare API"
-    print(msgFA0); LogBuffer.shared.add(msgFA0)
+    debugLog(msgFA0); LogBuffer.shared.add(msgFA0)
         // Get the full API URL with account ID
         let addressEndpoint = "\(baseURL)/accounts/\(accountId)/email/routing/addresses"
     let msgFA1 = "API Endpoint: \(maskedURL(URL(string: addressEndpoint)!, accountId: accountId))"
-    print(msgFA1); LogBuffer.shared.add(msgFA1)
+    debugLog(msgFA1); LogBuffer.shared.add(msgFA1)
         
         let url = URL(string: addressEndpoint)!
         var request = URLRequest(url: url)
@@ -1468,30 +1524,30 @@ class CloudflareClient: ObservableObject {
             logHeaders["Authorization"] = "Bearer [REDACTED]"
         }
     let msgFA2 = "Request headers: \(logHeaders)"
-    print(msgFA2); LogBuffer.shared.add(msgFA2)
+    debugLog(msgFA2); LogBuffer.shared.add(msgFA2)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             let error = CloudflareError(message: "Invalid HTTP response")
             let m = "Error: Invalid HTTP response"
-            print(m); LogBuffer.shared.add(m)
+            debugLog(m); LogBuffer.shared.add(m)
             throw error
         }
         
     let msgFA3 = "Response status code: \(httpResponse.statusCode)"
-    print(msgFA3); LogBuffer.shared.add(msgFA3)
+    debugLog(msgFA3); LogBuffer.shared.add(msgFA3)
         
         if httpResponse.statusCode != 200 {
             // Log the response body to help diagnose issues
             if let errorText = String(data: data, encoding: .utf8) {
                 let m = "Error response: \(errorText)"
-                print(m); LogBuffer.shared.add(m)
+                debugLog(m); LogBuffer.shared.add(m)
             }
             
             let error = CloudflareError(message: "Failed to fetch forwarding addresses (HTTP \(httpResponse.statusCode))")
             let m = "Error: \(error.message)"
-            print(m); LogBuffer.shared.add(m)
+            debugLog(m); LogBuffer.shared.add(m)
             throw error
         }
         
@@ -1507,7 +1563,7 @@ class CloudflareClient: ObservableObject {
                 )
                 
                 if verifiedAddresses.isEmpty && !addressResponse.result.isEmpty {
-                    print("Warning: Found addresses but none are verified")
+                    debugLog("Warning: Found addresses but none are verified")
                 }
                 
                 await MainActor.run {
@@ -1534,7 +1590,7 @@ class CloudflareClient: ObservableObject {
         ]
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            if let errorText = String(data: data, encoding: .utf8) { print("Error response: \(errorText)") }
+            if let errorText = String(data: data, encoding: .utf8) { debugLog("Error response: \(errorText)") }
             throw CloudflareError(message: "Failed to fetch forwarding addresses for account \(maskId(accountId))")
         }
         let addressResponse = try JSONDecoder().decode(AddressResponse.self, from: data)
@@ -1670,13 +1726,13 @@ class CloudflareClient: ObservableObject {
             "Content-Type": "application/json"
         ]
         
-        print("[Cloudflare] Fetching MX records for zone \(maskId(zone.zoneId))")
+        debugLog("[Cloudflare] Fetching MX records for zone \(maskId(zone.zoneId))")
         
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            print("[Cloudflare] Failed to fetch DNS records: status=\(statusCode), body=\(body)")
+            debugLog("[Cloudflare] Failed to fetch DNS records: status=\(statusCode), body=\(body)")
             
             // Check for permissions error (403)
             if statusCode == 403 {
@@ -1722,7 +1778,7 @@ class CloudflareClient: ObservableObject {
         // Remove duplicates
         let uniqueSubdomains = Array(Set(subdomains)).sorted()
         
-        print("[Cloudflare] Found \(uniqueSubdomains.count) subdomains with email routing (excluding top-level domain): \(uniqueSubdomains)")
+        debugLog("[Cloudflare] Found \(uniqueSubdomains.count) subdomains with email routing (excluding top-level domain): \(uniqueSubdomains)")
         
         return uniqueSubdomains
     }
@@ -1730,12 +1786,12 @@ class CloudflareClient: ObservableObject {
     // Refresh subdomains for all zones (only for zones with subdomainsEnabled)
     @MainActor
     func refreshSubdomainsAllZones() async throws {
-        print("[Cloudflare] Refreshing subdomains for enabled zones")
+        debugLog("[Cloudflare] Refreshing subdomains for enabled zones")
         
         for (index, zone) in zones.enumerated() {
             // Skip zones that don't have subdomains enabled
             guard zone.subdomainsEnabled else {
-                print("[Cloudflare] Skipping subdomain fetch for zone \(maskId(zone.zoneId)) (disabled)")
+                debugLog("[Cloudflare] Skipping subdomain fetch for zone \(maskId(zone.zoneId)) (disabled)")
                 continue
             }
             
@@ -1743,13 +1799,13 @@ class CloudflareClient: ObservableObject {
                 let subdomains = try await fetchSubdomains(for: zone)
                 zones[index].subdomains = subdomains
             } catch {
-                print("[Cloudflare] Failed to fetch subdomains for zone \(maskId(zone.zoneId)): \(error)")
+                debugLog("[Cloudflare] Failed to fetch subdomains for zone \(maskId(zone.zoneId)): \(error)")
                 // Continue with other zones even if one fails
             }
         }
         
         persistZones()
-        print("[Cloudflare] Subdomain refresh complete")
+        debugLog("[Cloudflare] Subdomain refresh complete")
     }
     
     // Toggle subdomain discovery for a specific zone
@@ -1775,7 +1831,7 @@ class CloudflareClient: ObservableObject {
             persistZones()
         } catch {
             // Failed - don't enable, re-throw the error (already formatted in fetchSubdomains)
-            print("[Cloudflare] Failed to fetch subdomains after enabling: \(error)")
+            debugLog("[Cloudflare] Failed to fetch subdomains after enabling: \(error)")
             throw error
         }
     }
@@ -1790,18 +1846,18 @@ class CloudflareClient: ObservableObject {
             "Content-Type": "application/json"
         ]
         // Log request with redacted headers
-    print("[Cloudflare] GET \(maskedURL(url, zoneId: zoneId)) — headers: [Authorization: Bearer [REDACTED], Content-Type: application/json]")
+    debugLog("[Cloudflare] GET \(maskedURL(url, zoneId: zoneId)) — headers: [Authorization: Bearer [REDACTED], Content-Type: application/json]")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
-            print("[Cloudflare] Zone details (add zone): invalid HTTP response for zoneId=\(maskId(zoneId))")
+            debugLog("[Cloudflare] Zone details (add zone): invalid HTTP response for zoneId=\(maskId(zoneId))")
             throw CloudflareError(message: "Failed to fetch zone details")
         }
         guard httpResponse.statusCode == 200 else {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            print("[Cloudflare] Zone details fetch failed (add zone) — zoneId=\(maskId(zoneId)), status=\(httpResponse.statusCode), url=\(maskedURL(url, zoneId: zoneId)), body=\(body)")
+            debugLog("[Cloudflare] Zone details fetch failed (add zone) — zoneId=\(maskId(zoneId)), status=\(httpResponse.statusCode), url=\(maskedURL(url, zoneId: zoneId)), body=\(body)")
             if let apiErr = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data), let first = apiErr.errors.first {
-                print("[Cloudflare] API error: code=\(first.code) message=\(first.message)")
+                debugLog("[Cloudflare] API error: code=\(first.code) message=\(first.message)")
             }
             throw CloudflareError(message: "Failed to fetch zone details")
         }
@@ -1814,10 +1870,10 @@ class CloudflareClient: ObservableObject {
         let zoneResponse = try JSONDecoder().decode(ZoneResponse.self, from: data)
         guard zoneResponse.success else {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            print("[Cloudflare] Zone details response success=false (add zone) — zoneId=\(maskId(zoneId)), body=\(body)")
+            debugLog("[Cloudflare] Zone details response success=false (add zone) — zoneId=\(maskId(zoneId)), body=\(body)")
             throw CloudflareError(message: "Failed to get domain name from zone response")
         }
-    print("[Cloudflare] Zone details OK (add zone) — zoneId=\(maskId(zoneId)), domain=\(zoneResponse.result.name), account=\(zoneResponse.result.account.name)")
+    debugLog("[Cloudflare] Zone details OK (add zone) — zoneId=\(maskId(zoneId)), domain=\(zoneResponse.result.name), account=\(zoneResponse.result.account.name)")
         return (domainName: zoneResponse.result.name, accountName: zoneResponse.result.account.name)
     }
     
@@ -1835,9 +1891,9 @@ class CloudflareClient: ObservableObject {
         // ──────────────────────────────────────────────────────────────────────
         do {
             let merged = try EmailAlias.deduplicate(in: modelContext)
-            if merged > 0 { print("Pre-sync deduplication merged \(merged) iCloud duplicates") }
+            if merged > 0 { debugLog("Pre-sync deduplication merged \(merged) iCloud duplicates") }
         } catch {
-            print("Pre-sync deduplication error: \(error)")
+            debugLog("Pre-sync deduplication error: \(error)")
         }
         
         var cloudflareRules = try await getEmailRulesAllZones()
@@ -1847,7 +1903,7 @@ class CloudflareClient: ObservableObject {
         var seenEmails = Set<String>()
         cloudflareRules = cloudflareRules.filter { rule in
             guard !seenEmails.contains(rule.emailAddress) else {
-                print("⚠️ Skipping duplicate email rule for: \(rule.emailAddress)")
+                debugLog("⚠️ Skipping duplicate email rule for: \(rule.emailAddress)")
                 return false
             }
             seenEmails.insert(rule.emailAddress)
@@ -1885,7 +1941,7 @@ class CloudflareClient: ObservableObject {
                 }
             }
         } catch {
-            print("Error fetching existing aliases for refresh: \(error)")
+            debugLog("Error fetching existing aliases for refresh: \(error)")
         }
         
         // Remove deleted aliases, but only those that belong to configured zones and are missing there
@@ -1897,7 +1953,7 @@ class CloudflareClient: ObservableObject {
                 guard !alias.zoneId.isEmpty, configuredZoneIds.contains(alias.zoneId) else { continue }
                 // If no matching rule exists for that email in the aggregated set, delete
                 if cloudflareRulesByEmail[alias.emailAddress] == nil {
-                    print("Deleting alias not found in any configured zones: \(alias.emailAddress) [zone: \(alias.zoneId)]")
+                    debugLog("Deleting alias not found in any configured zones: \(alias.emailAddress) [zone: \(alias.zoneId)]")
                     modelContext.delete(alias)
                 }
             }
@@ -1934,7 +1990,7 @@ class CloudflareClient: ObservableObject {
                     // Adopt the iCloud-delivered record — update Cloudflare fields, keep metadata
                     // Only set changed properties to avoid dirtying the record needlessly
                     // (see note above about preventing CloudKit metadata overwrite)
-                    print("Adopting iCloud-delivered record for: \(emailAddress)")
+                    debugLog("Adopting iCloud-delivered record for: \(emailAddress)")
                     let adoptZoneId = rule.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
                     if arrivedFromICloud.isLoggedOut { arrivedFromICloud.isLoggedOut = false }
                     if arrivedFromICloud.cloudflareTag != rule.cloudflareTag { arrivedFromICloud.cloudflareTag = rule.cloudflareTag }
@@ -1965,9 +2021,9 @@ class CloudflareClient: ObservableObject {
         // Final dedup pass to merge any stragglers that arrived during the loop
         do {
             let removed = try EmailAlias.deduplicate(in: modelContext)
-            if removed > 0 { print("Post-sync deduplication merged \(removed) aliases") }
+            if removed > 0 { debugLog("Post-sync deduplication merged \(removed) aliases") }
         } catch {
-            print("Deduplication error: \(error)")
+            debugLog("Deduplication error: \(error)")
         }
     }
 }

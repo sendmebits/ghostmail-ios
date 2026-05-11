@@ -108,10 +108,20 @@ struct EmailDetailView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem)
     }
     
-    private func copyToClipboard(_ text: String) {
+    /// Copies `text` to the system pasteboard.
+    ///
+    /// When `isSensitive == true`, uses `Pasteboard.copySensitive` so the value
+    /// is local-only (no Universal Clipboard) and auto-clears after 60 seconds.
+    /// Use that for forward-to addresses and notes; the alias address itself
+    /// is intended to be pasted into another app, so it stays a normal copy.
+    private func copyToClipboard(_ text: String, isSensitive: Bool = false) {
         let generator = UIImpactFeedbackGenerator(style: .heavy)
         generator.impactOccurred()
-        UIPasteboard.general.string = text
+        if isSensitive {
+            Pasteboard.copySensitive(text)
+        } else {
+            UIPasteboard.general.string = text
+        }
         showToastWithTimer(text)
     }
 
@@ -387,13 +397,13 @@ struct EmailDetailView: View {
                         .onLongPressGesture {
                             // Only copy if forwarding and has a destination
                             if !isEditing && email.actionType == .forward && !email.forwardTo.isEmpty {
-                                copyToClipboard(email.forwardTo)
+                                copyToClipboard(email.forwardTo, isSensitive: true)
                             }
                         }
                         .contextMenu {
                             if !isEditing && email.actionType == .forward && !email.forwardTo.isEmpty {
                                 Button {
-                                    copyToClipboard(email.forwardTo)
+                                    copyToClipboard(email.forwardTo, isSensitive: true)
                                 } label: {
                                     Label("Copy Destination", systemImage: "doc.on.doc")
                                 }
@@ -456,7 +466,7 @@ struct EmailDetailView: View {
                                 .contextMenu {
                                     Button {
                                         if !email.notes.isEmpty {
-                                            copyToClipboard(email.notes)
+                                            copyToClipboard(email.notes, isSensitive: true)
                                         }
                                     } label: {
                                         Text("Copy Notes")

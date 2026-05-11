@@ -528,7 +528,11 @@ struct SettingsView: View {
                         dismiss()
                     }
                 } message: {
-                    Text("This will clear all local data and you'll need to sign in again.")
+                    if iCloudSyncEnabled {
+                        Text("Your Cloudflare API tokens will be removed from this device. Your alias data (notes, websites, dates) is kept locally unless you delete the app.")
+                    } else {
+                        Text("Your API tokens will be removed from this device. Your alias data (notes, websites, dates) is kept locally and will reappear when you sign back in. Note: iCloud sync is off — if you uninstall the app before signing back in, this data will be permanently lost.")
+                    }
                 }
                 .alert("Import Error", isPresented: $showImportError, presenting: importError) { _ in
                     Button("OK", role: .cancel) { }
@@ -892,13 +896,13 @@ private struct CloudflareAccountSectionView: View {
                     .foregroundStyle(.secondary)
                     .onLongPressGesture(minimumDuration: 0.5) {
                         if !cloudflareClient.accountId.isEmpty {
-                            UIPasteboard.general.string = cloudflareClient.accountId
+                            Pasteboard.copySensitive(cloudflareClient.accountId)
                             let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
                         }
                     }
                     .contextMenu {
                         Button {
-                            UIPasteboard.general.string = cloudflareClient.accountId
+                            Pasteboard.copySensitive(cloudflareClient.accountId)
                             let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
                         } label: {
                             Text("Copy Account ID")
@@ -1164,7 +1168,7 @@ private struct SettingsSectionView: View {
     let sortedForwardingAddresses: [String]
     let toggleICloudSync: (Bool) -> Void
     @AppStorage("themePreference") private var themePreferenceRaw: String = ThemePreference.auto.rawValue
-    
+
     private var themePreference: ThemePreference {
         ThemePreference(rawValue: themePreferenceRaw) ?? .auto
     }
@@ -1259,7 +1263,7 @@ private struct SettingsSectionView: View {
 
             Toggle("Show Website Logo", isOn: $showWebsiteLogo)
                 .tint(.accentColor)
-            
+
             Toggle("Sync Metadata to iCloud", isOn: $iCloudSyncEnabled)
                 .tint(.accentColor)
                 .onChange(of: iCloudSyncEnabled) { oldValue, newValue in
@@ -1341,7 +1345,9 @@ private struct SendLogsSectionView: View {
             Button {
                 let text = LogBuffer.shared.dumpText()
                 let logText = text.isEmpty ? "(No recent logs)" : text
-                UIPasteboard.general.string = logText
+                // Logs may include masked-but-still-identifying URL paths, error
+                // bodies, etc. Use the auto-expiring sensitive copy.
+                Pasteboard.copySensitive(logText)
                 
                 // Haptic feedback
                 let impactFeedback = UIImpactFeedbackGenerator(style: .light)

@@ -390,14 +390,14 @@ struct WeeklyEmailsView: View {
             .contentShape(Rectangle())
             .contextMenu {
                 Button {
-                    UIPasteboard.general.string = email.from
+                    Pasteboard.copySensitive(email.from)
                     let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
                     showCopyToast = true
                 } label: {
                     Label("Copy Sender", systemImage: "doc.on.doc")
                 }
                 Button {
-                    UIPasteboard.general.string = email.to
+                    Pasteboard.copySensitive(email.to)
                     let g = UIImpactFeedbackGenerator(style: .light); g.impactOccurred()
                     showCopyToast = true
                 } label: {
@@ -405,7 +405,7 @@ struct WeeklyEmailsView: View {
                 }
             }
             .onLongPressGesture {
-                UIPasteboard.general.string = email.from
+                Pasteboard.copySensitive(email.from)
                 let generator = UIImpactFeedbackGenerator(style: .light)
                 generator.impactOccurred()
                 showCopyToast = true
