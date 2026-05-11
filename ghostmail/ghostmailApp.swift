@@ -290,9 +290,11 @@ struct ghostmailApp: App {
                         }
                         await ghostmailApp.updateUserIdentifiers(modelContext: modelContainer.mainContext)
                         await pullMetadataFromCloudKit()
-                        
-                        // Pull metadata from CloudKit so local aliases get notes/website
-                        // from the other device if they arrived during startup.
+
+                        // Retry after a brief delay so we also pick up records the other
+                        // device pushed during startup (mirrors the same pattern used by
+                        // the `.requestCloudKitMetadataPull` observer above).
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
                         await pullMetadataFromCloudKit()
                     }
                 }
