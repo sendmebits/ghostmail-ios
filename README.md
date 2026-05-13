@@ -20,9 +20,9 @@ Ghost Mail is a free and open-source iPhone app to manage email alias' for Cloud
 - 🔒 Protects your main email from being exposed in breaches
 - 🛠️ Verifiable 100% open-source software with no paywalls
 - 📋 View all of your email aliases while offline
-- 📨 Add multiple email domains
+- 📨 Add multiple email domains and subdomains
 - 💾 Sync to iCloud + CSV import/export
-- 📧 Send email from email aliases
+- 📧 Send email from email aliases (*SMTP required)
 - 📨 Email analytics and charts
 
 <p align="center">
