@@ -172,19 +172,51 @@ class ShareViewController: UIViewController {
             return
         }
         DispatchQueue.main.async {
-            // Use the supported `extensionContext.open(_:completionHandler:)`
-            // path. We previously had a `UIApplication.value(forKeyPath:)` KVC
-            // fallback here, which is a private-API access pattern that risks
-            // App Store review and obscures the security boundary between the
-            // extension and the host app. If the standard call fails, we just
-            // surface that to the user via completion (no fallback).
             self.extensionContext?.open(openURL, completionHandler: { success in
                 debugLog("[GhostMailShareExt] extensionContext open success=\(success)")
+                if !success {
+                    self.openViaResponderChain(openURL)
+                }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     self.completeRequest()
                 }
             })
         }
+    }
+
+    // Fallback when `extensionContext.open(_:completionHandler:)` reports
+    // `success: false` (a long-standing behavior for Share Extensions when the
+    // host app isn't already running). Walk the responder chain to find the
+    // `UIApplication` instance and invoke its non-deprecated
+    // `openURL:options:completionHandler:` IMP directly via the Obj-C runtime.
+    //
+    // The class check is load-bearing: `UIScene` exposes a same-named selector
+    // whose second argument is a `UISceneOpenExternalURLOptions` *object*
+    // rather than an `NSDictionary`. Hitting UIScene first and feeding it a
+    // dictionary crashes inside UIKit with
+    // `-[__NSDictionary universalLinksOnly]` unrecognized selector. The
+    // legacy single-arg `openURL:` selector is also no longer usable — iOS
+    // logs "BUG IN CLIENT OF UIKIT" and force-returns NO for it.
+    private func openViaResponderChain(_ url: URL) {
+        guard let appClass = NSClassFromString("UIApplication") else {
+            debugLog("[GhostMailShareExt] responder fallback: UIApplication class missing")
+            return
+        }
+        let selector = NSSelectorFromString("openURL:options:completionHandler:")
+        typealias OpenURLFn = @convention(c) (NSObject, Selector, NSURL, NSDictionary, AnyObject?) -> Void
+        var responder: UIResponder? = self
+        while let current = responder {
+            if current.isKind(of: appClass), current.responds(to: selector) {
+                debugLog("[GhostMailShareExt] responder fallback: invoking UIApplication.openURL:options:completionHandler:")
+                let target = current as NSObject
+                let imp = target.method(for: selector)
+                let fn = unsafeBitCast(imp, to: OpenURLFn.self)
+                fn(target, selector, url as NSURL, [:] as NSDictionary, nil)
+                return
+            }
+            responder = current.next
+        }
+        debugLog("[GhostMailShareExt] responder fallback: UIApplication not found in responder chain")
     }
 
     private func completeRequest() {
