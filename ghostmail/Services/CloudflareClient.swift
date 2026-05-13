@@ -549,9 +549,8 @@ class CloudflareClient: ObservableObject {
         
         request.httpBody = try JSONSerialization.data(withJSONObject: rule)
         
-        let (data, _) = try await URLSession.shared.data(for: request)
-        let response = try JSONDecoder().decode(CloudflareResponse<EmailRule>.self, from: data)
-        return response.result
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return try decodeCreateEmailRuleResponse(data: data, response: response)
     }
 
     // Overload to create a rule in a specified zone using that zone's token
@@ -583,9 +582,61 @@ class CloudflareClient: ObservableObject {
         ] as [String: Any]
 
         request.httpBody = try JSONSerialization.data(withJSONObject: rule)
-        let (data, _) = try await URLSession.shared.data(for: request)
-        let response = try JSONDecoder().decode(CloudflareResponse<EmailRule>.self, from: data)
-        return response.result
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return try decodeCreateEmailRuleResponse(data: data, response: response)
+    }
+
+    private func decodeCreateEmailRuleResponse(data: Data, response: URLResponse) throws -> EmailRule {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw CloudflareError(message: "Invalid response from server")
+        }
+
+        if !(200...299).contains(httpResponse.statusCode) {
+            throw createEmailRuleError(from: data, statusCode: httpResponse.statusCode)
+        }
+
+        do {
+            let createResponse = try JSONDecoder().decode(CloudflareCreateEmailRuleResponse.self, from: data)
+            guard createResponse.success, let rule = createResponse.result else {
+                throw createEmailRuleError(from: createResponse.errors ?? [], statusCode: httpResponse.statusCode)
+            }
+            return rule
+        } catch let cloudflareError as CloudflareError {
+            throw cloudflareError
+        } catch {
+            throw CloudflareError(message: "Failed to create email alias")
+        }
+    }
+
+    private func createEmailRuleError(from data: Data, statusCode: Int) -> CloudflareError {
+        if let errorResponse = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data) {
+            return createEmailRuleError(from: errorResponse.errors, statusCode: statusCode)
+        }
+
+        if statusCode == 409 {
+            return CloudflareError(message: "Email already exists")
+        }
+
+        return CloudflareError(message: "Failed to create email alias")
+    }
+
+    private func createEmailRuleError(from errors: [CloudflareErrorDetail], statusCode: Int) -> CloudflareError {
+        if statusCode == 409 || errors.contains(where: { isDuplicateEmailRuleError($0) }) {
+            return CloudflareError(message: "Email already exists")
+        }
+
+        return CloudflareError(message: errors.first?.message ?? "Failed to create email alias")
+    }
+
+    private func isDuplicateEmailRuleError(_ error: CloudflareErrorDetail) -> Bool {
+        let message = error.message.lowercased()
+        return message.contains("already exists")
+            || message.contains("already exist")
+            || message.contains("already in use")
+            || message.contains("already been taken")
+            || message.contains("duplicate")
+            || message.contains("conflict")
+            || message.contains("must be unique")
     }
     
     // MARK: - Analytics
@@ -2034,6 +2085,12 @@ struct CloudflareResponse<T: Codable>: Codable {
     let errors: [CloudflareErrorDetail]
     let messages: [String]
     let result_info: ResultInfo?
+}
+
+private struct CloudflareCreateEmailRuleResponse: Codable {
+    let result: EmailRule?
+    let success: Bool
+    let errors: [CloudflareErrorDetail]?
 }
 
 struct ResultInfo: Codable {
