@@ -58,7 +58,7 @@ Ghost Mail is a free and open-source iPhone and iPad app to manage email aliases
 
 Log in to your Cloudflare dashboard, choose a zone/domain, and copy Account ID and Zone ID from your domain's overview page.
 
-You can enter credentials separately or use Quick Auth with the format:
+You can enter credentials separately or use Quick Auth (easier autofill with password manager) with the format:
 
 ```
 Account ID:Zone ID:Token
