@@ -1,9 +1,9 @@
 <div align="center">
   
-# <img width="32" height="32" alt="Ghostmail_gpt_dark_FULL" src="https://github.com/user-attachments/assets/9bae55b4-3201-47a8-b801-33123aa86b4d" />  Ghost Mail for iPhone
+# <img width="32" height="32" alt="Ghostmail_gpt_dark_FULL" src="https://github.com/user-attachments/assets/9bae55b4-3201-47a8-b801-33123aa86b4d" />  Ghost Mail for iPhone and iPad
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-iOS%2018%2B-blue?style=flat-square)]()
+[![Platform](https://img.shields.io/badge/platform-iOS%2FiPadOS%2018.2%2B-blue?style=flat-square)]()
 [![Release](https://img.shields.io/github/v/release/sendmebits/ghostmail-ios.svg?style=flat-square)](https://github.com/sendmebits/ghostmail-ios/releases)
 [![Issues](https://img.shields.io/github/issues/sendmebits/ghostmail-ios?style=flat-square)](https://github.com/sendmebits/ghostmail-ios/issues)
 [![Pull Requests](https://img.shields.io/github/issues-pr/sendmebits/ghostmail-ios?style=flat-square)](https://github.com/sendmebits/ghostmail-ios/pulls)
@@ -12,7 +12,7 @@
 
 </div>
 
-Ghost Mail is a free and open-source iPhone app to manage email alias' for Cloudflare hosted domains. It lets you quickly create disposable email addresses on the fly, shielding your main email from unwanted messages, data breaches, tracking and targeted ads. With full open-source transparency enjoy peace of mind knowing that your primary email address is being kept private!
+Ghost Mail is a free and open-source iPhone and iPad app to manage email aliases for Cloudflare-hosted domains. It lets you quickly create disposable email addresses on the fly, shielding your main email from unwanted messages, data breaches, tracking and targeted ads. With full open-source transparency, you can enjoy peace of mind knowing that your primary email address is being kept private!
 
 **Ghost Mail Features:**
 - 📵 Easily ghost spammers by disabling or deleting aliases
@@ -23,7 +23,9 @@ Ghost Mail is a free and open-source iPhone app to manage email alias' for Cloud
 - 📨 Add multiple email domains and subdomains
 - 💾 Sync to iCloud + CSV import/export
 - 📧 Send email from email aliases (*SMTP required)
-- 📨 Email analytics and charts
+- 📨 Optional email analytics and charts (*Cloudflare API Analytics permission required)
+- 🧭 Create aliases from Safari and other apps with the Share Extension
+- ⚡ Quickly start a new alias with `ghostmail://create?url=...` deep links or the Home Screen "Create Alias" quick action
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/671ba0ab-f795-44c6-8916-4c01d71585f5" alt="Alias List" width="250">
@@ -35,12 +37,18 @@ Ghost Mail is a free and open-source iPhone app to manage email alias' for Cloud
 
 1. You must have a domain hosted by Cloudflare - https://cloudflare.com/
 2. <code>Cloudflare.com > <domain.com> > Email > Email Routing</code> must be enabled
-3. At least 1 verified destination email addresses must have been created:
+3. At least one verified destination email address must have been created:
        <code>Cloudflare.com > <domain.com> > Email > Email Routing > Destination Addresses</code> 
 
 # How to login
 
 Log in to your Cloudflare dashboard, choose a zone/domain, and copy Account ID and Zone ID from your domain's overview page.
+
+You can enter credentials separately or use Quick Auth with the format:
+
+```
+Account ID:Zone ID:Token
+```
 
 Go to Profile > <a href="https://dash.cloudflare.com/profile/api-tokens">API Tokens</a> > Create new token (then choose Custom token)
 
@@ -50,8 +58,8 @@ Token Permissions:
 1. Account > Email Routing Addresses > **Read**
 2. Zone > Email Routing Rules > **Edit**
 3. Zone > Zone Settings > **Read**
-4. Zone > Analytics > **Read**  _(OPTIONAL but recommended: Required for email statistcs and charts)_
-5. Zone > DNS > **Read**  _(OPTIONAL: Only required subdomains are going to be used)_
+4. Zone > Analytics > **Read**  _(OPTIONAL but recommended: Required for email statistics and charts)_
+5. Zone > DNS > **Read**  _(OPTIONAL: Only required if subdomains are going to be used)_
 
 
 # Use the CSV import feature to quickly bulk add new email alias entries
@@ -59,22 +67,24 @@ Token Permissions:
 CSV formatting is as follows, note the optional fields:
 
 ```
-Email Address,Website,Notes,Created,Enabled,Forward To
-user@domain.com,website.com[optional],notes[optional],2025-02-07T01:39:10Z[optional],true,forwardto@domain.com
+Email Address,Website,Notes,Created,Enabled,Forward To,Action Type
+user@domain.com,website.com[optional],notes[optional],2025-02-07T01:39:10Z[optional],true,forwardto@domain.com,forward[optional]
 ```
 
 CSV import notes:
 - On import, the app infers the target zone from the email domain in `Email Address`.
-- If no configured zone matches the email's domain, the current primary zone is used as a fallback.
-- Imports will update and overwrite existing; review after importing.
+- Imports are limited to configured zones and enabled subdomains; unknown domains are skipped.
+- If a domain is allowed but cannot be resolved to a specific zone, the current primary zone is used as a fallback.
+- `Action Type` is optional on import and defaults to `forward` when omitted.
+- Imports will update and overwrite existing aliases; review after importing.
 
 # Privacy
-- Ghost Mail does not use any servers or external infrastructure; all actions happen directly from your device.
-- The app talks directly to Cloudflare using your API token with minimal required permissions; there is no intermediary service.
+- Ghost Mail has no Ghost Mail-owned backend or intermediary service. It talks directly to Cloudflare, optional iCloud/CloudKit, SMTP servers, and websites for favicons.
+- The app talks directly to Cloudflare using your API token with minimal required permissions.
 - Your Cloudflare API token is stored securely in the iOS Keychain (with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, so tokens never leave the device they were entered on, including via iCloud Keychain).
 - SMTP credentials (if you configure sending email) are also stored securely in the iOS Keychain. SMTP traffic is encrypted by default (Implicit TLS or STARTTLS); plaintext is opt-in only and requires an explicit confirmation.
 - Email aliases and their metadata (website, notes, dates) can optionally sync to your iCloud account for backup; you can turn this on or off in Settings at any time.
-- Cached email statistics and favicon files on disk are written with `NSFileProtectionComplete`, so they are encrypted at rest while the device is locked.
+- Cached email statistics are written with `NSFileProtectionComplete`, so they are encrypted at rest while the device is locked. Favicon cache files also use complete file protection when available.
 - Website logos (favicons) are fetched directly from each website only.
 
 # Why Use Email Aliases
