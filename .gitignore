@@ -4,6 +4,7 @@
 .vscode/
 .build/
 .cursor/
+.claude/
 .env
 
 # Secrets / signing (never commit)
