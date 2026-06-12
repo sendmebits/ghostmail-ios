@@ -202,10 +202,10 @@ struct EmailCreateView: View {
             if forwardTo.isEmpty {
                 let defaultAddress = cloudflareClient.currentDefaultForwardingAddress
                 if !defaultAddress.isEmpty {
-                    print("Setting forwarding address to default from settings: \(defaultAddress)")
+                    debugLog("Setting forwarding address to default from settings: \(defaultAddress)")
                     forwardTo = defaultAddress
                 } else {
-                    print("No default forwarding address set in settings.")
+                    debugLog("No default forwarding address set in settings.")
                 }
             }
 
@@ -315,7 +315,7 @@ struct EmailCreateView: View {
                         }
                     }
                 } catch {
-                    print("AI generation failed: \(error)")
+                    debugLog("AI generation failed: \(error)")
                     // Silently fail - user can just type manually
                 }
             }

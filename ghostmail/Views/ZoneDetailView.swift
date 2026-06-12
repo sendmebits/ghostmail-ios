@@ -264,7 +264,7 @@ struct ZoneDetailView: View {
                 catchAllStatus = status
             }
         } catch {
-            print("Failed to fetch catch-all status: \(error)")
+            debugLog("Failed to fetch catch-all status: \(error)")
             await MainActor.run {
                 catchAllStatus = nil
             }

@@ -729,7 +729,7 @@ struct EmailDetailView: View {
                 self.isLoadingStatistics = false
             }
         } catch {
-            print("Error loading statistics for \(email.emailAddress): \(error)")
+            debugLog("Error loading statistics for \(email.emailAddress): \(error)")
             await MainActor.run {
                 self.emailStatistic = nil
                 self.isLoadingStatistics = false
@@ -764,9 +764,9 @@ struct EmailDetailView: View {
         isLoading = true
         
         do {
-            print("Saving changes for email: \(email.emailAddress)")
-            print("Website: '\(tempWebsite)' -> '\(email.website)'")
-            print("Notes: '\(tempNotes)' -> '\(email.notes)'")
+            debugLog("Saving changes for email: \(email.emailAddress)")
+            debugLog("Website: '\(tempWebsite)' -> '\(email.website)'")
+            debugLog("Notes: '\(tempNotes)' -> '\(email.notes)'")
             
             // Determine the action type based on the Forward toggle
             let newActionType: EmailRuleActionType = tempIsForwarding ? .forward : .drop
@@ -782,7 +782,7 @@ struct EmailDetailView: View {
             // Ensure user identifier is set for CloudKit sync
             if email.userIdentifier.isEmpty {
                 email.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
-                print("Set user identifier for email: \(email.userIdentifier)")
+                debugLog("Set user identifier for email: \(email.userIdentifier)")
             }
             
             // Ensure we have a valid zone for this alias and a verified forwarding address within that zone
@@ -831,7 +831,7 @@ struct EmailDetailView: View {
             // Dismiss the view after successful save
             dismiss()
         } catch {
-            print("Error saving changes: \(error)")
+            debugLog("Error saving changes: \(error)")
             self.error = error
             self.showError = true
             

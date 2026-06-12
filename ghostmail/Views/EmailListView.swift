@@ -333,9 +333,9 @@ struct EmailListView: View {
             // Treat user-initiated cancellations and timeouts as non-fatal
             // Timeouts are common when returning from background as the network wakes up
             if isNonFatalNetworkError(error) {
-                print("Refresh failed with non-fatal error (ignored): \(error.localizedDescription)")
+                debugLog("Refresh failed with non-fatal error (ignored): \(error.localizedDescription)")
             } else {
-                print("Error during refresh: \(error)")
+                debugLog("Error during refresh: \(error)")
                 self.error = error
                 self.showError = true
             }
@@ -394,9 +394,9 @@ struct EmailListView: View {
         // Fast local deduplication first
         do {
             let deleted = try EmailAlias.deduplicate(in: modelContext)
-            if deleted > 0 { print("Deduplicated \(deleted) aliases during refresh") }
+            if deleted > 0 { debugLog("Deduplicated \(deleted) aliases during refresh") }
         } catch {
-            print("Error during refresh deduplication: \(error)")
+            debugLog("Error during refresh deduplication: \(error)")
         }
         
         // Run alias sync and statistics fetch in parallel for faster refresh
@@ -419,7 +419,7 @@ struct EmailListView: View {
         
         // Prevent concurrent statistics loads
         guard !isLoadingStatistics else {
-            print("Statistics load already in progress, skipping")
+            debugLog("Statistics load already in progress, skipping")
             return
         }
         
@@ -434,7 +434,7 @@ struct EmailListView: View {
             
             // If cache is fresh, just use it without showing loading state
             if !cached.isStale {
-                print("📊 Cache is fresh, skipping network fetch")
+                debugLog("📊 Cache is fresh, skipping network fetch")
                 
                 // Only update if data actually changed to prevent unnecessary re-renders
                 let newFiltered = filterStatistics(cached.statistics)
@@ -468,7 +468,7 @@ struct EmailListView: View {
                 }
             }
             
-            print("📊 Cache is stale, fetching fresh data while showing cached")
+            debugLog("📊 Cache is stale, fetching fresh data while showing cached")
         }
         
         // Set loading state only when we need to fetch from network
@@ -490,7 +490,7 @@ struct EmailListView: View {
                             forceFull: forceFull
                         )
                     } catch {
-                        print("Error fetching statistics for zone \(zone.zoneId): \(error)")
+                        debugLog("Error fetching statistics for zone \(zone.zoneId): \(error)")
                         return []
                     }
                 }
@@ -522,7 +522,7 @@ struct EmailListView: View {
             }
         } else {
             // Network fetch returned empty - keep showing cached data if we have it
-            print("📊 Network fetch returned empty, keeping cached data")
+            debugLog("📊 Network fetch returned empty, keeping cached data")
             await MainActor.run {
                 self.isLoadingStatistics = false
                 // Don't clear isUsingCachedStatistics if we're still showing cached data
@@ -644,7 +644,7 @@ struct EmailListView: View {
         
         // If cache has been updated since we last checked, reload from cache
         if cacheTimestamp > lastCacheCheckTime {
-            print("Statistics cache updated, reloading data...")
+            debugLog("Statistics cache updated, reloading data...")
             lastCacheCheckTime = cacheTimestamp
             
             Task {
@@ -668,14 +668,14 @@ struct EmailListView: View {
             zip(newFiltered, emailStatistics).contains { $0.emailAddress != $1.emailAddress || $0.count != $1.count }
         
         guard hasChanged else {
-            print("📊 Statistics unchanged, skipping update")
+            debugLog("📊 Statistics unchanged, skipping update")
             return
         }
         
         await MainActor.run {
             self.unfilteredStatistics = cached.statistics
             self.emailStatistics = newFiltered
-            print("Statistics refreshed from updated cache (\(cached.statistics.count) addresses)")
+            debugLog("Statistics refreshed from updated cache (\(cached.statistics.count) addresses)")
         }
     }
     
@@ -1038,7 +1038,7 @@ struct EmailListView: View {
                 try await cloudflareClient.ensureForwardingAddressesLoaded()
             }
         } catch {
-            print("Error loading forwarding addresses for list view: \(error)")
+            debugLog("Error loading forwarding addresses for list view: \(error)")
         }
         
         // Show loading spinner only on truly empty initial load
@@ -1092,7 +1092,7 @@ struct EmailListView: View {
                 try await cloudflareClient.refreshForwardingAddresses()
             }
         } catch {
-            print("Error refreshing addresses after zone change: \(error)")
+            debugLog("Error refreshing addresses after zone change: \(error)")
         }
         await refreshEmailRules()
     }

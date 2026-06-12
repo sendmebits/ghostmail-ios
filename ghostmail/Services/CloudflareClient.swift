@@ -215,6 +215,13 @@ class CloudflareClient: ObservableObject {
         if let aid = accountId, !aid.isEmpty { s = s.replacingOccurrences(of: aid, with: maskId(aid)) }
         return s
     }
+
+    private func maskedResponseBody(_ body: String, accountId: String? = nil, zoneId: String? = nil) -> String {
+        var s = body
+        if let zid = zoneId, !zid.isEmpty { s = s.replacingOccurrences(of: zid, with: maskId(zid)) }
+        if let aid = accountId, !aid.isEmpty { s = s.replacingOccurrences(of: aid, with: maskId(aid)) }
+        return s
+    }
     
     // MARK: - Email Address Helpers
     
@@ -1453,7 +1460,8 @@ class CloudflareClient: ObservableObject {
         }
         guard httpResponse.statusCode == 200 else {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            let m = "[Cloudflare] Zone details fetch failed — zoneId=\(maskId(zoneId)), status=\(httpResponse.statusCode), url=\(maskedURL(url, zoneId: zoneId)), body=\(body)"
+            let safeBody = maskedResponseBody(body, accountId: accountId, zoneId: zoneId)
+            let m = "[Cloudflare] Zone details fetch failed — zoneId=\(maskId(zoneId)), status=\(httpResponse.statusCode), url=\(maskedURL(url, zoneId: zoneId)), body=\(safeBody)"
             debugLog(m); LogBuffer.shared.add(m)
             if let apiErr = try? JSONDecoder().decode(CloudflareErrorResponse.self, from: data), let first = apiErr.errors.first {
                 let m2 = "[Cloudflare] API error: code=\(first.code) message=\(first.message)"
@@ -1491,7 +1499,8 @@ class CloudflareClient: ObservableObject {
             }
         } else {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            let m4 = "[Cloudflare] Zone details response success=false — zoneId=\(maskId(zoneId)), body=\(body)"
+            let safeBody = maskedResponseBody(body, accountId: accountId, zoneId: zoneId)
+            let m4 = "[Cloudflare] Zone details response success=false — zoneId=\(maskId(zoneId)), body=\(safeBody)"
             debugLog(m4); LogBuffer.shared.add(m4)
             throw CloudflareError(message: "Failed to get domain name from zone response")
         }
@@ -1592,7 +1601,8 @@ class CloudflareClient: ObservableObject {
         if httpResponse.statusCode != 200 {
             // Log the response body to help diagnose issues
             if let errorText = String(data: data, encoding: .utf8) {
-                let m = "Error response: \(errorText)"
+                let safeErrorText = maskedResponseBody(errorText, accountId: accountId, zoneId: zoneId)
+                let m = "Error response: \(safeErrorText)"
                 debugLog(m); LogBuffer.shared.add(m)
             }
             

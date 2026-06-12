@@ -312,7 +312,7 @@ struct AuthenticationView: View {
                     let remainingZones = cloudflareClient.zonesNeedingReauth
                     if remainingZones.isEmpty {
                         // All zones authenticated - we're done
-                        print("[AuthenticationView] All zones re-authenticated successfully")
+                        debugLog("[AuthenticationView] All zones re-authenticated successfully")
                         
                         // Trigger a sync to refresh data
                         Task {
@@ -322,7 +322,7 @@ struct AuthenticationView: View {
                         // Move to next zone
                         currentReauthIndex += 1
                         apiToken = ""  // Clear for next entry
-                        print("[AuthenticationView] Moving to next zone, \(remainingZones.count) remaining")
+                        debugLog("[AuthenticationView] Moving to next zone, \(remainingZones.count) remaining")
                     }
                 }
             } catch {
@@ -380,7 +380,7 @@ struct AuthenticationView: View {
                         cloudflareClient.isAuthenticated = true
                         
                         // Loading forwarding addresses needs to be done in a separate Task
-                        print("Setting up task to load forwarding addresses")
+                        debugLog("Setting up task to load forwarding addresses")
                         
                         // Then restore any data that was previously logged out
                         let loggedOutDescriptor = FetchDescriptor<EmailAlias>(
@@ -392,7 +392,7 @@ struct AuthenticationView: View {
                         
                         // Restore logged out aliases
                         if !loggedOutAliases.isEmpty {
-                            print("Restoring \(loggedOutAliases.count) previously logged out aliases")
+                            debugLog("Restoring \(loggedOutAliases.count) previously logged out aliases")
                             for alias in loggedOutAliases {
                                 alias.isLoggedOut = false
                             }
@@ -403,7 +403,7 @@ struct AuthenticationView: View {
                         Task {
                             do {
                                 // First load the forwarding addresses
-                                print("Loading forwarding addresses immediately after login")
+                                debugLog("Loading forwarding addresses immediately after login")
                                 try await cloudflareClient.refreshForwardingAddresses()
                                 
                                 // Then fetch email rules
@@ -457,7 +457,7 @@ struct AuthenticationView: View {
                                 // Check and auto-enable analytics if the API has permission
                                 await cloudflareClient.checkAndEnableAnalyticsIfPermitted()
                             } catch {
-                                print("Error syncing data: \(error)")
+                                debugLog("Error syncing data: \(error)")
                             }
                         }
                     } else {

@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage("themePreference") private var themePreferenceRaw: String = "Auto"
     @State private var showFileImporter = false
     @State private var showExportDialog = false
+    @State private var exportURL: URL?
     @State private var importError: Error?
     @State private var showImportError = false
     @State private var showImportConfirmation = false
@@ -75,18 +76,107 @@ struct SettingsView: View {
     private func exportToCSV() {
         let allowedZoneIds = Set(cloudflareClient.zones.map { $0.zoneId.trimmingCharacters(in: .whitespacesAndNewlines) })
         let filtered = emailAliases.filter { allowedZoneIds.contains($0.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)) }
-        let csvString = "Email Address,Website,Notes,Created,Enabled,Forward To,Action Type\n" + filtered.map { alias in
+        let rows = [["Email Address", "Website", "Notes", "Created", "Enabled", "Forward To", "Action Type"]] + filtered.map { alias in
             let createdStr = alias.created?.ISO8601Format() ?? ""
-            return "\(alias.emailAddress),\(alias.website),\(alias.notes),\(createdStr),\(alias.isEnabled),\(alias.forwardTo),\(alias.actionType.rawValue)"
-        }.joined(separator: "\n")
+            return [
+                alias.emailAddress,
+                alias.website,
+                alias.notes,
+                createdStr,
+                String(alias.isEnabled),
+                alias.forwardTo,
+                alias.actionType.rawValue
+            ]
+        }
+        let csvString = rows
+            .map { $0.map(csvEscapedField).joined(separator: ",") }
+            .joined(separator: "\n") + "\n"
         
-        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("ghostmail_backup.csv")
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ghostmail_backup-\(UUID().uuidString).csv")
         do {
-            try csvString.write(to: tempURL, atomically: true, encoding: .utf8)
+            try Data(csvString.utf8).write(to: tempURL, options: [.atomic, .completeFileProtection])
+            exportURL = tempURL
             showExportDialog = true
         } catch {
-            print("Export error: \(error)")
+            debugLog("Export error: \(error)")
         }
+    }
+
+    private func cleanupExportFile() {
+        if let exportURL {
+            try? FileManager.default.removeItem(at: exportURL)
+        }
+        exportURL = nil
+    }
+
+    private func csvEscapedField(_ field: String) -> String {
+        guard field.contains(",") || field.contains("\"") || field.contains("\n") || field.contains("\r") else {
+            return field
+        }
+        return "\"\(field.replacingOccurrences(of: "\"", with: "\"\""))\""
+    }
+
+    private func parseCSVRows(_ csvString: String) -> [[String]] {
+        let characters = Array(csvString)
+        var rows: [[String]] = []
+        var row: [String] = []
+        var field = ""
+        var isQuoted = false
+        var index = 0
+
+        while index < characters.count {
+            let character = characters[index]
+
+            if isQuoted {
+                if character == "\"" {
+                    if index + 1 < characters.count, characters[index + 1] == "\"" {
+                        field.append("\"")
+                        index += 1
+                    } else {
+                        isQuoted = false
+                    }
+                } else {
+                    field.append(character)
+                }
+            } else {
+                switch character {
+                case "\"":
+                    if field.isEmpty {
+                        isQuoted = true
+                    } else {
+                        field.append(character)
+                    }
+                case ",":
+                    row.append(field)
+                    field = ""
+                case "\n":
+                    row.append(field)
+                    rows.append(row)
+                    row = []
+                    field = ""
+                case "\r":
+                    row.append(field)
+                    rows.append(row)
+                    row = []
+                    field = ""
+                    if index + 1 < characters.count, characters[index + 1] == "\n" {
+                        index += 1
+                    }
+                default:
+                    field.append(character)
+                }
+            }
+
+            index += 1
+        }
+
+        if !field.isEmpty || !row.isEmpty {
+            row.append(field)
+            rows.append(row)
+        }
+
+        return rows
     }
     
     private func showCSVImporter() {
@@ -125,7 +215,7 @@ struct SettingsView: View {
             }
             
             let csvString = try String(contentsOf: url, encoding: .utf8)
-            let rows = csvString.components(separatedBy: .newlines)
+            let rows = parseCSVRows(csvString)
             
             // Build set of allowed domains (primary + additional zones + subdomains)
             var allowedDomains = Set<String>()
@@ -147,8 +237,7 @@ struct SettingsView: View {
             var skipped = Set<String>()
             
             // Skip header row
-            for row in rows.dropFirst() where !row.isEmpty {
-                let fields = row.components(separatedBy: ",")
+            for fields in rows.dropFirst() where !fields.allSatisfy({ $0.isEmpty }) {
                 guard fields.count >= 6 else { continue }
                 
                 let emailAddress = fields[0].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -277,7 +366,7 @@ struct SettingsView: View {
                             modelContext.insert(newAlias)
                             try modelContext.save()
                         } catch {
-                            print("Error creating Cloudflare rule for \(emailAddress): \(error)")
+                            debugLog("Error creating Cloudflare rule for \(emailAddress): \(error)")
                             importError = error
                             showImportError = true
                         }
@@ -292,7 +381,7 @@ struct SettingsView: View {
             
             try modelContext.save()
         } catch {
-            print("Import error: \(error)")
+            debugLog("Import error: \(error)")
             importError = error
             showImportError = true
         }
@@ -341,7 +430,7 @@ struct SettingsView: View {
                 // Ensure we have a zoneId to target; we must not delete zones for other accounts
                 let targetZoneFragment = cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
                 if targetZoneFragment.isEmpty {
-                    print("No Cloudflare zoneId available – skipping iCloud zone deletion to avoid accidental data loss")
+                    debugLog("No Cloudflare zoneId available – skipping iCloud zone deletion to avoid accidental data loss")
                     await MainActor.run { isLoading = false }
                     return
                 }
@@ -367,7 +456,7 @@ struct SettingsView: View {
                     } catch {
                         if attempt == 3 { throw error }
                         try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt)) * 500_000_000))
-                        print("Retrying zone fetch, attempt \(attempt + 1)...")
+                        debugLog("Retrying zone fetch, attempt \(attempt + 1)...")
                     }
                 }
 
@@ -381,7 +470,7 @@ struct SettingsView: View {
                 }
 
                 if candidateZones.isEmpty {
-                    print("No matching iCloud record zones found for zoneId '\(targetZoneFragment)'. Skipping deletion.")
+                    debugLog("No matching iCloud record zones found for zoneId '\(targetZoneFragment)'. Skipping deletion.")
                     await MainActor.run { isLoading = false }
                     return
                 }
@@ -396,11 +485,11 @@ struct SettingsView: View {
                         do {
                             try await database.deleteRecordZone(withID: zoneID)
                             zoneDeleted = true
-                            print("Successfully deleted zone: \(zoneID.zoneName)")
+                            debugLog("Successfully deleted zone: \(zoneID.zoneName)")
                             break
                         } catch let zoneError as NSError {
                             if zoneError.code == CKError.unknownItem.rawValue {
-                                print("Zone \(zoneID.zoneName) doesn't exist or was already deleted")
+                                debugLog("Zone \(zoneID.zoneName) doesn't exist or was already deleted")
                                 zoneDeleted = true
                                 break
                             }
@@ -412,7 +501,7 @@ struct SettingsView: View {
                                 if attempt < 3 {
                                     let delay = UInt64(pow(2.0, Double(attempt)) * 1_000_000_000)
                                     try await Task.sleep(nanoseconds: delay)
-                                    print("Retrying zone deletion, attempt \(attempt + 1)...")
+                                    debugLog("Retrying zone deletion, attempt \(attempt + 1)...")
                                     continue
                                 }
                             }
@@ -420,7 +509,7 @@ struct SettingsView: View {
                             if attempt == 3 {
                                 hadDeletionFailures = true
                                 zoneDeletionErrors.append(zoneError)
-                                print("Failed to delete zone \(zoneID.zoneName) after 3 attempts: \(zoneError.localizedDescription)")
+                                debugLog("Failed to delete zone \(zoneID.zoneName) after 3 attempts: \(zoneError.localizedDescription)")
                             }
                         }
                     }
@@ -430,18 +519,18 @@ struct SettingsView: View {
 
                 await MainActor.run {
                     if hadDeletionFailures {
-                        print("⚠️ iCloud sync disabled, but some data couldn't be deleted from iCloud for zoneId: \(targetZoneFragment).")
+                        debugLog("⚠️ iCloud sync disabled, but some data couldn't be deleted from iCloud for zoneId: \(targetZoneFragment).")
                         if let firstError = zoneDeletionErrors.first {
-                            print("Error detail: \(firstError.localizedDescription)")
+                            debugLog("Error detail: \(firstError.localizedDescription)")
                         }
                     } else {
-                        print("✅ iCloud sync disabled. Selected zone data successfully removed from iCloud for zoneId: \(targetZoneFragment).")
+                        debugLog("✅ iCloud sync disabled. Selected zone data successfully removed from iCloud for zoneId: \(targetZoneFragment).")
                     }
 
                     isLoading = false
                 }
             } catch {
-                print("Error managing iCloud data: \(error.localizedDescription)")
+                debugLog("Error managing iCloud data: \(error.localizedDescription)")
                 await MainActor.run {
                     iCloudSyncEnabled = false
                     isLoading = false
@@ -561,7 +650,7 @@ struct SettingsView: View {
                         pendingImportURL = url
                         showImportConfirmation = true
                     case .failure(let error):
-                        print("File import error: \(error)")
+                        debugLog("File import error: \(error)")
                         importError = error
                         showImportError = true
                     }
@@ -577,11 +666,13 @@ struct SettingsView: View {
                 .fileExporter(
                     isPresented: $showExportDialog,
                     document: CSVDocument(
-                        url: FileManager.default.temporaryDirectory.appendingPathComponent("ghostmail_backup.csv")
+                        url: exportURL ?? FileManager.default.temporaryDirectory.appendingPathComponent("ghostmail_backup.csv")
                     ),
                     contentType: UTType.commaSeparatedText,
                     defaultFilename: "ghostmail_backup.csv"
-                ) { _ in }
+                ) { _ in
+                    cleanupExportFile()
+                }
                 .alert("Disable iCloud Sync?", isPresented: $showDisableSyncConfirmation) {
                     Button("Cancel", role: .cancel) { iCloudSyncEnabled = true }
                     Button("Disable", role: .destructive) { disableICloudSync() }
@@ -632,7 +723,7 @@ struct SettingsView: View {
                             }
                             isLoading = false
                         } catch {
-                            print("Error fetching addresses: \(error)")
+                            debugLog("Error fetching addresses: \(error)")
                             isLoading = false
                         }
                     }
@@ -1018,7 +1109,7 @@ private struct CatchAllStatusRow: View {
                     set: { newValue in
                         // Guard against re-triggering during update
                         guard !isUpdating && !showCatchAllOptions else { return }
-                        print("📧 CatchAllStatusRow toggle changed to: \(newValue)")
+                        debugLog("📧 CatchAllStatusRow toggle changed to: \(newValue)")
                         if newValue {
                             showCatchAllOptions = true
                         } else {
@@ -1087,9 +1178,9 @@ private struct CatchAllStatusRow: View {
             }
         } catch let error as NSError where error.domain == NSURLErrorDomain && error.code == -999 {
             // Request was cancelled (likely due to view update), ignore silently
-            print("📧 Catch-all status request cancelled for zone \(zone.zoneId)")
+            debugLog("📧 Catch-all status request cancelled for zone \(zone.zoneId)")
         } catch {
-            print("Failed to fetch catch-all status for zone \(zone.zoneId): \(error)")
+            debugLog("Failed to fetch catch-all status for zone \(zone.zoneId): \(error)")
             await MainActor.run {
                 catchAllStatus = nil
             }
@@ -1097,7 +1188,7 @@ private struct CatchAllStatusRow: View {
     }
     
     private func updateCatchAll(enabled: Bool, action: String = "drop", forwardTo: [String] = []) async {
-        print("📧 CatchAllStatusRow.updateCatchAll called: enabled=\(enabled), action=\(action), forwardTo=\(forwardTo)")
+        debugLog("📧 CatchAllStatusRow.updateCatchAll called: enabled=\(enabled), action=\(action), forwardTo=\(forwardTo)")
         isUpdating = true
         defer { isUpdating = false }
         
@@ -1108,11 +1199,11 @@ private struct CatchAllStatusRow: View {
                 action: action,
                 forwardTo: forwardTo
             )
-            print("📧 CatchAllStatusRow.updateCatchAll succeeded")
+            debugLog("📧 CatchAllStatusRow.updateCatchAll succeeded")
             // Refresh the status
             await loadCatchAllStatus()
         } catch {
-            print("📧 CatchAllStatusRow.updateCatchAll failed: \(error)")
+            debugLog("📧 CatchAllStatusRow.updateCatchAll failed: \(error)")
             await MainActor.run {
                 errorMessage = error.localizedDescription
                 showError = true

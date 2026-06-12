@@ -47,7 +47,7 @@ final class EmailAlias {
         self.zoneId = zoneId
         self.actionTypeRaw = actionType.rawValue
         
-        print("EmailAlias initialized - address: \(emailAddress), action: \(actionType.rawValue), forward to: \(forwardTo)")
+        debugLog("EmailAlias initialized - address: \(emailAddress), action: \(actionType.rawValue), forward to: \(forwardTo)")
     }
 
     // Remove duplicate aliases by emailAddress while merging useful fields.
