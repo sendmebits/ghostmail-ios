@@ -14,7 +14,7 @@ struct AuthenticationView: View {
     @State private var isLoading = false
     @State private var showError = false
     @State private var errorMessage = ""
-    @State private var currentReauthIndex = 0  // Track which zone we're re-authenticating
+    @State private var completedReauthCount = 0  // Zones re-authenticated so far (for progress display)
     
     /// Detect if this is an iCloud restore scenario where we have zone data but no credentials
     private var isICloudRestoreScenario: Bool {
@@ -26,10 +26,13 @@ struct AuthenticationView: View {
         cloudflareClient.zonesNeedingReauth
     }
     
-    /// Current zone being re-authenticated (if in restore flow)
+    /// Current zone being re-authenticated (if in restore flow).
+    /// `zonesNeedingReauth` shrinks as each zone gets its token, so the next zone
+    /// to handle is always the first remaining one — indexing by a counter here
+    /// would skip zones.
     private var currentZoneToReauth: CloudflareClient.CloudflareZone? {
-        guard isICloudRestoreScenario, currentReauthIndex < zonesNeedingReauth.count else { return nil }
-        return zonesNeedingReauth[currentReauthIndex]
+        guard isICloudRestoreScenario else { return nil }
+        return zonesNeedingReauth.first
     }
     
     var body: some View {
@@ -50,18 +53,18 @@ struct AuthenticationView: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                     
-                    // Show progress for multi-zone re-auth
-                    let totalZones = zonesNeedingReauth.count
+                    // Show progress for multi-zone re-auth (completed + remaining)
+                    let totalZones = completedReauthCount + zonesNeedingReauth.count
                     if totalZones > 1 {
                         HStack(spacing: 4) {
-                            Text("Zone \(currentReauthIndex + 1) of \(totalZones)")
+                            Text("Zone \(completedReauthCount + 1) of \(totalZones)")
                                 .font(.system(.caption, design: .rounded, weight: .semibold))
                             
                             // Progress dots
                             HStack(spacing: 4) {
                                 ForEach(0..<totalZones, id: \.self) { index in
                                     Circle()
-                                        .fill(index <= currentReauthIndex ? Color.accentColor : Color.gray.opacity(0.3))
+                                        .fill(index <= completedReauthCount ? Color.accentColor : Color.gray.opacity(0.3))
                                         .frame(width: 6, height: 6)
                                 }
                             }
@@ -221,7 +224,7 @@ struct AuthenticationView: View {
                             ProgressView()
                                 .tint(.white)
                         } else {
-                            Text(isICloudRestoreScenario && zonesNeedingReauth.count > 1 && currentReauthIndex < zonesNeedingReauth.count - 1 
+                            Text(isICloudRestoreScenario && zonesNeedingReauth.count > 1
                                 ? "Continue" 
                                 : "Sign In")
                                 .font(.system(.body, design: .rounded, weight: .medium))
@@ -255,7 +258,7 @@ struct AuthenticationView: View {
             // Pre-fill account/zone IDs if we have restored zone data (iCloud restore scenario)
             updateFieldsForCurrentZone()
         }
-        .onChange(of: currentReauthIndex) { _, _ in
+        .onChange(of: completedReauthCount) { _, _ in
             updateFieldsForCurrentZone()
         }
         .alert("Authentication Failed", isPresented: $showError) {
@@ -319,8 +322,10 @@ struct AuthenticationView: View {
                             try? await cloudflareClient.refreshForwardingAddressesAllZones()
                         }
                     } else {
-                        // Move to next zone
-                        currentReauthIndex += 1
+                        // The authenticated zone dropped out of zonesNeedingReauth, so
+                        // currentZoneToReauth now points at the next zone automatically.
+                        // The counter is only for progress display.
+                        completedReauthCount += 1
                         apiToken = ""  // Clear for next entry
                         debugLog("[AuthenticationView] Moving to next zone, \(remainingZones.count) remaining")
                     }

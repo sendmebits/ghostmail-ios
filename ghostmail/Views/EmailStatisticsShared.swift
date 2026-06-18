@@ -97,6 +97,49 @@ extension Array where Element == EmailAlias {
     }
 }
 
+/// Fast lookup table for statistics rendering. The stats screens may render many
+/// rows; repeatedly scanning `[EmailAlias]` for each address can lock up the UI.
+struct EmailAliasLookup {
+    private let aliasesByAddress: [String: EmailAlias]
+    
+    init(_ aliases: [EmailAlias]) {
+        var lookup: [String: EmailAlias] = [:]
+        for alias in aliases {
+            let key = Self.key(for: alias.emailAddress)
+            // Keep the first record to match previous first(where:) behavior.
+            if lookup[key] == nil {
+                lookup[key] = alias
+            }
+        }
+        aliasesByAddress = lookup
+    }
+    
+    func alias(for emailAddress: String) -> EmailAlias? {
+        aliasesByAddress[Self.key(for: emailAddress)]
+    }
+    
+    func isCatchAllAddress(_ emailAddress: String) -> Bool {
+        alias(for: emailAddress) == nil
+    }
+    
+    func actionType(for emailAddress: String) -> EmailRuleActionType {
+        alias(for: emailAddress)?.actionType ?? .forward
+    }
+    
+    func isDropAlias(for emailAddress: String) -> Bool {
+        guard let alias = alias(for: emailAddress) else { return false }
+        return alias.actionType != .forward
+    }
+    
+    func destinationAddress(for emailAddress: String) -> String? {
+        alias(for: emailAddress)?.forwardTo
+    }
+    
+    private static func key(for emailAddress: String) -> String {
+        CloudflareClient.normalizeEmailAddress(emailAddress).lowercased()
+    }
+}
+
 // MARK: - Shared ActionSummaryBadge View
 
 /// Tappable filter badge showing action counts (Forwarded/Dropped/Rejected)

@@ -256,7 +256,7 @@ struct EmailDetailView: View {
                                 .buttonBorderShape(.capsule)
                                 .tint(.accentColor)
                                 
-                                if SMTPService.shared.hasSettings() {
+                                if SMTPService.shared.loadSettings()?.isValid == true {
                                     Button {
                                         showEmailCompose = true
                                     } label: {
@@ -689,9 +689,10 @@ struct EmailDetailView: View {
         }
         
         // Try to load from cache first for instant display
-        if useCache, let cached = StatisticsCache.shared.loadForEmail(email.emailAddress) {
+        if useCache, let cached = await StatisticsCache.shared.loadAsync() {
+            let statistic = cached.statistics.first { $0.emailAddress == email.emailAddress }
             await MainActor.run {
-                self.emailStatistic = cached.statistic
+                self.emailStatistic = statistic
             }
             
             // If cache is fresh (< 24 hours), we're done
@@ -710,7 +711,7 @@ struct EmailDetailView: View {
             // This benefits both the list view and other detail views
             if !allStats.isEmpty {
                 // Merge with existing cache to preserve data from other zones
-                if let existingCache = StatisticsCache.shared.load() {
+                if let existingCache = await StatisticsCache.shared.loadAsync() {
                     // Remove old stats for this zone and add new ones
                     let otherZoneStats = existingCache.statistics.filter { stat in
                         !allStats.contains { $0.emailAddress == stat.emailAddress }
@@ -751,6 +752,10 @@ struct EmailDetailView: View {
                 try modelContext.save()
                 needsRefresh = true
                 dismiss()
+            } else {
+                // No Cloudflare rule reference (e.g. partial sync) — tell the user
+                // instead of silently doing nothing
+                throw CloudflareClient.CloudflareError(message: "This alias has no Cloudflare rule reference yet. Pull to refresh the list and try again.")
             }
         } catch {
             self.error = error
@@ -771,41 +776,26 @@ struct EmailDetailView: View {
             // Determine the action type based on the Forward toggle
             let newActionType: EmailRuleActionType = tempIsForwarding ? .forward : .drop
             
-            // Update the model with temporary values
-            email.emailAddress = fullEmailAddress
-            email.website = tempWebsite
-            email.notes = tempNotes
-            email.isEnabled = tempIsEnabled
-            email.forwardTo = tempIsForwarding ? tempForwardTo : ""  // Clear forward address if dropping
-            email.actionType = newActionType
-            
-            // Ensure user identifier is set for CloudKit sync
-            if email.userIdentifier.isEmpty {
-                email.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
-                debugLog("Set user identifier for email: \(email.userIdentifier)")
-            }
-            
-            // Ensure we have a valid zone for this alias and a verified forwarding address within that zone
-            // Only validate forwarding address if we're forwarding
-            if tempIsForwarding, let z = aliasZone {
-                // If zone-specific list is empty, fetch to validate
-                if availableForwardingAddresses.isEmpty {
-                    let set = try await cloudflareClient.fetchForwardingAddresses(accountId: z.accountId, token: z.apiToken)
-                    availableForwardingAddresses = Array(set).sorted()
+            // Validate BEFORE touching the model or calling the API, so a failure
+            // leaves both local data and the user's entered values untouched
+            if tempIsForwarding {
+                guard !tempForwardTo.isEmpty else {
+                    throw CloudflareClient.CloudflareError(message: "Please choose a forwarding address.")
                 }
-                guard tempForwardTo.isEmpty || availableForwardingAddresses.contains(tempForwardTo) else {
-                    throw CloudflareClient.CloudflareError(message: "Selected forwarding address isn't verified for this domain's account.")
-                }
-                // Correct legacy zoneId if needed
-                if email.zoneId != z.zoneId {
-                    email.zoneId = z.zoneId
+                if let z = aliasZone {
+                    // If zone-specific list is empty, fetch to validate
+                    if availableForwardingAddresses.isEmpty {
+                        let set = try await cloudflareClient.fetchForwardingAddresses(accountId: z.accountId, token: z.apiToken)
+                        availableForwardingAddresses = Array(set).sorted()
+                    }
+                    guard availableForwardingAddresses.contains(tempForwardTo) else {
+                        throw CloudflareClient.CloudflareError(message: "Selected forwarding address isn't verified for this domain's account.")
+                    }
                 }
             }
-
-            // Save to SwiftData
-            try modelContext.save()
             
-            // Update Cloudflare with email-related changes, enabled state, and action type
+            // Update Cloudflare FIRST — if the API call fails, the local record
+            // stays consistent with the server instead of holding unsynced changes
             if let tag = email.cloudflareTag {
                 if let z = aliasZone {
                     try await cloudflareClient.updateEmailRule(
@@ -826,6 +816,29 @@ struct EmailDetailView: View {
                     )
                 }
             }
+            
+            // API succeeded — now update the model with the temporary values
+            email.emailAddress = fullEmailAddress
+            email.website = tempWebsite
+            email.notes = tempNotes
+            email.isEnabled = tempIsEnabled
+            email.forwardTo = tempIsForwarding ? tempForwardTo : ""  // Clear forward address if dropping
+            email.actionType = newActionType
+            
+            // Ensure user identifier is set for CloudKit sync
+            if email.userIdentifier.isEmpty {
+                email.userIdentifier = UserDefaults.standard.string(forKey: "userIdentifier") ?? UUID().uuidString
+                debugLog("Set user identifier for email: \(email.userIdentifier)")
+            }
+            
+            // Correct legacy zoneId if needed
+            if let z = aliasZone, email.zoneId != z.zoneId {
+                email.zoneId = z.zoneId
+            }
+            
+            // Save to SwiftData
+            try modelContext.save()
+            
             needsRefresh = true
             
             // Dismiss the view after successful save
@@ -834,15 +847,8 @@ struct EmailDetailView: View {
             debugLog("Error saving changes: \(error)")
             self.error = error
             self.showError = true
-            
-            // Reset temp values on error
-            let parts = email.emailAddress.split(separator: "@")
-            tempUsername = String(parts[0])
-            tempWebsite = email.website
-            tempNotes = email.notes
-            tempIsEnabled = email.isEnabled
-            tempForwardTo = email.forwardTo
-            tempIsForwarding = email.actionType == .forward
+            // Keep the temp values the user entered so they can correct and retry;
+            // the model was not modified on failure.
         }
         
         isLoading = false

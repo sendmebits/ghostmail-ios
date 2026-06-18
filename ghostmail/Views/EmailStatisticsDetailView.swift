@@ -3,19 +3,10 @@ import SwiftData
 
 struct EmailStatisticsDetailView: View {
     let statistic: EmailStatistic
+    // Plain @Query (no predicate). A predicate-based @Query constructed at
+    // navigation time can stall against an actively-mirroring CloudKit store;
+    // logged-out aliases are filtered in-memory where the lookup is built.
     @Query private var emailAliases: [EmailAlias]
-    
-    private var isDropAlias: Bool {
-        guard let alias = emailAliases.first(where: { $0.emailAddress == statistic.emailAddress }) else {
-            return false  // Not an alias at all (catch-all) - not a drop alias
-        }
-        return alias.actionType != .forward
-    }
-    
-    /// Check if this email address is a catch-all (not defined as any alias)
-    private var isCatchAll: Bool {
-        !emailAliases.contains { $0.emailAddress == statistic.emailAddress }
-    }
     
     // Filter state for action type
     @State private var selectedActionFilter: EmailRoutingAction? = nil
@@ -35,16 +26,16 @@ struct EmailStatisticsDetailView: View {
     }
     
     // Filtered emails by date, applying action filter
-    private var filteredEmailsByDate: [(date: Date, emails: [EmailStatistic.EmailDetail])] {
-        guard let filter = selectedActionFilter else { return emailsByDate }
-        return emailsByDate.map { group in
+    private func filteredEmailsByDate(from groupedEmails: [(date: Date, emails: [EmailStatistic.EmailDetail])]) -> [(date: Date, emails: [EmailStatistic.EmailDetail])] {
+        guard let filter = selectedActionFilter else { return groupedEmails }
+        return groupedEmails.map { group in
             (date: group.date, emails: group.emails.filter { $0.action == filter })
         }.filter { !$0.emails.isEmpty }
     }
     
     // Total filtered count
-    private var filteredEmailCount: Int {
-        filteredEmailsByDate.reduce(0) { $0 + $1.emails.count }
+    private func filteredEmailCount(in groupedEmails: [(date: Date, emails: [EmailStatistic.EmailDetail])]) -> Int {
+        groupedEmails.reduce(0) { $0 + $1.emails.count }
     }
     
     // Overall summary counts
@@ -62,6 +53,13 @@ struct EmailStatisticsDetailView: View {
     }
     
     var body: some View {
+        let lookup = EmailAliasLookup(emailAliases.filter { !$0.isLoggedOut })
+        let isDropAlias = lookup.isDropAlias(for: statistic.emailAddress)
+        let isCatchAll = lookup.isCatchAllAddress(statistic.emailAddress)
+        let detailGroups = emailsByDate
+        let filteredEmailsByDate = filteredEmailsByDate(from: detailGroups)
+        let filteredEmailCount = filteredEmailCount(in: filteredEmailsByDate)
+        
         List {
             // Chart Section
             Section {

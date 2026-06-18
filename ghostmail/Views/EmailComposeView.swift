@@ -102,6 +102,9 @@ struct EmailComposeView: View {
     }
     
     private func sendEmail() {
+        // Prevent a rapid double-tap from starting two sends
+        guard !isLoading else { return }
+        
         guard let settings = SMTPService.shared.loadSettings() else {
             error = SMTPError.invalidSettings
             showError = true

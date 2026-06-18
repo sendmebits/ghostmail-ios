@@ -11,6 +11,9 @@ enum StatisticsActionFilter: String, CaseIterable {
 
 struct EmailStatisticsView: View {
     @EnvironmentObject private var cloudflareClient: CloudflareClient
+    // Plain @Query (no predicate). A predicate-based @Query constructed at
+    // navigation time can stall against an actively-mirroring CloudKit store;
+    // logged-out aliases are filtered in-memory (see `activeAliases`).
     @Query private var emailAliases: [EmailAlias]
     @State private var statistics: [EmailStatistic] = []
     @State private var isLoading = false
@@ -22,19 +25,15 @@ struct EmailStatisticsView: View {
     private let allZonesIdentifier = "ALL_ZONES"
     private let allDestinationsIdentifier = "ALL_DESTINATIONS"
     
-    /// Check if an email address is a catch-all (not defined as any alias)
-    private func isCatchAllAddress(_ emailAddress: String) -> Bool {
-        !emailAliases.contains { $0.emailAddress == emailAddress }
-    }
-    
-    /// Returns the destination (forwardTo) address for a given alias email address
-    private func destinationAddress(for emailAddress: String) -> String? {
-        emailAliases.first(where: { $0.emailAddress == emailAddress })?.forwardTo
+    /// Aliases excluding logged-out ones (from removed zones). Filtered in-memory
+    /// instead of via a predicate @Query to avoid navigation-time CloudKit stalls.
+    private var activeAliases: [EmailAlias] {
+        emailAliases.filter { !$0.isLoggedOut }
     }
     
     /// Get unique destination addresses (forwardTo) from aliases for the filter picker
     private var availableDestinations: [String] {
-        let destinations = Set(emailAliases.compactMap { alias -> String? in
+        let destinations = Set(activeAliases.compactMap { alias -> String? in
             guard !alias.forwardTo.isEmpty else { return nil }
             return alias.forwardTo
         })
@@ -49,12 +48,13 @@ struct EmailStatisticsView: View {
             let displayName = zone.domainName.isEmpty ? zone.zoneId : zone.domainName
             options.append((id: zone.zoneId, name: displayName))
             
-            // Add subdomains if enabled for this zone
+            // Add subdomains if enabled for this zone.
+            // Entries in zone.subdomains are already fully-qualified names
+            // (e.g. "mail.example.com"), so use them directly for display.
             if zone.subdomainsEnabled {
                 for subdomain in zone.subdomains {
-                    let subdomainDisplay = "\(subdomain).\(zone.domainName)"
                     // Use a composite ID for subdomains: "zoneId:subdomain"
-                    options.append((id: "\(zone.zoneId):\(subdomain)", name: subdomainDisplay))
+                    options.append((id: "\(zone.zoneId):\(subdomain)", name: subdomain))
                 }
             }
         }
@@ -63,13 +63,13 @@ struct EmailStatisticsView: View {
     }
     
     /// Filtered statistics based on the selected destination and action filters
-    private var filteredStatistics: [EmailStatistic] {
+    private func filteredStatistics(using lookup: EmailAliasLookup) -> [EmailStatistic] {
         var filtered = statistics
         
         // Apply destination address filter
         if selectedDestination != allDestinationsIdentifier {
             filtered = filtered.filter { stat in
-                destinationAddress(for: stat.emailAddress) == selectedDestination
+                lookup.destinationAddress(for: stat.emailAddress) == selectedDestination
             }
         }
         
@@ -79,15 +79,15 @@ struct EmailStatisticsView: View {
             break
         case .forwarded:
             filtered = filtered.filter { stat in
-                emailAliases.actionType(for: stat.emailAddress) == .forward
+                lookup.actionType(for: stat.emailAddress) == .forward
             }
         case .dropped:
             filtered = filtered.filter { stat in
-                emailAliases.actionType(for: stat.emailAddress) == .drop
+                lookup.actionType(for: stat.emailAddress) == .drop
             }
         case .rejected:
             filtered = filtered.filter { stat in
-                emailAliases.actionType(for: stat.emailAddress) == .reject
+                lookup.actionType(for: stat.emailAddress) == .reject
             }
         }
         
@@ -100,6 +100,14 @@ struct EmailStatisticsView: View {
     }
     
     var body: some View {
+        let lookup = EmailAliasLookup(activeAliases)
+        let filteredStats = filteredStatistics(using: lookup)
+        // Catch-all traffic can produce thousands of distinct recipient addresses.
+        // Rendering one row per address can stall the main thread, so cap the list
+        // (statistics are sorted by count, so this keeps the busiest addresses).
+        let rowDisplayLimit = 250
+        let displayStats = Array(filteredStats.prefix(rowDisplayLimit))
+        
         List {
             // Settings Section (Zone + Filters)
             Section {
@@ -115,7 +123,9 @@ struct EmailStatisticsView: View {
                     .onChange(of: selectedZoneId) { _, newValue in
                         // Reset destination filter when zone changes
                         selectedDestination = allDestinationsIdentifier
-                        loadStatistics(zoneId: newValue, useCache: true)
+                        Task {
+                            await loadStatistics(zoneId: newValue, useCache: true)
+                        }
                     }
                 }
                 
@@ -137,9 +147,9 @@ struct EmailStatisticsView: View {
             }
             
             // Chart Section
-            if !filteredStatistics.isEmpty && errorMessage == nil {
+            if !filteredStats.isEmpty && errorMessage == nil {
                 Section {
-                    EmailTrendChartView(statistics: filteredStatistics)
+                    EmailTrendChartView(statistics: filteredStats)
                         .frame(height: 200)
                         .padding(.vertical, 8)
                 } header: {
@@ -180,7 +190,7 @@ struct EmailStatisticsView: View {
                 } else if let error = errorMessage {
                     Text(error)
                         .foregroundStyle(.red)
-                } else if filteredStatistics.isEmpty {
+                } else if filteredStats.isEmpty {
                     if selectedActionFilter == .all {
                         Text("No email traffic found in the last 7 days.")
                             .foregroundStyle(.secondary)
@@ -189,16 +199,21 @@ struct EmailStatisticsView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    ForEach(filteredStatistics) { stat in
+                    ForEach(displayStats) { stat in
                         NavigationLink {
                             EmailStatisticsDetailView(statistic: stat)
                         } label: {
                             StatisticRowView(
                                 stat: stat,
-                                isDropAlias: emailAliases.actionType(for: stat.emailAddress) != .forward,
-                                isCatchAll: isCatchAllAddress(stat.emailAddress)
+                                isDropAlias: lookup.actionType(for: stat.emailAddress) != .forward,
+                                isCatchAll: lookup.isCatchAllAddress(stat.emailAddress)
                             )
                         }
+                    }
+                    if filteredStats.count > displayStats.count {
+                        Text("Showing the top \(displayStats.count) of \(filteredStats.count) addresses. Use the filters above to narrow results.")
+                            .font(.system(.footnote, design: .rounded))
+                            .foregroundStyle(.secondary)
                     }
                 }
             } header: {
@@ -212,33 +227,38 @@ struct EmailStatisticsView: View {
             await refreshStatistics()
         }
         .task {
-            loadStatistics(zoneId: selectedZoneId, useCache: true)
+            await loadStatistics(zoneId: selectedZoneId, useCache: true)
         }
     }
     
     private func refreshStatistics() async {
-        loadStatistics(zoneId: selectedZoneId, useCache: false)
-        // Wait for the loading to complete
-        while isLoading {
-            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-        }
+        await loadStatistics(zoneId: selectedZoneId, useCache: false)
     }
     
-    private func loadStatistics(zoneId: String, useCache: Bool) {
+    private func loadStatistics(zoneId: String, useCache: Bool) async {
         // Handle "All Zones" option
         if zoneId == allZonesIdentifier {
-            loadAllZonesStatistics(useCache: useCache)
+            await loadAllZonesStatistics(useCache: useCache)
             return
         }
         
-        guard let zone = cloudflareClient.zones.first(where: { $0.zoneId == zoneId }) else { return }
+        // Subdomain picker options use a composite ID: "zoneId:subdomain-fqdn".
+        // Resolve the parent zone and remember the subdomain to filter by.
+        let idParts = zoneId.split(separator: ":", maxSplits: 1).map(String.init)
+        let parentZoneId = idParts[0]
+        let subdomainFilter: String? = idParts.count == 2 ? idParts[1].lowercased() : nil
+        
+        guard let zone = cloudflareClient.zones.first(where: { $0.zoneId == parentZoneId }) else { return }
         
         // Try to load from shared cache first
-        if useCache, let cached = StatisticsCache.shared.load() {
-            // Filter to this zone's statistics
+        if useCache, let cached = await StatisticsCache.shared.loadAsync() {
+            // Filter to this zone's (or subdomain's) statistics
             let zoneStats = cached.statistics.filter { stat in
                 // Check if this statistic belongs to this zone by matching email domain
                 let domain = stat.emailAddress.split(separator: "@").last.map(String.init) ?? ""
+                if let subdomainFilter {
+                    return domain.lowercased() == subdomainFilter
+                }
                 return domain == zone.domainName || zone.subdomains.contains(domain)
             }
             statistics = zoneStats
@@ -253,37 +273,39 @@ struct EmailStatisticsView: View {
         isLoading = true
         errorMessage = nil
         
-        Task {
-            do {
-                let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
-                
-                // Update shared cache by merging with existing data
-                if !stats.isEmpty {
-                    if let existingCache = StatisticsCache.shared.load() {
-                        // Remove old stats for this zone and add new ones
-                        let otherZoneStats = existingCache.statistics.filter { stat in
-                            let domain = stat.emailAddress.split(separator: "@").last.map(String.init) ?? ""
-                            return domain != zone.domainName && !zone.subdomains.contains(domain)
-                        }
-                        StatisticsCache.shared.save(otherZoneStats + stats)
-                    } else {
-                        StatisticsCache.shared.save(stats)
+        do {
+            let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
+            
+            // Update shared cache by merging with existing data
+            if !stats.isEmpty {
+                if let existingCache = await StatisticsCache.shared.loadAsync() {
+                    // Remove old stats for this zone and add new ones
+                    let otherZoneStats = existingCache.statistics.filter { stat in
+                        let domain = stat.emailAddress.split(separator: "@").last.map(String.init) ?? ""
+                        return domain != zone.domainName && !zone.subdomains.contains(domain)
                     }
-                }
-                
-                await MainActor.run {
-                    self.statistics = stats
-                    self.isLoading = false
-                }
-            } catch {
-                await MainActor.run {
-                    // Ignore non-fatal network errors (timeouts, connection lost) that occur during background transitions
-                    if !isNonFatalNetworkError(error) {
-                        self.errorMessage = error.localizedDescription
-                    }
-                    self.isLoading = false
+                    StatisticsCache.shared.save(otherZoneStats + stats)
+                } else {
+                    StatisticsCache.shared.save(stats)
                 }
             }
+            
+            if let subdomainFilter {
+                // Show only the selected subdomain's statistics
+                self.statistics = stats.filter { stat in
+                    let domain = stat.emailAddress.split(separator: "@").last.map(String.init) ?? ""
+                    return domain.lowercased() == subdomainFilter
+                }
+            } else {
+                self.statistics = stats
+            }
+            self.isLoading = false
+        } catch {
+            // Ignore non-fatal network errors (timeouts, connection lost) that occur during background transitions
+            if !isNonFatalNetworkError(error) {
+                self.errorMessage = error.localizedDescription
+            }
+            self.isLoading = false
         }
     }
     
@@ -310,9 +332,9 @@ struct EmailStatisticsView: View {
         return false
     }
     
-    private func loadAllZonesStatistics(useCache: Bool) {
+    private func loadAllZonesStatistics(useCache: Bool) async {
         // Try to load from shared cache first
-        if useCache, let cached = StatisticsCache.shared.load() {
+        if useCache, let cached = await StatisticsCache.shared.loadAsync() {
             statistics = cached.statistics.sorted { $0.count > $1.count }
             
             // If cache is fresh, we're done
@@ -325,35 +347,37 @@ struct EmailStatisticsView: View {
         isLoading = true
         errorMessage = nil
         
-        Task {
+        var allStats: [EmailStatistic] = []
+        var firstError: Error?
+        var successCount = 0
+        
+        // Fetch statistics per zone — one failing zone shouldn't discard
+        // the results from zones that succeeded
+        for zone in cloudflareClient.zones {
             do {
-                var allStats: [EmailStatistic] = []
-                
-                // Fetch statistics for all zones
-                for zone in cloudflareClient.zones {
-                    let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
-                    allStats.append(contentsOf: stats)
-                }
-                
-                // Update shared cache with all statistics
-                if !allStats.isEmpty {
-                    StatisticsCache.shared.save(allStats)
-                }
-                
-                await MainActor.run {
-                    self.statistics = allStats.sorted { $0.count > $1.count }
-                    self.isLoading = false
-                }
+                let stats = try await cloudflareClient.fetchEmailStatistics(for: zone)
+                allStats.append(contentsOf: stats)
+                successCount += 1
             } catch {
-                await MainActor.run {
-                    // Ignore non-fatal network errors (timeouts, connection lost) that occur during background transitions
-                    if !isNonFatalNetworkError(error) {
-                        self.errorMessage = error.localizedDescription
-                    }
-                    self.isLoading = false
-                }
+                debugLog("Failed to fetch statistics for zone \(zone.zoneId): \(error)")
+                if firstError == nil { firstError = error }
             }
         }
+        
+        // Only overwrite the shared cache when every zone succeeded; a partial
+        // save would wipe cached data for the zones that failed
+        if !allStats.isEmpty && firstError == nil {
+            StatisticsCache.shared.save(allStats)
+        }
+        
+        if successCount > 0 {
+            self.statistics = allStats.sorted { $0.count > $1.count }
+        }
+        // Only surface an error when nothing could be fetched at all
+        if let error = firstError, successCount == 0, !isNonFatalNetworkError(error) {
+            self.errorMessage = error.localizedDescription
+        }
+        self.isLoading = false
     }
 }
 

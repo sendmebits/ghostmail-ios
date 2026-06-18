@@ -1,82 +1,89 @@
 import SwiftUI
 import SwiftData
 
+// File-scoped types so section building can run off the main actor (nested types
+// inside a @MainActor View inherit main-actor isolation and can't be built in Task.detached).
+private struct WeeklyEmailItem: Identifiable {
+    let id = UUID()
+    let from: String
+    let to: String
+    let date: Date
+    let action: EmailRoutingAction
+    let originalTo: String?
+
+    var plusTag: String? {
+        guard let original = originalTo,
+              let atIndex = original.firstIndex(of: "@"),
+              let plusIndex = original.firstIndex(of: "+"),
+              plusIndex < atIndex else {
+            return nil
+        }
+        return String(original[original.index(after: plusIndex)..<atIndex])
+    }
+}
+
+private struct WeeklyDaySection: Identifiable {
+    let date: Date
+    let emails: [WeeklyEmailItem]
+
+    var id: Date { date }
+}
+
+private func buildWeeklyDaySections(from statistics: [EmailStatistic]) -> [WeeklyDaySection] {
+    let calendar = Calendar.current
+    let today = calendar.startOfDay(for: Date())
+
+    var emailsByDay: [Date: [WeeklyEmailItem]] = [:]
+
+    for stat in statistics {
+        for detail in stat.emailDetails {
+            let dayStart = calendar.startOfDay(for: detail.date)
+
+            if let daysAgo = calendar.dateComponents([.day], from: dayStart, to: today).day,
+               daysAgo >= 0 && daysAgo < 7 {
+                let email = WeeklyEmailItem(
+                    from: detail.from,
+                    to: stat.emailAddress,
+                    date: detail.date,
+                    action: detail.action,
+                    originalTo: detail.originalTo
+                )
+                emailsByDay[dayStart, default: []].append(email)
+            }
+        }
+    }
+
+    var sections: [WeeklyDaySection] = []
+    for i in 0..<7 {
+        if let date = calendar.date(byAdding: .day, value: -i, to: today) {
+            let emails = (emailsByDay[date] ?? []).sorted { $0.date > $1.date }
+            sections.append(WeeklyDaySection(date: date, emails: emails))
+        }
+    }
+    return sections
+}
+
 /// Aggregated view showing all emails from the last 7 days in a single scrollable list
 struct WeeklyEmailsView: View {
     let statistics: [EmailStatistic]
+    // Plain @Query (no predicate). A predicate-based @Query constructed at
+    // navigation time can stall against an actively-mirroring CloudKit store;
+    // logged-out aliases are filtered in-memory where the lookup is built.
     @Query private var emailAliases: [EmailAlias]
     
-    // Structure to hold individual email information
-    private struct EmailItem: Identifiable {
-        let id = UUID()
-        let from: String
-        let to: String
-        let date: Date
-        let action: EmailRoutingAction
-        let originalTo: String?
-        
-        /// The plus-addressed tag portion (e.g., "newsletter" for aaa+newsletter@domain.com)
-        var plusTag: String? {
-            guard let original = originalTo,
-                  let atIndex = original.firstIndex(of: "@"),
-                  let plusIndex = original.firstIndex(of: "+"),
-                  plusIndex < atIndex else {
-                return nil
-            }
-            return String(original[original.index(after: plusIndex)..<atIndex])
-        }
-    }
-    
-    // Group emails by day
-    private struct DaySection: Identifiable {
-        let date: Date
-        let emails: [EmailItem]
-        
-        var id: Date { date }
-    }
-    
-    // Get all emails from the last 7 days grouped by day
-    private var daySections: [DaySection] {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        
-        // Collect all emails from the last 7 days
-        var emailsByDay: [Date: [EmailItem]] = [:]
-        
-        for stat in statistics {
-            for detail in stat.emailDetails {
-                let dayStart = calendar.startOfDay(for: detail.date)
-                
-                // Only include emails from the last 7 days
-                if let daysAgo = calendar.dateComponents([.day], from: dayStart, to: today).day,
-                   daysAgo >= 0 && daysAgo < 7 {
-                    let email = EmailItem(
-                        from: detail.from,
-                        to: stat.emailAddress,
-                        date: detail.date,
-                        action: detail.action,
-                        originalTo: detail.originalTo
-                    )
-                    emailsByDay[dayStart, default: []].append(email)
-                }
-            }
-        }
-        
-        // Build sections array for last 7 days (most recent first)
-        var sections: [DaySection] = []
-        for i in 0..<7 {
-            if let date = calendar.date(byAdding: .day, value: -i, to: today) {
-                let emails = (emailsByDay[date] ?? []).sorted { $0.date > $1.date }
-                sections.append(DaySection(date: date, emails: emails))
-            }
-        }
-        return sections
-    }
+    // Sections are built once (off the main thread) and stored here so that the
+    // generated item ids stay stable across re-renders.
+    @State private var loadedSections: [WeeklyDaySection] = []
+    @State private var didLoad = false
+
+    // Bound the number of rows rendered per day so a heavy (e.g. catch-all) day
+    // can't generate tens of thousands of List rows and stall the main thread.
+    private let perDayRowLimit = 300
     
     // Aggregate summary counts
-    private var summaryStats: (forwarded: Int, dropped: Int, rejected: Int) {
+    private func summaryStats(for sections: [WeeklyDaySection]) -> (forwarded: Int, dropped: Int, rejected: Int) {
         var forwarded = 0, dropped = 0, rejected = 0
-        for section in daySections {
+        for section in sections {
             for email in section.emails {
                 switch email.action {
                 case .forwarded: forwarded += 1
@@ -89,8 +96,8 @@ struct WeeklyEmailsView: View {
         return (forwarded, dropped, rejected)
     }
     
-    private var totalEmails: Int {
-        daySections.reduce(0) { $0 + $1.emails.count }
+    private func totalEmails(in sections: [WeeklyDaySection]) -> Int {
+        sections.reduce(0) { $0 + $1.emails.count }
     }
     
     // Filter state for action type
@@ -101,10 +108,10 @@ struct WeeklyEmailsView: View {
     @State private var navigateToDetail = false
     
     // Filtered sections based on selected action
-    private var filteredSections: [DaySection] {
-        guard let filter = selectedActionFilter else { return daySections }
-        return daySections.map { section in
-            DaySection(
+    private func filteredSections(from sections: [WeeklyDaySection]) -> [WeeklyDaySection] {
+        guard let filter = selectedActionFilter else { return sections }
+        return sections.map { section in
+            WeeklyDaySection(
                 date: section.date,
                 emails: section.emails.filter { $0.action == filter }
             )
@@ -112,13 +119,20 @@ struct WeeklyEmailsView: View {
     }
     
     // Filtered total count
-    private var filteredTotalEmails: Int {
-        filteredSections.reduce(0) { $0 + $1.emails.count }
+    private func filteredTotalEmails(in sections: [WeeklyDaySection]) -> Int {
+        sections.reduce(0) { $0 + $1.emails.count }
     }
     
     @State private var showCopyToast = false
     
     var body: some View {
+        let sections = loadedSections
+        let filteredSections = filteredSections(from: sections)
+        let totalEmails = totalEmails(in: sections)
+        let filteredTotalEmails = filteredTotalEmails(in: filteredSections)
+        let summaryStats = summaryStats(for: sections)
+        let aliasLookup = EmailAliasLookup(emailAliases.filter { !$0.isLoggedOut })
+        
         List {
             // Summary section - aggregated totals
             Section {
@@ -203,13 +217,13 @@ struct WeeklyEmailsView: View {
                         }
                         .padding(.vertical, 16)
                     } else {
-                        ForEach(section.emails) { email in
-                            let alias = emailAliases.first { $0.emailAddress == email.to }
-                            let isCatchAll = emailAliases.isCatchAllAddress(email.to)
+                        ForEach(section.emails.prefix(perDayRowLimit)) { email in
+                            let alias = aliasLookup.alias(for: email.to)
+                            let isCatchAll = aliasLookup.isCatchAllAddress(email.to)
                             
                             EmailRowView(
                                 email: email,
-                                isDropAlias: emailAliases.isDropAlias(for: email.to),
+                                isDropAlias: aliasLookup.isDropAlias(for: email.to),
                                 isCatchAll: isCatchAll,
                                 alias: !isCatchAll ? alias : nil,
                                 onTapAlias: { tappedAlias in
@@ -218,6 +232,12 @@ struct WeeklyEmailsView: View {
                                 }
                             )
                                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                                .listRowSeparator(.hidden)
+                        }
+                        if section.emails.count > perDayRowLimit {
+                            Text("+ \(section.emails.count - perDayRowLimit) more on this day")
+                                .font(.system(.footnote, design: .rounded))
+                                .foregroundStyle(.secondary)
                                 .listRowSeparator(.hidden)
                         }
                     }
@@ -244,10 +264,24 @@ struct WeeklyEmailsView: View {
         .listStyle(.plain)
         .navigationTitle("Weekly Overview")
         .navigationBarTitleDisplayMode(.inline)
+        .overlay {
+            if !didLoad {
+                ProgressView()
+            }
+        }
         .navigationDestination(isPresented: $navigateToDetail) {
             if let alias = selectedAlias {
                 EmailDetailView(email: alias, needsRefresh: .constant(false))
             }
+        }
+        .task {
+            guard !didLoad else { return }
+            let stats = statistics
+            let built = await Task.detached(priority: .userInitiated) {
+                buildWeeklyDaySections(from: stats)
+            }.value
+            loadedSections = built
+            didLoad = true
         }
     }
     
@@ -273,7 +307,7 @@ struct WeeklyEmailsView: View {
     
     // Individual email row view
     private struct EmailRowView: View {
-        let email: EmailItem
+        let email: WeeklyEmailItem
         let isDropAlias: Bool
         let isCatchAll: Bool
         let alias: EmailAlias?
@@ -296,49 +330,46 @@ struct WeeklyEmailsView: View {
                 
                 // All email info in a compact vertical stack
                 VStack(alignment: .leading, spacing: 6) {
-                    // From line with horizontal scroll
+                    // From line
                     HStack(alignment: .top, spacing: 6) {
                         Text("From:")
                             .font(.system(.caption, design: .rounded))
                             .foregroundStyle(.secondary)
                             .fixedSize()
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            Text(email.from)
-                                .font(.system(.subheadline, design: .rounded, weight: .medium))
-                                .foregroundStyle(.primary)
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(email.from)
+                            .font(.system(.subheadline, design: .rounded, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     
-                    // To line with horizontal scroll
+                    // To line
                     HStack(alignment: .top, spacing: 6) {
                         Text("To:")
                             .font(.system(.caption, design: .rounded))
                             .foregroundStyle(.secondary)
                             .fixedSize()
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 4) {
-                                Text(email.to)
-                                    .font(.system(.subheadline, design: .rounded, weight: .medium))
-                                    .foregroundStyle(isDropAlias ? .red : (isCatchAll ? .purple : .primary))
-                                    .fixedSize(horizontal: true, vertical: false)
-                                
-                                // Catch-all indicator badge
-                                if isCatchAll {
-                                    Text("Catch-All")
-                                        .font(.system(.caption2, design: .rounded, weight: .semibold))
-                                        .foregroundStyle(.purple)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            Capsule()
-                                                .fill(Color.purple.opacity(0.15))
-                                        )
-                                }
-                            }
+                        Text(email.to)
+                            .font(.system(.subheadline, design: .rounded, weight: .medium))
+                            .foregroundStyle(isDropAlias ? .red : (isCatchAll ? .purple : .primary))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        
+                        // Catch-all indicator badge
+                        if isCatchAll {
+                            Text("Catch-All")
+                                .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.purple)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.purple.opacity(0.15))
+                                )
+                                .fixedSize()
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     
                     // Date/Time, Plus-tag, and Status line

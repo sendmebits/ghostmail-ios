@@ -258,6 +258,13 @@ class SMTPService: @unchecked Sendable {
                 }
             }
 
+            // Overall session timeout: an unreachable or unresponsive server (or a
+            // silently failed send) must not leave the caller suspended forever.
+            // `fail` is a no-op if the session already finished.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
+                fail(SMTPError.timedOut)
+            }
+
             connection.start(queue: .global())
         }
     }
@@ -465,6 +472,7 @@ enum SMTPError: LocalizedError {
     case connectionFailed
     case authenticationFailed
     case sendFailed
+    case timedOut
     case starttlsUnsupported(host: String, port: Int)
     case starttlsFailed
     case notImplemented(String)
@@ -475,6 +483,8 @@ enum SMTPError: LocalizedError {
             return "SMTP settings are invalid or incomplete"
         case .connectionFailed:
             return "Failed to connect to SMTP server"
+        case .timedOut:
+            return "The SMTP server did not respond in time"
         case .authenticationFailed:
             return "SMTP authentication failed"
         case .sendFailed:

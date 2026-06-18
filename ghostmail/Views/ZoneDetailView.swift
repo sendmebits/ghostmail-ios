@@ -10,6 +10,13 @@ struct ZoneDetailView: View {
     let zone: CloudflareClient.CloudflareZone
     let removeZone: (CloudflareClient.CloudflareZone) -> Void
     
+    /// Live zone data. `zone` is a value-copy snapshot taken at navigation time,
+    /// so changes made while this view is visible (adding a token, toggling
+    /// subdomains) wouldn't show without re-resolving from the client.
+    private var currentZone: CloudflareClient.CloudflareZone {
+        cloudflareClient.zones.first(where: { $0.zoneId == zone.zoneId }) ?? zone
+    }
+    
     // Catch-All state
     @State private var catchAllStatus: CatchAllStatus?
     @State private var isLoadingCatchAll = false
@@ -28,7 +35,7 @@ struct ZoneDetailView: View {
     @State private var showEditTokenSheet = false
     
     private var domainName: String {
-        zone.domainName.isEmpty ? zone.zoneId : zone.domainName
+        currentZone.domainName.isEmpty ? currentZone.zoneId : currentZone.domainName
     }
     
     private var entryCount: Int {
@@ -36,7 +43,7 @@ struct ZoneDetailView: View {
     }
     
     private var isMissingToken: Bool {
-        zone.apiToken.isEmpty
+        currentZone.apiToken.isEmpty
     }
     
     private var catchAllIsEnabled: Bool {
@@ -160,7 +167,7 @@ struct ZoneDetailView: View {
             if !isMissingToken {
                 Section("Features") {
                     Toggle("Enable Sub-Domains", isOn: Binding(
-                        get: { zone.subdomainsEnabled },
+                        get: { currentZone.subdomainsEnabled },
                         set: { newValue in
                             Task {
                                 do {
@@ -226,7 +233,7 @@ struct ZoneDetailView: View {
         .alert("Remove Zone?", isPresented: $showRemoveZoneAlert) {
             Button("Cancel", role: .cancel) { }
             Button("Remove", role: .destructive) {
-                removeZone(zone)
+                removeZone(currentZone)
                 dismiss()
             }
         } message: {
@@ -244,10 +251,10 @@ struct ZoneDetailView: View {
             Text("Choose what happens to emails sent to addresses that don't have a routing rule.")
         }
         .sheet(isPresented: $showAddTokenSheet) {
-            AddZoneTokenSheet(zone: zone)
+            AddZoneTokenSheet(zone: currentZone)
         }
         .sheet(isPresented: $showEditTokenSheet) {
-            EditZoneTokenSheet(zone: zone)
+            EditZoneTokenSheet(zone: currentZone)
         }
     }
     

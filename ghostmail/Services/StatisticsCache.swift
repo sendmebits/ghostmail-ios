@@ -14,7 +14,7 @@ extension Notification.Name {
 /// - If cache is stale (>24 hours), it's still shown but fresh data is fetched in background
 /// - Manual refresh always bypasses cache to get latest data
 /// - No background operations or scheduled updates needed
-class StatisticsCache {
+final class StatisticsCache: @unchecked Sendable {
     static let shared = StatisticsCache()
     
     private let timestampKey = "EmailStatisticsCacheTimestamp"
@@ -80,6 +80,14 @@ class StatisticsCache {
             #endif
             return nil
         }
+    }
+    
+    /// Load cached statistics off the main actor. The cache can be large enough
+    /// that synchronous file I/O + JSON decoding visibly stalls navigation.
+    func loadAsync() async -> (statistics: [EmailStatistic], isStale: Bool)? {
+        await Task.detached(priority: .userInitiated) {
+            self.load()
+        }.value
     }
     
     /// Get statistics for a specific email address from cache

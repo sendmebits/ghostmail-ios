@@ -184,7 +184,7 @@ struct EmailCreateView: View {
                     Button("Create") {
                         createEmailAlias()
                     }
-                    .disabled(username.isEmpty || isLoading)
+                    .disabled(username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || forwardTo.isEmpty || isLoading)
                 }
             }
             .disabled(isLoading)
@@ -324,8 +324,10 @@ struct EmailCreateView: View {
     }
     
     private func createEmailAlias() {
+        // Guard before spawning the Task so a rapid double-tap can't start two creates
+        guard !isLoading else { return }
+        isLoading = true
         Task {
-            isLoading = true
             do {
                 // Use the selected domain (which could be main domain or subdomain)
                 let domain = selectedDomain.isEmpty ? selectedDomainFallback : selectedDomain
@@ -333,7 +335,7 @@ struct EmailCreateView: View {
                 // Resolve target zone based on the selected domain
                 let zone = zoneForSelectedDomain ?? cloudflareClient.zones.first(where: { $0.zoneId == cloudflareClient.zoneId })
 
-                let fullEmailAddress = "\(username)@\(domain)"
+                let fullEmailAddress = "\(username.trimmingCharacters(in: .whitespacesAndNewlines))@\(domain)"
                 let rule: EmailRule
                 if let z = zone {
                     rule = try await cloudflareClient.createEmailRule(emailAddress: fullEmailAddress, forwardTo: forwardTo, in: z)

@@ -253,7 +253,8 @@ struct EmailListView: View {
             case .all:
                 matchesDestination = true
             case .address(let addr):
-                matchesDestination = alias.forwardTo == addr
+                // Email addresses are case-insensitive
+                matchesDestination = alias.forwardTo.caseInsensitiveCompare(addr) == .orderedSame
             }
             guard matchesDestination else { return false }
             
@@ -424,7 +425,7 @@ struct EmailListView: View {
         }
         
         // Check cache freshness BEFORE setting loading state to avoid spinner flicker
-        if useCache, let cached = StatisticsCache.shared.load() {
+        if useCache, let cached = await StatisticsCache.shared.loadAsync() {
             let cacheTimestamp = UserDefaults.standard.object(forKey: "EmailStatisticsCacheTimestamp") as? Date
             
             // Update last check time
@@ -657,7 +658,7 @@ struct EmailListView: View {
     private func loadStatisticsFromCache() async {
         guard showAnalytics else { return }
         
-        guard let cached = StatisticsCache.shared.load() else {
+        guard let cached = await StatisticsCache.shared.loadAsync() else {
             return
         }
         

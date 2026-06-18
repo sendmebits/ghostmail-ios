@@ -1,37 +1,51 @@
 import SwiftUI
 import SwiftData
 
+// File-scoped builder so email aggregation can run off the main actor (static
+// methods on a @MainActor View remain main-actor isolated in Swift 6).
+private func buildDailyEmails(for date: Date, from statistics: [EmailStatistic]) -> [EmailLogItem] {
+    let calendar = Calendar.current
+    let dayStart = calendar.startOfDay(for: date)
+
+    var allEmails: [EmailLogItem] = []
+
+    for stat in statistics {
+        let emailsOnDay = stat.emailDetails.filter { detail in
+            calendar.isDate(detail.date, inSameDayAs: dayStart)
+        }
+
+        for detail in emailsOnDay {
+            allEmails.append(EmailLogItem(
+                from: detail.from,
+                to: stat.emailAddress,
+                date: detail.date,
+                action: detail.action,
+                originalTo: detail.originalTo
+            ))
+        }
+    }
+
+    return allEmails.sorted { $0.date > $1.date }
+}
+
 struct DailyEmailsView: View {
     let date: Date
     let statistics: [EmailStatistic]
+    // Plain @Query (no predicate). A predicate-based @Query constructed at
+    // navigation time can stall against an actively-mirroring CloudKit store;
+    // logged-out aliases are filtered in-memory where the lookup is built.
     @Query private var emailAliases: [EmailAlias]
     
-    // Get all individual emails for the selected day
-    private var emailsForDay: [EmailLogItem] {
-        let calendar = Calendar.current
-        let dayStart = calendar.startOfDay(for: date)
-        
-        var allEmails: [EmailLogItem] = []
-        
-        for stat in statistics {
-            let emailsOnDay = stat.emailDetails.filter { detail in
-                calendar.isDate(detail.date, inSameDayAs: dayStart)
-            }
-            
-            for detail in emailsOnDay {
-                allEmails.append(EmailLogItem(
-                    from: detail.from,
-                    to: stat.emailAddress,
-                    date: detail.date,
-                    action: detail.action,
-                    originalTo: detail.originalTo
-                ))
-            }
-        }
-        
-        // Sort by date/time, most recent first
-        return allEmails.sorted { $0.date > $1.date }
-    }
+    // Emails are built once (off the main thread) and stored here so the generated
+    // EmailLogItem ids stay stable across re-renders. Recomputing them in `body`
+    // regenerated UUIDs every pass, forcing SwiftUI to rebuild every row and
+    // potentially hanging the main thread on large datasets.
+    @State private var dayEmails: [EmailLogItem] = []
+    @State private var didLoad = false
+
+    // Bound the number of rows rendered so a heavy (e.g. catch-all) day can't
+    // generate tens of thousands of List rows and stall the main thread.
+    private let rowLimit = 500
     
     private var formattedDate: String {
         let formatter = DateFormatter()
@@ -48,9 +62,9 @@ struct DailyEmailsView: View {
     }
     
     // Summary counts by action
-    private var actionSummary: (forwarded: Int, dropped: Int, rejected: Int) {
+    private func actionSummary(for emails: [EmailLogItem]) -> (forwarded: Int, dropped: Int, rejected: Int) {
         var forwarded = 0, dropped = 0, rejected = 0
-        for email in emailsForDay {
+        for email in emails {
             switch email.action {
             case .forwarded: forwarded += 1
             case .dropped: dropped += 1
@@ -69,14 +83,19 @@ struct DailyEmailsView: View {
     @State private var navigateToDetail = false
     
     // Filtered emails based on selected action
-    private var filteredEmails: [EmailLogItem] {
-        guard let filter = selectedActionFilter else { return emailsForDay }
-        return emailsForDay.filter { $0.action == filter }
+    private func filteredEmails(from emails: [EmailLogItem]) -> [EmailLogItem] {
+        guard let filter = selectedActionFilter else { return emails }
+        return emails.filter { $0.action == filter }
     }
     
     var body: some View {
+        let dayEmails = self.dayEmails
+        let filteredEmails = filteredEmails(from: dayEmails)
+        let actionSummary = actionSummary(for: dayEmails)
+        let aliasLookup = EmailAliasLookup(emailAliases.filter { !$0.isLoggedOut })
+        
         List {
-            if emailsForDay.isEmpty {
+            if dayEmails.isEmpty {
                 Section {
                     ContentUnavailableView(
                         "No Emails",
@@ -137,11 +156,11 @@ struct DailyEmailsView: View {
                         HStack(spacing: 4) {
                             // Show filtered count when filter is active
                             if selectedActionFilter != nil {
-                                Text("\(filteredEmails.count)/\(emailsForDay.count)")
+                                Text("\(filteredEmails.count)/\(dayEmails.count)")
                                     .font(.system(.subheadline, design: .rounded, weight: .bold))
                                     .foregroundStyle(Color.accentColor)
                             } else {
-                                Text("\(emailsForDay.count)")
+                                Text("\(dayEmails.count)")
                                     .font(.system(.subheadline, design: .rounded, weight: .bold))
                                     .foregroundStyle(Color.accentColor)
                             }
@@ -168,13 +187,13 @@ struct DailyEmailsView: View {
                         }
                         .padding(.vertical, 16)
                     } else {
-                        ForEach(filteredEmails) { email in
-                            let alias = emailAliases.first { $0.emailAddress == email.to }
-                            let isCatchAll = emailAliases.isCatchAllAddress(email.to)
+                        ForEach(filteredEmails.prefix(rowLimit)) { email in
+                            let alias = aliasLookup.alias(for: email.to)
+                            let isCatchAll = aliasLookup.isCatchAllAddress(email.to)
                             
                             EmailRowView(
                                 email: email,
-                                isDropAlias: emailAliases.isDropAlias(for: email.to),
+                                isDropAlias: aliasLookup.isDropAlias(for: email.to),
                                 isCatchAll: isCatchAll,
                                 alias: !isCatchAll ? alias : nil,
                                 onTapAlias: { tappedAlias in
@@ -183,6 +202,12 @@ struct DailyEmailsView: View {
                                 }
                             )
                                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                                .listRowSeparator(.hidden)
+                        }
+                        if filteredEmails.count > rowLimit {
+                            Text("+ \(filteredEmails.count - rowLimit) more")
+                                .font(.system(.footnote, design: .rounded))
+                                .foregroundStyle(.secondary)
                                 .listRowSeparator(.hidden)
                         }
                     }
@@ -207,10 +232,25 @@ struct DailyEmailsView: View {
         .listStyle(.plain)
         .navigationTitle(formattedDate)
         .navigationBarTitleDisplayMode(.inline)
+        .overlay {
+            if !didLoad {
+                ProgressView()
+            }
+        }
         .navigationDestination(isPresented: $navigateToDetail) {
             if let alias = selectedAlias {
                 EmailDetailView(email: alias, needsRefresh: .constant(false))
             }
+        }
+        .task {
+            guard !didLoad else { return }
+            let stats = statistics
+            let day = date
+            let built = await Task.detached(priority: .userInitiated) {
+                buildDailyEmails(for: day, from: stats)
+            }.value
+            self.dayEmails = built
+            didLoad = true
         }
     }
     
@@ -239,49 +279,46 @@ struct DailyEmailsView: View {
                 
                 // All email info in a compact vertical stack
                 VStack(alignment: .leading, spacing: 6) {
-                    // From line with horizontal scroll
+                    // From line
                     HStack(alignment: .top, spacing: 6) {
                         Text("From:")
                             .font(.system(.caption, design: .rounded))
                             .foregroundStyle(.secondary)
                             .fixedSize()
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            Text(email.from)
-                                .font(.system(.subheadline, design: .rounded, weight: .medium))
-                                .foregroundStyle(.primary)
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(email.from)
+                            .font(.system(.subheadline, design: .rounded, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     
-                    // To line with horizontal scroll
+                    // To line
                     HStack(alignment: .top, spacing: 6) {
                         Text("To:")
                             .font(.system(.caption, design: .rounded))
                             .foregroundStyle(.secondary)
                             .fixedSize()
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 4) {
-                                Text(email.to)
-                                    .font(.system(.subheadline, design: .rounded, weight: .medium))
-                                    .foregroundStyle(isDropAlias ? .red : (isCatchAll ? .purple : .primary))
-                                    .fixedSize(horizontal: true, vertical: false)
-                                
-                                // Catch-all indicator badge
-                                if isCatchAll {
-                                    Text("Catch-All")
-                                        .font(.system(.caption2, design: .rounded, weight: .semibold))
-                                        .foregroundStyle(.purple)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            Capsule()
-                                                .fill(Color.purple.opacity(0.15))
-                                        )
-                                }
-                            }
+                        Text(email.to)
+                            .font(.system(.subheadline, design: .rounded, weight: .medium))
+                            .foregroundStyle(isDropAlias ? .red : (isCatchAll ? .purple : .primary))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        
+                        // Catch-all indicator badge
+                        if isCatchAll {
+                            Text("Catch-All")
+                                .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.purple)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.purple.opacity(0.15))
+                                )
+                                .fixedSize()
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     
                     // Date/Time, Plus-tag, and Status line

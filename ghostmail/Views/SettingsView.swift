@@ -70,6 +70,12 @@ struct SettingsView: View {
         if let z = cloudflareClient.zones.first(where: { $0.domainName.lowercased() == domain }) {
             return z
         }
+        // Subdomain aliases belong to their parent zone
+        if let z = cloudflareClient.zones.first(where: { zone in
+            zone.subdomains.contains(where: { $0.lowercased() == domain })
+        }) {
+            return z
+        }
         return nil
     }
     
@@ -206,6 +212,8 @@ struct SettingsView: View {
     }
     
     private func importFromCSV(url: URL) {
+        // Parse the file synchronously while we hold security-scoped access
+        let rows: [[String]]
         do {
             let securityScoped = url.startAccessingSecurityScopedResource()
             defer {
@@ -215,175 +223,214 @@ struct SettingsView: View {
             }
             
             let csvString = try String(contentsOf: url, encoding: .utf8)
-            let rows = parseCSVRows(csvString)
-            
-            // Build set of allowed domains (primary + additional zones + subdomains)
-            var allowedDomains = Set<String>()
-            // Add primary zone domain
-            if !cloudflareClient.domainName.isEmpty {
-                allowedDomains.insert(cloudflareClient.domainName.lowercased())
+            rows = parseCSVRows(csvString)
+        } catch {
+            debugLog("Import error: \(error)")
+            importError = error
+            showImportError = true
+            return
+        }
+        
+        // Build set of allowed domains (primary + additional zones + subdomains)
+        var allowedDomains = Set<String>()
+        // Add primary zone domain
+        if !cloudflareClient.domainName.isEmpty {
+            allowedDomains.insert(cloudflareClient.domainName.lowercased())
+        }
+        // Add additional zones
+        for zone in cloudflareClient.zones {
+            if !zone.domainName.isEmpty {
+                allowedDomains.insert(zone.domainName.lowercased())
             }
-            // Add additional zones
-            for zone in cloudflareClient.zones {
-                if !zone.domainName.isEmpty {
-                    allowedDomains.insert(zone.domainName.lowercased())
-                }
-                // Add subdomains
-                for sub in zone.subdomains {
-                    allowedDomains.insert(sub.lowercased())
-                }
+            // Add subdomains
+            for sub in zone.subdomains {
+                allowedDomains.insert(sub.lowercased())
+            }
+        }
+        
+        struct ImportRow {
+            let emailAddress: String
+            let website: String
+            let notes: String
+            let created: Date?
+            let isEnabled: Bool
+            let forwardTo: String
+            let actionType: EmailRuleActionType
+        }
+        
+        var skipped = Set<String>()
+        var importRows: [ImportRow] = []
+        let dateFormatter = ISO8601DateFormatter()
+        
+        // Skip header row
+        for fields in rows.dropFirst() where !fields.allSatisfy({ $0.isEmpty }) {
+            guard fields.count >= 6 else { continue }
+            
+            let emailAddress = fields[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // Parse action type (optional 7th column, defaults to "forward" for backward compatibility)
+            let actionType: EmailRuleActionType
+            if fields.count >= 7 {
+                let actionRaw = fields[6].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                actionType = EmailRuleActionType(rawValue: actionRaw) ?? .forward
+            } else {
+                actionType = .forward
             }
             
-            var skipped = Set<String>()
+            // Extract domain from email
+            let emailParts = emailAddress.split(separator: "@")
+            guard emailParts.count == 2 else { continue }
+            let domain = String(emailParts[1]).lowercased()
             
-            // Skip header row
-            for fields in rows.dropFirst() where !fields.allSatisfy({ $0.isEmpty }) {
-                guard fields.count >= 6 else { continue }
-                
-                let emailAddress = fields[0].trimmingCharacters(in: .whitespacesAndNewlines)
-                let website = fields[1].trimmingCharacters(in: .whitespacesAndNewlines)
-                let notes = fields[2].trimmingCharacters(in: .whitespacesAndNewlines)
-                let created = ISO8601DateFormatter().date(from: fields[3].trimmingCharacters(in: .whitespacesAndNewlines))
-                let isEnabled = fields[4].trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "true"
-                let forwardTo = fields[5].trimmingCharacters(in: .whitespacesAndNewlines)
-                
-                // Parse action type (optional 7th column, defaults to "forward" for backward compatibility)
-                let actionType: EmailRuleActionType
-                if fields.count >= 7 {
-                    let actionRaw = fields[6].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                    actionType = EmailRuleActionType(rawValue: actionRaw) ?? .forward
-                } else {
-                    actionType = .forward
-                }
-                
-                // Extract domain from email
-                let emailParts = emailAddress.split(separator: "@")
-                guard emailParts.count == 2 else { continue }
-                let domain = String(emailParts[1]).lowercased()
-                
-                // Check if domain is allowed
-                if !allowedDomains.contains(domain) {
-                    skipped.insert(domain)
-                    continue
-                }
-                
+            // Check if domain is allowed
+            if !allowedDomains.contains(domain) {
+                skipped.insert(domain)
+                continue
+            }
+            
+            importRows.append(ImportRow(
+                emailAddress: emailAddress,
+                website: fields[1].trimmingCharacters(in: .whitespacesAndNewlines),
+                notes: fields[2].trimmingCharacters(in: .whitespacesAndNewlines),
+                created: dateFormatter.date(from: fields[3].trimmingCharacters(in: .whitespacesAndNewlines)),
+                isEnabled: fields[4].trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "true",
+                forwardTo: fields[5].trimmingCharacters(in: .whitespacesAndNewlines),
+                actionType: actionType
+            ))
+        }
+        
+        if !skipped.isEmpty {
+            skippedDomains = Array(skipped).sorted()
+            showSkippedAlert = true
+        }
+        
+        guard !importRows.isEmpty else { return }
+        
+        // Process rows one at a time in a single main-actor task. SwiftData's
+        // ModelContext is not thread-safe, so mutations and the final save must
+        // never run concurrently (the previous per-row detached Tasks could).
+        Task { @MainActor in
+            var firstError: Error?
+            
+            for row in importRows {
                 // Check if alias already exists
-                if let existingAlias = emailAliases.first(where: { $0.emailAddress == emailAddress }) {
+                if let existingAlias = emailAliases.first(where: { $0.emailAddress == row.emailAddress }) {
                     // Update existing alias
-                    existingAlias.website = website
-                    existingAlias.notes = notes
-                    existingAlias.isEnabled = isEnabled
-                    existingAlias.forwardTo = forwardTo
-                    existingAlias.created = created  // Always overwrite the created date, even if nil
-                    existingAlias.actionType = actionType
+                    existingAlias.website = row.website
+                    existingAlias.notes = row.notes
+                    existingAlias.isEnabled = row.isEnabled
+                    existingAlias.forwardTo = row.forwardTo
+                    existingAlias.created = row.created  // Always overwrite the created date, even if nil
+                    existingAlias.actionType = row.actionType
                     
                     // Update Cloudflare if we have a tag, using the alias' zone if available
                     if let tag = existingAlias.cloudflareTag {
                         // Prefer the zone recorded on the alias; otherwise infer by email domain
                         let zone: CloudflareClient.CloudflareZone? =
                             cloudflareClient.zones.first(where: { !$0.zoneId.isEmpty && $0.zoneId == existingAlias.zoneId })
-                            ?? zoneForEmailAddress(emailAddress)
-
+                            ?? zoneForEmailAddress(row.emailAddress)
+                        
                         // Align local alias zone if we could resolve it
                         if let z = zone { existingAlias.zoneId = z.zoneId }
-
-                        Task {
+                        
+                        do {
                             if let z = zone {
                                 try await cloudflareClient.updateEmailRule(
                                     tag: tag,
-                                    emailAddress: emailAddress,
-                                    isEnabled: isEnabled,
-                                    forwardTo: forwardTo,
+                                    emailAddress: row.emailAddress,
+                                    isEnabled: row.isEnabled,
+                                    forwardTo: row.forwardTo,
                                     in: z,
-                                    actionType: actionType.rawValue
+                                    actionType: row.actionType.rawValue
                                 )
                             } else {
                                 // Fallback to current primary zone
                                 try await cloudflareClient.updateEmailRule(
                                     tag: tag,
-                                    emailAddress: emailAddress,
-                                    isEnabled: isEnabled,
-                                    forwardTo: forwardTo,
-                                    actionType: actionType.rawValue
+                                    emailAddress: row.emailAddress,
+                                    isEnabled: row.isEnabled,
+                                    forwardTo: row.forwardTo,
+                                    actionType: row.actionType.rawValue
                                 )
                             }
+                        } catch {
+                            debugLog("Error updating Cloudflare rule for \(row.emailAddress): \(error)")
+                            if firstError == nil { firstError = error }
                         }
                     }
                 } else {
                     // Create new Cloudflare rule first
-                    Task {
-                        do {
-                            // Choose zone by email domain when possible
-                            let zone = zoneForEmailAddress(emailAddress)
-                            let rule: EmailRule
-                            if let z = zone {
-                                rule = try await cloudflareClient.createEmailRule(
-                                    emailAddress: emailAddress,
-                                    forwardTo: forwardTo,
-                                    in: z
-                                )
-                                // Update if disabled or non-forward action type
-                                if isEnabled == false || actionType != .forward {
-                                    try await cloudflareClient.updateEmailRule(
-                                        tag: rule.tag,
-                                        emailAddress: emailAddress,
-                                        isEnabled: isEnabled,
-                                        forwardTo: forwardTo,
-                                        in: z,
-                                        actionType: actionType.rawValue
-                                    )
-                                }
-                            } else {
-                                rule = try await cloudflareClient.createEmailRule(
-                                    emailAddress: emailAddress,
-                                    forwardTo: forwardTo
-                                )
-                                // Update if disabled or non-forward action type
-                                if isEnabled == false || actionType != .forward {
-                                    try await cloudflareClient.updateEmailRule(
-                                        tag: rule.tag,
-                                        emailAddress: emailAddress,
-                                        isEnabled: isEnabled,
-                                        forwardTo: forwardTo,
-                                        actionType: actionType.rawValue
-                                    )
-                                }
-                            }
-                            
-                            // Create new alias with Cloudflare tag and zone attribution
-                            let newAlias = EmailAlias(
-                                emailAddress: emailAddress,
-                                forwardTo: forwardTo,
-                                isManuallyCreated: created != nil,
-                                zoneId: zone?.zoneId ?? cloudflareClient.zoneId,
-                                actionType: actionType
+                    do {
+                        // Choose zone by email domain when possible
+                        let zone = zoneForEmailAddress(row.emailAddress)
+                        let rule: EmailRule
+                        if let z = zone {
+                            rule = try await cloudflareClient.createEmailRule(
+                                emailAddress: row.emailAddress,
+                                forwardTo: row.forwardTo,
+                                in: z
                             )
-                            newAlias.website = website
-                            newAlias.notes = notes
-                            newAlias.created = created  // This will be nil if not in CSV
-                            newAlias.isEnabled = isEnabled
-                            newAlias.cloudflareTag = rule.tag
-                            modelContext.insert(newAlias)
-                            try modelContext.save()
-                        } catch {
-                            debugLog("Error creating Cloudflare rule for \(emailAddress): \(error)")
-                            importError = error
-                            showImportError = true
+                            // Update if disabled or non-forward action type
+                            if row.isEnabled == false || row.actionType != .forward {
+                                try await cloudflareClient.updateEmailRule(
+                                    tag: rule.tag,
+                                    emailAddress: row.emailAddress,
+                                    isEnabled: row.isEnabled,
+                                    forwardTo: row.forwardTo,
+                                    in: z,
+                                    actionType: row.actionType.rawValue
+                                )
+                            }
+                        } else {
+                            rule = try await cloudflareClient.createEmailRule(
+                                emailAddress: row.emailAddress,
+                                forwardTo: row.forwardTo
+                            )
+                            // Update if disabled or non-forward action type
+                            if row.isEnabled == false || row.actionType != .forward {
+                                try await cloudflareClient.updateEmailRule(
+                                    tag: rule.tag,
+                                    emailAddress: row.emailAddress,
+                                    isEnabled: row.isEnabled,
+                                    forwardTo: row.forwardTo,
+                                    actionType: row.actionType.rawValue
+                                )
+                            }
                         }
+                        
+                        // Create new alias with Cloudflare tag and zone attribution
+                        let newAlias = EmailAlias(
+                            emailAddress: row.emailAddress,
+                            forwardTo: row.forwardTo,
+                            isManuallyCreated: row.created != nil,
+                            zoneId: zone?.zoneId ?? cloudflareClient.zoneId,
+                            actionType: row.actionType
+                        )
+                        newAlias.website = row.website
+                        newAlias.notes = row.notes
+                        newAlias.created = row.created  // This will be nil if not in CSV
+                        newAlias.isEnabled = row.isEnabled
+                        newAlias.cloudflareTag = rule.tag
+                        modelContext.insert(newAlias)
+                    } catch {
+                        debugLog("Error creating Cloudflare rule for \(row.emailAddress): \(error)")
+                        if firstError == nil { firstError = error }
                     }
                 }
             }
             
-            if !skipped.isEmpty {
-                skippedDomains = Array(skipped).sorted()
-                showSkippedAlert = true
+            // Save once after all rows are processed
+            do {
+                try modelContext.save()
+            } catch {
+                debugLog("Import save error: \(error)")
+                if firstError == nil { firstError = error }
             }
             
-            try modelContext.save()
-        } catch {
-            debugLog("Import error: \(error)")
-            importError = error
-            showImportError = true
+            if let error = firstError {
+                importError = error
+                showImportError = true
+            }
         }
     }
     
@@ -392,9 +439,12 @@ struct SettingsView: View {
             // Enable iCloud sync
             enableICloudSync()
         } else {
-            // Just disable sync without deleting data
+            // Just disable sync without deleting data. The ModelContainer was created
+            // at launch with CloudKit mirroring, so the change only takes effect after
+            // a restart — same as when enabling.
             iCloudSyncEnabled = false
             try? modelContext.save()
+            showRestartAlert = true
         }
     }
     
@@ -689,7 +739,7 @@ struct SettingsView: View {
                     Button("Restart Now") { restartApp() }
                     Button("Later", role: .cancel) { }
                 } message: {
-                    Text("To properly enable iCloud sync, the app needs to restart. Would you like to restart now?")
+                    Text("To apply the iCloud sync change, the app needs to restart. Would you like to restart now?")
                 }
                 .sheet(isPresented: $showAddZoneSheet) {
                     NavigationStack {

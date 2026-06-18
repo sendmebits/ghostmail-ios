@@ -12,13 +12,8 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate {
         completionHandler(true)
     }
     
-    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
-        if let shortcutItem = connectionOptions.shortcutItem,
-           shortcutItem.type == "com.sendmebits.ghostmail.create" {
-            // Post with a small delay to ensure view hierarchy is ready
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                NotificationCenter.default.post(name: .ghostmailOpenCreate, object: nil)
-            }
-        }
-    }
+    // Note: cold-launch quick actions are NOT posted from here. AppDelegate's
+    // configurationForConnecting(_:options:) sets pendingCreateQuickAction for the
+    // same connectionOptions, and ghostmailApp delivers the notification exactly
+    // once. Posting here as well used to open the create sheet twice.
 }

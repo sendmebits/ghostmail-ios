@@ -46,48 +46,59 @@ struct ghostmailApp: App {
             UserDefaults.standard.set(UUID().uuidString, forKey: "userIdentifier")
         }
         
-        do {
-            // Create a model configuration based on iCloud sync preference
-            let config: ModelConfiguration
-            
-            if syncEnabled {
-                // CloudKit-enabled configuration with explicit schema
+        // Create the container, preferring CloudKit when sync is enabled but falling
+        // back to a local-only store (and finally in-memory) instead of crashing.
+        // Aliases re-sync from Cloudflare, so even the in-memory fallback is usable.
+        var cloudKitActive = false
+        var container: ModelContainer?
+        
+        if syncEnabled {
+            do {
                 let schema = Schema([EmailAlias.self])
-                config = ModelConfiguration(
-                    schema: schema, 
+                let config = ModelConfiguration(
+                    schema: schema,
                     cloudKitDatabase: .automatic
                 )
-            } else {
-                config = ModelConfiguration(isStoredInMemoryOnly: false)
+                container = try ModelContainer(for: EmailAlias.self, configurations: config)
+                cloudKitActive = true
+            } catch {
+                debugLog("Failed to initialize CloudKit ModelContainer, falling back to local store: \(error)")
             }
-            
-            // Initialize the ModelContainer with the correct class and configuration
-            modelContainer = try ModelContainer(for: EmailAlias.self, configurations: config)
-            
-            // Set up observers only if sync is enabled
-            if syncEnabled {
-                let container = modelContainer
-                // When iCloud pushes changes, debounce and run dedup, then pull metadata.
-                var remoteChangeTask: Task<Void, Never>?
-                NotificationCenter.default.addObserver(
-                    forName: Notification.Name("NSPersistentStoreRemoteChangeNotification"),
-                    object: nil,
-                    queue: .main
-                ) { _ in
-                    remoteChangeTask?.cancel()
-                    remoteChangeTask = Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        guard !Task.isCancelled else { return }
-                        do {
-                            _ = try EmailAlias.deduplicate(in: container.mainContext)
-                        } catch { }
-                        NotificationCenter.default.post(name: .requestCloudKitMetadataPull, object: nil)
-                    }
+        }
+        
+        if container == nil {
+            do {
+                container = try ModelContainer(for: EmailAlias.self, configurations: ModelConfiguration(isStoredInMemoryOnly: false))
+            } catch {
+                debugLog("Failed to initialize local ModelContainer, falling back to in-memory store: \(error)")
+                container = try? ModelContainer(for: EmailAlias.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+            }
+        }
+        
+        guard let resolvedContainer = container else {
+            fatalError("Could not initialize ModelContainer with any configuration")
+        }
+        modelContainer = resolvedContainer
+        
+        // Set up observers only when CloudKit mirroring is actually active
+        if cloudKitActive {
+            // When iCloud pushes changes, debounce and run dedup, then pull metadata.
+            var remoteChangeTask: Task<Void, Never>?
+            NotificationCenter.default.addObserver(
+                forName: Notification.Name("NSPersistentStoreRemoteChangeNotification"),
+                object: nil,
+                queue: .main
+            ) { _ in
+                remoteChangeTask?.cancel()
+                remoteChangeTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    do {
+                        _ = try EmailAlias.deduplicate(in: resolvedContainer.mainContext)
+                    } catch { }
+                    NotificationCenter.default.post(name: .requestCloudKitMetadataPull, object: nil)
                 }
             }
-        } catch {
-            debugLog("Failed to initialize ModelContainer: \(error)")
-            fatalError("Could not initialize ModelContainer: \(error)")
         }
     }
     
@@ -160,7 +171,9 @@ struct ghostmailApp: App {
                 } while cursor != nil
             }
             
-            let withMetadata = cloudMetadata.filter { !$0.value.notes.isEmpty || !$0.value.website.isEmpty }
+            // Include records that only carry a creation date — the merge loop below
+            // applies `created` independently of notes/website
+            let withMetadata = cloudMetadata.filter { !$0.value.notes.isEmpty || !$0.value.website.isEmpty || $0.value.created != nil }
             guard !withMetadata.isEmpty else { return }
             
             let descriptor = FetchDescriptor<EmailAlias>()
@@ -207,13 +220,15 @@ struct ghostmailApp: App {
                 }
                 .task {
                     // Perform startup operations asynchronously to avoid blocking UI
-                    // If app was launched via Create Alias quick action, route to create view now
+                    // If app was launched via Create Alias quick action, route to create view now.
+                    // Clear the flag BEFORE posting so the scene-active handler can't deliver
+                    // the same quick action a second time.
                     if appDelegate.pendingCreateQuickAction {
+                        appDelegate.pendingCreateQuickAction = false
                         // Small delay to ensure view hierarchy is ready
                         try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
                         // Post notification to trigger the same flow as when app is already running
                         NotificationCenter.default.post(name: .ghostmailOpenCreate, object: nil)
-                        appDelegate.pendingCreateQuickAction = false
                     }
                     
                     // Start the periodic timer
@@ -282,11 +297,13 @@ struct ghostmailApp: App {
                     if iCloudSyncEnabled {
                         // Brief delay so other devices' changes can land before we dedupe (reduces races)
                         try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5 seconds
-                        do {
-                            let deleted = try EmailAlias.deduplicate(in: modelContainer.mainContext)
-                            if deleted > 0 { debugLog("Deduplicated \(deleted) aliases on startup") }
-                        } catch {
-                            debugLog("Error during startup deduplication: \(error)")
+                        if !cloudflareClient.isSyncing {
+                            do {
+                                let deleted = try EmailAlias.deduplicate(in: modelContainer.mainContext)
+                                if deleted > 0 { debugLog("Deduplicated \(deleted) aliases on startup") }
+                            } catch {
+                                debugLog("Error during startup deduplication: \(error)")
+                            }
                         }
                         await ghostmailApp.updateUserIdentifiers(modelContext: modelContainer.mainContext)
                         await pullMetadataFromCloudKit()
@@ -316,6 +333,8 @@ struct ghostmailApp: App {
                 if iCloudSyncEnabled {
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 s
+                        // Don't dedupe while a sync holds references to alias records
+                        guard !cloudflareClient.isSyncing else { return }
                         do {
                             let deleted = try EmailAlias.deduplicate(in: modelContainer.mainContext)
                             if deleted > 0 { debugLog("Deduplicated \(deleted) aliases after foreground (iCloud)") }
@@ -332,10 +351,15 @@ struct ghostmailApp: App {
                 // Ensure timer is running for periodic background updates
                 startUpdateTimer()
                 
-                // Check if there's a pending quick action when scene becomes active
+                // Check if there's a pending quick action when scene becomes active.
+                // Clear the flag synchronously so this and the startup .task can't
+                // both deliver it; delay the post so the subscriber is ready.
                 if appDelegate.pendingCreateQuickAction {
-                    NotificationCenter.default.post(name: .ghostmailOpenCreate, object: nil)
                     appDelegate.pendingCreateQuickAction = false
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
+                        NotificationCenter.default.post(name: .ghostmailOpenCreate, object: nil)
+                    }
                 }
             } else if newPhase == .background {
                 // Stop timer when in background to save resources
@@ -426,7 +450,7 @@ struct ghostmailApp: App {
         
         // Always run a quick dedupe pass on the timer — iCloud may have delivered
         // records from the other device since the last check
-        if iCloudSyncEnabled {
+        if iCloudSyncEnabled && !cloudflareClient.isSyncing {
             do {
                 let merged = try EmailAlias.deduplicate(in: modelContainer.mainContext)
                 if merged > 0 { debugLog("Background timer dedup merged \(merged) iCloud records") }

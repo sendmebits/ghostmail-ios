@@ -36,6 +36,11 @@ class CloudflareClient: ObservableObject {
     private var lastForwardingAddressesFetch: Date = .distantPast
     private let cacheValidityDuration: TimeInterval = 300 // 5 minutes
     
+    // Serializes syncEmailRules across all entry points (app timer, foreground
+    // return, list view refresh) so two syncs never interleave fetch/delete/insert
+    // on the same ModelContext. Only read/written on the main actor.
+    @MainActor private(set) var isSyncing = false
+    
     init(accountId: String = "", zoneId: String = "", apiToken: String = "") {
         // Load stored credentials from Keychain (migrating from UserDefaults if needed)
         let defaults = UserDefaults.standard
@@ -186,11 +191,15 @@ class CloudflareClient: ObservableObject {
         // If this is the primary zone, also update the primary credentials
         if zoneId == self.zoneId {
             self.apiToken = token
-            KeychainHelper.shared.save(token, service: "ghostmail", account: "apiToken")
+            if !KeychainHelper.shared.save(token, service: "ghostmail", account: "apiToken") {
+                debugLog("⚠️ Keychain save failed for primary zone token")
+            }
         }
         
         // Save to Keychain
-        KeychainHelper.shared.save(token, service: "ghostmail", account: "apiToken_\(zoneId)")
+        if !KeychainHelper.shared.save(token, service: "ghostmail", account: "apiToken_\(zoneId)") {
+            debugLog("⚠️ Keychain save failed for zone token \(maskId(zoneId)) — token may be missing on next launch")
+        }
         
         // Persist zone changes
         persistZones()
@@ -393,7 +402,8 @@ class CloudflareClient: ObservableObject {
             allRules.append(contentsOf: cloudflareResponse.result)
             
             // Check if we've fetched all pages
-            if let resultInfo = cloudflareResponse.result_info {
+            // Stop on an empty page even if total_count says more exist, to avoid looping forever
+            if let resultInfo = cloudflareResponse.result_info, !cloudflareResponse.result.isEmpty {
                 if allRules.count >= resultInfo.total_count {
                     break
                 }
@@ -495,9 +505,17 @@ class CloudflareClient: ObservableObject {
                 throw CloudflareError(message: "Failed to fetch rules for zone \(maskId(zone.zoneId))")
             }
             let cloudflareResponse = try JSONDecoder().decode(CloudflareResponse<[EmailRule]>.self, from: data)
-            guard cloudflareResponse.success else { break }
+            // Throw (instead of silently returning partial data) so callers never
+            // mistake an incomplete rule list for the full set — syncEmailRules
+            // deletes local aliases missing from this list.
+            guard cloudflareResponse.success else {
+                throw CloudflareError(message: cloudflareResponse.errors.first?.message ?? "API request was not successful")
+            }
             allRules.append(contentsOf: cloudflareResponse.result)
-            if let info = cloudflareResponse.result_info, allRules.count < info.total_count {
+            // Stop on an empty page even if total_count says more exist, to avoid looping forever
+            if let info = cloudflareResponse.result_info,
+               !cloudflareResponse.result.isEmpty,
+               allRules.count < info.total_count {
                 currentPage += 1
             } else { break }
         }
@@ -520,14 +538,41 @@ class CloudflareClient: ObservableObject {
         return uniqueRules
     }
 
-    // Fetch rules across all configured zones
-    func getEmailRulesAllZones() async throws -> [CloudflareEmailRule] {
+    // Fetch rules across all configured zones.
+    // Zones without an API token (e.g. awaiting re-auth after an iCloud restore) are
+    // skipped, and a failure in one zone doesn't abort the others. `fetchedZoneIds`
+    // tells callers which zones were fetched completely, so sync logic never treats
+    // aliases from a skipped/failed zone as deleted.
+    func getEmailRulesAllZonesDetailed() async throws -> (rules: [CloudflareEmailRule], fetchedZoneIds: Set<String>) {
         var aggregated: [CloudflareEmailRule] = []
+        var fetchedZoneIds: Set<String> = []
+        var firstError: Error?
+        var attemptedZones = 0
         for zone in zones {
-            let rules = try await getEmailRules(for: zone)
-            aggregated.append(contentsOf: rules)
+            guard !zone.apiToken.isEmpty else {
+                debugLog("Skipping zone \(maskId(zone.zoneId)): no API token configured")
+                continue
+            }
+            attemptedZones += 1
+            do {
+                let rules = try await getEmailRules(for: zone)
+                aggregated.append(contentsOf: rules)
+                fetchedZoneIds.insert(zone.zoneId)
+            } catch {
+                debugLog("Failed to fetch rules for zone \(maskId(zone.zoneId)): \(error)")
+                if firstError == nil { firstError = error }
+            }
         }
-        return aggregated
+        // If every zone we attempted failed, surface the error instead of
+        // returning an empty result that looks like "no aliases anywhere".
+        if fetchedZoneIds.isEmpty, attemptedZones > 0, let error = firstError {
+            throw error
+        }
+        return (aggregated, fetchedZoneIds)
+    }
+
+    func getEmailRulesAllZones() async throws -> [CloudflareEmailRule] {
+        try await getEmailRulesAllZonesDetailed().rules
     }
     
     func createEmailRule(emailAddress: String, forwardTo: String) async throws -> EmailRule {
@@ -796,9 +841,10 @@ class CloudflareClient: ObservableObject {
                 let graphQLResponse = try JSONDecoder().decode(GraphQLResponse<EmailRoutingAnalyticsData>.self, from: data)
                 
                 if let errors = graphQLResponse.errors, let firstError = errors.first {
-                    // Ignore "time range too large" errors if they happen for some reason, just return empty
+                    // Throw instead of returning empty data so permission/auth problems
+                    // don't masquerade as "no email activity"
                     debugLog("GraphQL Error: \(firstError.message)")
-                    return [String: [EmailStatistic.EmailDetail]]()
+                    throw CloudflareError(message: "Analytics query failed: \(firstError.message)")
                 }
                 
                 guard let logs = graphQLResponse.data?.viewer.zones.first?.emailRoutingAdaptive else {
@@ -842,16 +888,39 @@ class CloudflareClient: ObservableObject {
         }
         
         var totalDetails: [String: [EmailStatistic.EmailDetail]] = [:]
+        // Adjacent day chunks use inclusive datetime_geq/datetime_leq bounds, so an
+        // event landing exactly on a chunk boundary appears in two chunks. Dedupe
+        // with the same composite key used by the delta merge below.
+        var seenDetailKeys = Set<String>()
+        var failedChunks = 0
+        var firstChunkError: Error?
         
         for task in tasks {
             do {
                 let chunkDetails = try await task.value
                 for (email, details) in chunkDetails {
-                    totalDetails[email, default: []].append(contentsOf: details)
+                    for detail in details {
+                        let key = "\(email)|\(detail.from)|\(detail.date.timeIntervalSince1970)"
+                        if seenDetailKeys.insert(key).inserted {
+                            totalDetails[email, default: []].append(detail)
+                        }
+                    }
                 }
             } catch {
                 debugLog("Failed to fetch chunk: \(error)")
+                failedChunks += 1
+                if firstChunkError == nil { firstChunkError = error }
                 // Continue with other chunks
+            }
+        }
+        
+        // If every chunk failed we have no fresh data at all. A delta fetch with
+        // cached data can still return valid (slightly stale) statistics via the
+        // merge below; otherwise surface the error instead of returning empty stats.
+        if !tasks.isEmpty, failedChunks == tasks.count, let error = firstChunkError {
+            let canFallBackToCache = useDeltaFetch && !(cachedData?.isEmpty ?? true)
+            if !canFallBackToCache {
+                throw error
             }
         }
         
@@ -1342,33 +1411,35 @@ class CloudflareClient: ObservableObject {
             return
         }
         
-        if forwardingAddresses.isEmpty {
+        // Cache is empty or expired — refresh from the API so newly verified
+        // destination addresses become available without an app restart
+        do {
+            try await refreshForwardingAddresses()
             
-            do {
-                try await refreshForwardingAddresses()
-                
-                // Add fallback logic if we couldn't get any verified addresses
-                if forwardingAddresses.isEmpty {
-                    // Check if we at least have a default forwarding email stored
-                    if !forwardingEmail.isEmpty {
-                        await MainActor.run {
-                            self.forwardingAddresses = [forwardingEmail]
-                            self.forwardingAddressesCache = [forwardingEmail]
-                        }
-                    } else if !accountId.isEmpty {
-                        // As a last resort, create a dummy fallback to prevent UI issues
-                        let fallbackEmail = "default@\(emailDomain)"
-                        await MainActor.run {
-                            self.forwardingAddresses = [fallbackEmail]
-                            self.forwardingAddressesCache = [fallbackEmail]
-                        }
-                    } else {
-                        throw CloudflareError(message: "No forwarding addresses available and unable to create fallback.")
+            // Add fallback logic if we couldn't get any verified addresses
+            if forwardingAddresses.isEmpty {
+                // Check if we at least have a default forwarding email stored
+                if !forwardingEmail.isEmpty {
+                    await MainActor.run {
+                        self.forwardingAddresses = [forwardingEmail]
+                        self.forwardingAddressesCache = [forwardingEmail]
                     }
+                } else if !accountId.isEmpty {
+                    // As a last resort, create a dummy fallback to prevent UI issues
+                    let fallbackEmail = "default@\(emailDomain)"
+                    await MainActor.run {
+                        self.forwardingAddresses = [fallbackEmail]
+                        self.forwardingAddressesCache = [fallbackEmail]
+                    }
+                } else {
+                    throw CloudflareError(message: "No forwarding addresses available and unable to create fallback.")
                 }
-            } catch {
-                throw error
             }
+        } catch {
+            // If the refresh failed but we still have a previously loaded (stale)
+            // list, keep showing it rather than failing the caller
+            guard !forwardingAddresses.isEmpty else { throw error }
+            debugLog("Failed to refresh forwarding addresses; keeping previous list: \(error)")
         }
     }
     
@@ -1730,11 +1801,15 @@ class CloudflareClient: ObservableObject {
         for zone in zones {
             // Skip saving if token is empty (though it shouldn't be for a valid zone)
             guard !zone.apiToken.isEmpty else { continue }
-            KeychainHelper.shared.save(zone.apiToken, service: "ghostmail", account: "apiToken_\(zone.zoneId)")
+            if !KeychainHelper.shared.save(zone.apiToken, service: "ghostmail", account: "apiToken_\(zone.zoneId)") {
+                debugLog("⚠️ Keychain save failed for zone token \(maskId(zone.zoneId)) — token may be missing on next launch")
+            }
             
             // If this is the primary zone, also save to the primary key
             if zone.zoneId == self.zoneId {
-                KeychainHelper.shared.save(zone.apiToken, service: "ghostmail", account: "apiToken")
+                if !KeychainHelper.shared.save(zone.apiToken, service: "ghostmail", account: "apiToken") {
+                    debugLog("⚠️ Keychain save failed for primary zone token")
+                }
             }
         }
     }
@@ -1942,6 +2017,15 @@ class CloudflareClient: ObservableObject {
     
     @MainActor
     func syncEmailRules(modelContext: ModelContext) async throws {
+        // Single in-flight guard shared by every caller. The guard-and-set happens
+        // synchronously on the main actor (before any await), so this is race-free.
+        guard !isSyncing else {
+            debugLog("syncEmailRules already in progress; skipping duplicate request")
+            return
+        }
+        isSyncing = true
+        defer { isSyncing = false }
+        
         // ──────────────────────────────────────────────────────────────────────
         // STEP 0: Merge any iCloud-delivered duplicates BEFORE we build our map.
         // This is critical because the other device may have created its own
@@ -1957,7 +2041,8 @@ class CloudflareClient: ObservableObject {
             debugLog("Pre-sync deduplication error: \(error)")
         }
         
-        var cloudflareRules = try await getEmailRulesAllZones()
+        let fetchResult = try await getEmailRulesAllZonesDetailed()
+        var cloudflareRules = fetchResult.rules
         
         // Handle potential duplicates in Cloudflare rules
         // Keep track of seen email addresses and only include the first occurrence
@@ -2005,13 +2090,15 @@ class CloudflareClient: ObservableObject {
             debugLog("Error fetching existing aliases for refresh: \(error)")
         }
         
-        // Remove deleted aliases, but only those that belong to configured zones and are missing there
-        let configuredZoneIds = Set(zones.map { $0.zoneId })
+        // Remove deleted aliases, but only those belonging to zones whose rules were
+        // fetched completely this sync. Zones that were skipped (missing token) or
+        // failed to fetch must not have their aliases treated as deleted.
+        let fetchedZoneIds = fetchResult.fetchedZoneIds
         let descriptor = FetchDescriptor<EmailAlias>()
         if let allAliases = try? modelContext.fetch(descriptor) {
             for alias in allAliases {
-                // Only consider deleting if alias has a zoneId and belongs to a configured zone
-                guard !alias.zoneId.isEmpty, configuredZoneIds.contains(alias.zoneId) else { continue }
+                // Only consider deleting if alias has a zoneId and that zone was successfully fetched
+                guard !alias.zoneId.isEmpty, fetchedZoneIds.contains(alias.zoneId) else { continue }
                 // If no matching rule exists for that email in the aggregated set, delete
                 if cloudflareRulesByEmail[alias.emailAddress] == nil {
                     debugLog("Deleting alias not found in any configured zones: \(alias.emailAddress) [zone: \(alias.zoneId)]")
