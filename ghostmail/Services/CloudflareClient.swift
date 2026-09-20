@@ -417,22 +417,6 @@ class CloudflareClient: ObservableObject {
         // Print the total number of rules fetched
         debugLog("Total email rules fetched: \(allRules.count)")
         
-        // Collect all unique forwarding addresses and update cache
-        let forwards = Set(allRules.compactMap { rule -> String? in
-            // Only consider forward actions
-            guard let forwardAction = rule.actions.first(where: { $0.type == "forward" }),
-                  let values = forwardAction.value,
-                  let firstValue = values.first else { return nil }
-            return firstValue
-        })
-        
-        // Update forwarding addresses cache from rules
-        await MainActor.run {
-            self.forwardingAddresses = forwards
-            self.forwardingAddressesCache = forwards
-            self.lastForwardingAddressesFetch = Date()
-        }
-        
         // Convert to CloudflareEmailRule and ensure there are no duplicates by email address
         var uniqueRules: [CloudflareEmailRule] = []
         var seenEmailAddresses = Set<String>()

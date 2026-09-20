@@ -380,12 +380,9 @@ struct AuthenticationView: View {
                 
                 await MainActor.run {
                     if isValid {
-                        // Set authenticated state
+                        // EmailListView.initialLoad fetches destinations and runs syncEmailRules.
                         UserDefaults.standard.set(true, forKey: "isAuthenticated")
                         cloudflareClient.isAuthenticated = true
-                        
-                        // Loading forwarding addresses needs to be done in a separate Task
-                        debugLog("Setting up task to load forwarding addresses")
                         
                         // Then restore any data that was previously logged out
                         let loggedOutDescriptor = FetchDescriptor<EmailAlias>(
@@ -402,68 +399,6 @@ struct AuthenticationView: View {
                                 alias.isLoggedOut = false
                             }
                             try? modelContext.save()
-                        }
-                        
-                        // Fetch data from Cloudflare and merge with existing data
-                        Task {
-                            do {
-                                // First load the forwarding addresses
-                                debugLog("Loading forwarding addresses immediately after login")
-                                try await cloudflareClient.refreshForwardingAddresses()
-                                
-                                // Then fetch email rules
-                                let cloudflareAliases = try await cloudflareClient.getEmailRules()
-                                
-                                // Get existing aliases from SwiftData
-                                let descriptor = FetchDescriptor<EmailAlias>(
-                                    predicate: #Predicate<EmailAlias> { alias in
-                                        alias.isLoggedOut == false
-                                    }
-                                )
-                                let existingAliases = (try? modelContext.fetch(descriptor)) ?? []
-                                
-                                // Create a map of email addresses to aliases, handling potential duplicates
-                                var existingAliasDict: [String: EmailAlias] = [:]
-                                for alias in existingAliases {
-                                    // Only add if not already present or if newer
-                                    if let existing = existingAliasDict[alias.emailAddress] {
-                                        if (alias.created ?? Date.distantPast) > (existing.created ?? Date.distantPast) {
-                                            existingAliasDict[alias.emailAddress] = alias
-                                        }
-                                    } else {
-                                        existingAliasDict[alias.emailAddress] = alias
-                                    }
-                                }
-                                
-                                // Process each Cloudflare alias
-                                for cloudflareAlias in cloudflareAliases {
-                                    if let existingAlias = existingAliasDict[cloudflareAlias.emailAddress] {
-                                        // Update existing alias with Cloudflare data while preserving metadata
-                                        existingAlias.isEnabled = cloudflareAlias.isEnabled
-                                        existingAlias.cloudflareTag = cloudflareAlias.cloudflareTag
-                                        existingAlias.forwardTo = cloudflareAlias.forwardTo
-                                    } else {
-                                        // Create a new EmailAlias instead of trying to insert the CloudflareEmailRule
-                                        let newAlias = EmailAlias(
-                                            emailAddress: cloudflareAlias.emailAddress,
-                                            forwardTo: cloudflareAlias.forwardTo,
-                                            zoneId: cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
-                                        )
-                                        newAlias.cloudflareTag = cloudflareAlias.cloudflareTag
-                                        newAlias.isEnabled = cloudflareAlias.isEnabled
-                                        
-                                        // Now insert the EmailAlias
-                                        modelContext.insert(newAlias)
-                                    }
-                                }
-                                
-                                try modelContext.save()
-                                
-                                // Check and auto-enable analytics if the API has permission
-                                await cloudflareClient.checkAndEnableAnalyticsIfPermitted()
-                            } catch {
-                                debugLog("Error syncing data: \(error)")
-                            }
                         }
                     } else {
                         errorMessage = "Invalid credentials. Please check and try again."
