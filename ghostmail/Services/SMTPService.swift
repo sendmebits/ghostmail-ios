@@ -6,6 +6,12 @@ private final class ResumptionGuard: @unchecked Sendable {
     private let lock = NSLock()
     private var _hasResumed = false
 
+    var hasResumed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _hasResumed
+    }
+
     func tryResume() -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -14,6 +20,387 @@ private final class ResumptionGuard: @unchecked Sendable {
         }
         _hasResumed = true
         return true
+    }
+}
+
+// MARK: - Byte transports
+
+/// Minimal SMTP I/O surface shared by Network.framework (implicit TLS / plaintext)
+/// and Foundation streams (STARTTLS in-place upgrade).
+private protocol SMTPTransport: AnyObject {
+    func start(onReady: @escaping () -> Void, onFailure: @escaping (Error) -> Void)
+    func send(_ data: Data)
+    func receive(completion: @escaping (_ data: Data?, _ isComplete: Bool, _ error: Error?) -> Void)
+    func startTLS(peerName: String, completion: @escaping (Result<Void, Error>) -> Void)
+    func cancel()
+}
+
+/// TLS-on-connect and plaintext TCP via `NWConnection`.
+/// Used for `.implicit` and `.none` so those working paths stay on Network.framework.
+private final class NWSMTPTransport: SMTPTransport {
+    private let connection: NWConnection
+    private var didBecomeReady = false
+
+    init(host: String, port: Int, useTLS: Bool) {
+        let parameters: NWParameters = useTLS
+            ? NWParameters(tls: NWProtocolTLS.Options())
+            : .tcp
+        connection = NWConnection(
+            host: NWEndpoint.Host(host),
+            port: NWEndpoint.Port(integerLiteral: UInt16(port)),
+            using: parameters
+        )
+    }
+
+    func start(onReady: @escaping () -> Void, onFailure: @escaping (Error) -> Void) {
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                guard self?.didBecomeReady == false else { return }
+                self?.didBecomeReady = true
+                onReady()
+            case .failed:
+                onFailure(SMTPError.connectionFailed)
+            default:
+                break
+            }
+        }
+        connection.start(queue: .global())
+    }
+
+    func send(_ data: Data) {
+        connection.send(content: data, completion: .contentProcessed { error in
+            #if DEBUG
+            if let error = error {
+                print("Error sending SMTP command: \(error)")
+            }
+            #endif
+        })
+    }
+
+    func receive(completion: @escaping (Data?, Bool, Error?) -> Void) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, isComplete, error in
+            completion(data, isComplete, error)
+        }
+    }
+
+    func startTLS(peerName: String, completion: @escaping (Result<Void, Error>) -> Void) {
+        _ = peerName
+        completion(.failure(SMTPError.starttlsFailed))
+    }
+
+    func cancel() {
+        connection.cancel()
+    }
+}
+
+/// Plain TCP via Foundation streams, with RFC 3207 STARTTLS as an in-place TLS upgrade
+/// on the same socket (`kCFStreamPropertySSLSettings` after the server's 220 reply).
+private final class StreamSMTPTransport: NSObject, SMTPTransport, StreamDelegate {
+    private let host: String
+    private let port: Int
+    private let queue: DispatchQueue
+    private let queueKey = DispatchSpecificKey<UInt8>()
+
+    private var inputStream: InputStream?
+    private var outputStream: OutputStream?
+    private var onReady: (() -> Void)?
+    private var onFailure: ((Error) -> Void)?
+    private var pendingReceive: ((Data?, Bool, Error?) -> Void)?
+    private var tlsCompletion: ((Result<Void, Error>) -> Void)?
+    private var incomingBuffer = Data()
+    private var writeBuffer = Data()
+    private var didBecomeReady = false
+    private var isHandshaking = false
+    private var tlsCompleted = false
+    private var isCancelled = false
+    private var inputEOF = false
+
+    init(host: String, port: Int) {
+        self.host = host
+        self.port = port
+        self.queue = DispatchQueue(label: "com.sendmebits.ghostmail.smtp.stream")
+        super.init()
+        queue.setSpecific(key: queueKey, value: 1)
+    }
+
+    func start(onReady: @escaping () -> Void, onFailure: @escaping (Error) -> Void) {
+        perform {
+            self.onReady = onReady
+            self.onFailure = onFailure
+
+            var input: InputStream?
+            var output: OutputStream?
+            Stream.getStreamsToHost(
+                withName: self.host,
+                port: self.port,
+                inputStream: &input,
+                outputStream: &output
+            )
+
+            guard let input, let output else {
+                onFailure(SMTPError.connectionFailed)
+                return
+            }
+
+            self.inputStream = input
+            self.outputStream = output
+
+            CFReadStreamSetProperty(
+                input as CFReadStream,
+                CFStreamPropertyKey(kCFStreamPropertyShouldCloseNativeSocket),
+                kCFBooleanTrue
+            )
+            CFWriteStreamSetProperty(
+                output as CFWriteStream,
+                CFStreamPropertyKey(kCFStreamPropertyShouldCloseNativeSocket),
+                kCFBooleanTrue
+            )
+
+            input.delegate = self
+            output.delegate = self
+            CFReadStreamSetDispatchQueue(input as CFReadStream, self.queue)
+            CFWriteStreamSetDispatchQueue(output as CFWriteStream, self.queue)
+            input.open()
+            output.open()
+        }
+    }
+
+    func send(_ data: Data) {
+        perform {
+            self.writeBuffer.append(data)
+            self.flushWriteBuffer()
+        }
+    }
+
+    func receive(completion: @escaping (Data?, Bool, Error?) -> Void) {
+        perform {
+            self.pendingReceive = completion
+            if self.inputStream?.hasBytesAvailable == true {
+                self.readIntoBuffer()
+            }
+            self.deliverIfNeeded()
+        }
+    }
+
+    func startTLS(peerName: String, completion: @escaping (Result<Void, Error>) -> Void) {
+        perform {
+            guard let input = self.inputStream, let output = self.outputStream else {
+                completion(.failure(SMTPError.starttlsFailed))
+                return
+            }
+
+            self.tlsCompletion = completion
+            self.isHandshaking = true
+            self.tlsCompleted = false
+
+            let settings: [CFString: Any] = [
+                kCFStreamSSLPeerName: peerName as CFString,
+                kCFStreamSSLValidatesCertificateChain: kCFBooleanTrue as Any,
+                kCFStreamSSLLevel: kCFStreamSocketSecurityLevelNegotiatedSSL
+            ]
+            let cfSettings = settings as CFDictionary
+
+            // Apply SSL settings to one stream only; CFStream applies it to the pair.
+            // Setting both can prevent the in-place handshake from completing.
+            let readOK = CFReadStreamSetProperty(
+                input as CFReadStream,
+                CFStreamPropertyKey(kCFStreamPropertySSLSettings),
+                cfSettings
+            )
+            let writeOK = readOK ? true : CFWriteStreamSetProperty(
+                output as CFWriteStream,
+                CFStreamPropertyKey(kCFStreamPropertySSLSettings),
+                cfSettings
+            )
+
+            if !writeOK {
+                self.finishTLS(.failure(SMTPError.starttlsFailed))
+                return
+            }
+
+            // Handshake may complete synchronously; only SSLPeerTrust is a valid
+            // success signal here — output may still report space from plaintext.
+            self.checkTLSHandshake(allowSpaceAvailable: false)
+        }
+    }
+
+    func cancel() {
+        perform {
+            self.isCancelled = true
+        }
+        // Close streams on a later turn so we never tear down from inside a
+        // StreamDelegate callback (CFStream can crash if closed reentrantly).
+        queue.async {
+            self.tearDown()
+        }
+    }
+
+    func stream(_ aStream: Stream, handle eventCode: Stream.Event) {
+        if isCancelled { return }
+
+        if eventCode.contains(.errorOccurred) {
+            if isHandshaking {
+                finishTLS(.failure(SMTPError.starttlsFailed))
+            } else {
+                fail(aStream.streamError ?? SMTPError.connectionFailed)
+            }
+            return
+        }
+
+        if eventCode.contains(.endEncountered) {
+            if isHandshaking {
+                finishTLS(.failure(SMTPError.starttlsFailed))
+                return
+            }
+            inputEOF = true
+            deliverIfNeeded()
+            return
+        }
+
+        if eventCode.contains(.openCompleted) {
+            notifyReadyIfNeeded()
+        }
+
+        if isHandshaking {
+            if eventCode.contains(.hasSpaceAvailable) || eventCode.contains(.hasBytesAvailable) {
+                checkTLSHandshake(allowSpaceAvailable: true)
+            }
+            return
+        }
+
+        if eventCode.contains(.hasSpaceAvailable) {
+            flushWriteBuffer()
+        }
+
+        if eventCode.contains(.hasBytesAvailable) {
+            readIntoBuffer()
+            deliverIfNeeded()
+        }
+    }
+
+    // MARK: Stream helpers
+
+    private func perform(_ block: @escaping () -> Void) {
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            block()
+        } else {
+            queue.async(execute: block)
+        }
+    }
+
+    private func notifyReadyIfNeeded() {
+        guard !didBecomeReady else { return }
+        guard inputStream?.streamStatus == .open, outputStream?.streamStatus == .open else { return }
+        didBecomeReady = true
+        onReady?()
+    }
+
+    private func checkTLSHandshake(allowSpaceAvailable: Bool) {
+        guard isHandshaking, let input = inputStream else { return }
+
+        if input.streamStatus == .error || outputStream?.streamStatus == .error {
+            finishTLS(.failure(SMTPError.starttlsFailed))
+            return
+        }
+
+        if CFReadStreamCopyProperty(input as CFReadStream, CFStreamPropertyKey(kCFStreamPropertySSLPeerTrust)) != nil {
+            finishTLS(.success(()))
+            return
+        }
+
+        // A *new* space-available event after SSL settings is the usual signal that
+        // the handshake finished and application data can be written.
+        if allowSpaceAvailable, outputStream?.hasSpaceAvailable == true {
+            finishTLS(.success(()))
+        }
+    }
+
+    private func finishTLS(_ result: Result<Void, Error>) {
+        guard !tlsCompleted else { return }
+        tlsCompleted = true
+        isHandshaking = false
+        let completion = tlsCompletion
+        tlsCompletion = nil
+        completion?(result)
+    }
+
+    private func readIntoBuffer() {
+        guard let input = inputStream else { return }
+        while input.hasBytesAvailable {
+            var buf = [UInt8](repeating: 0, count: 4096)
+            let bytesRead = input.read(&buf, maxLength: buf.count)
+            if bytesRead > 0 {
+                incomingBuffer.append(Data(buf[0..<bytesRead]))
+            } else if bytesRead == 0 {
+                inputEOF = true
+                break
+            } else {
+                fail(input.streamError ?? SMTPError.connectionFailed)
+                break
+            }
+        }
+    }
+
+    private func deliverIfNeeded() {
+        guard let callback = pendingReceive else { return }
+        if !incomingBuffer.isEmpty {
+            let data = incomingBuffer
+            incomingBuffer.removeAll(keepingCapacity: true)
+            pendingReceive = nil
+            callback(data, false, nil)
+            return
+        }
+        if inputEOF {
+            pendingReceive = nil
+            callback(nil, true, nil)
+        }
+    }
+
+    private func flushWriteBuffer() {
+        guard let output = outputStream, !writeBuffer.isEmpty else { return }
+        while !writeBuffer.isEmpty {
+            let written: Int = writeBuffer.withUnsafeBytes { rawBuffer in
+                guard let base = rawBuffer.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+                return output.write(base, maxLength: writeBuffer.count)
+            }
+            if written > 0 {
+                writeBuffer.removeFirst(written)
+            } else if written == 0 {
+                break
+            } else {
+                fail(output.streamError ?? SMTPError.connectionFailed)
+                break
+            }
+        }
+    }
+
+    private func fail(_ error: Error) {
+        let callback = pendingReceive
+        pendingReceive = nil
+        callback?(nil, false, error)
+        onFailure?(error)
+    }
+
+    private func tearDown() {
+        if let input = inputStream {
+            CFReadStreamSetDispatchQueue(input as CFReadStream, nil)
+            input.delegate = nil
+            input.close()
+        }
+        if let output = outputStream {
+            CFWriteStreamSetDispatchQueue(output as CFWriteStream, nil)
+            output.delegate = nil
+            output.close()
+        }
+        inputStream = nil
+        outputStream = nil
+        pendingReceive = nil
+        tlsCompletion = nil
+        onReady = nil
+        onFailure = nil
+        writeBuffer.removeAll()
+        incomingBuffer.removeAll()
     }
 }
 
@@ -76,8 +463,7 @@ class SMTPService: @unchecked Sendable {
         let message = createEmailMessage(from: from, to: to, subject: subject, body: body)
         try await runSession(
             settings: settings,
-            mode: .send(message: message, from: from, to: to),
-            tlsAlreadyUpgraded: false
+            mode: .send(message: message, from: from, to: to)
         )
     }
 
@@ -85,7 +471,7 @@ class SMTPService: @unchecked Sendable {
         guard settings.isValid else {
             throw SMTPError.invalidSettings
         }
-        try await runSession(settings: settings, mode: .test, tlsAlreadyUpgraded: false)
+        try await runSession(settings: settings, mode: .test)
     }
 
     // MARK: - Session driver
@@ -95,63 +481,31 @@ class SMTPService: @unchecked Sendable {
         case test
     }
 
-    /// Runs one SMTP session over a single `NWConnection`.
+    /// Runs one SMTP session.
     ///
-    /// If the encryption mode is `.starttls` and the connection has not yet been
-    /// upgraded, the session may complete the STARTTLS handshake and return,
-    /// signalling that this method should be invoked again with TLS established.
-    /// In all other cases the session runs to completion (or aborts with an error).
-    ///
-    /// Critical guarantee: this code never silently downgrades. STARTTLS that is
-    /// not advertised by the server is a hard error, never a fallback to plaintext.
+    /// `.implicit` and `.none` use Network.framework. `.starttls` uses Foundation
+    /// streams so TLS can be negotiated in place on the same TCP connection after
+    /// the server replies 220 to STARTTLS (RFC 3207). STARTTLS that is not
+    /// advertised by the server is a hard error, never a fallback to plaintext.
     private func runSession(
         settings: SMTPSettings,
-        mode: SessionMode,
-        tlsAlreadyUpgraded: Bool
+        mode: SessionMode
     ) async throws {
-        let parameters: NWParameters
-        let isTLSConnection: Bool
-
-        if tlsAlreadyUpgraded {
-            // Second pass after a STARTTLS upgrade: connect with TLS this time.
-            parameters = NWParameters(tls: NWProtocolTLS.Options())
-            isTLSConnection = true
-        } else {
-            switch settings.encryption {
-            case .implicit:
-                parameters = NWParameters(tls: NWProtocolTLS.Options())
-                isTLSConnection = true
-            case .starttls, .none:
-                parameters = .tcp
-                isTLSConnection = false
-            }
+        let transport: SMTPTransport
+        switch settings.encryption {
+        case .implicit:
+            transport = NWSMTPTransport(host: settings.host, port: settings.port, useTLS: true)
+        case .none:
+            transport = NWSMTPTransport(host: settings.host, port: settings.port, useTLS: false)
+        case .starttls:
+            transport = StreamSMTPTransport(host: settings.host, port: settings.port)
         }
 
-        let host = NWEndpoint.Host(settings.host)
-        let port = NWEndpoint.Port(integerLiteral: UInt16(settings.port))
-        let connection = NWConnection(host: host, port: port, using: parameters)
-
-        // The session may either complete normally or finish at the STARTTLS
-        // handshake, in which case it returns `.upgradedToTLS` and the caller
-        // re-runs the session with TLS established.
-        let outcome = try await runConnection(
-            connection: connection,
+        try await runConnection(
+            transport: transport,
             settings: settings,
-            mode: mode,
-            tlsAlreadyEstablished: isTLSConnection
+            mode: mode
         )
-
-        switch outcome {
-        case .completed:
-            return
-        case .upgradedToTLS:
-            try await runSession(settings: settings, mode: mode, tlsAlreadyUpgraded: true)
-        }
-    }
-
-    private enum SessionOutcome {
-        case completed
-        case upgradedToTLS
     }
 
     private enum SMTPState {
@@ -169,37 +523,33 @@ class SMTPService: @unchecked Sendable {
     }
 
     private func runConnection(
-        connection: NWConnection,
+        transport: SMTPTransport,
         settings: SMTPSettings,
-        mode: SessionMode,
-        tlsAlreadyEstablished: Bool
-    ) async throws -> SessionOutcome {
-        return try await withCheckedThrowingContinuation { continuation in
+        mode: SessionMode
+    ) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             var responseBuffer = Data()
             var state: SMTPState = .initial
             var ehloAdvertisesSTARTTLS = false
+            var needsSTARTTLSUpgrade = settings.encryption == .starttls
             let resumptionGuard = ResumptionGuard()
 
-            // Whether THIS connection still needs to perform a STARTTLS upgrade.
-            // True only for `.starttls` mode on a connection that is not yet TLS.
-            let needsSTARTTLSUpgrade = settings.encryption == .starttls && !tlsAlreadyEstablished
-
-            func finish(_ outcome: SessionOutcome) {
+            func finish() {
                 if resumptionGuard.tryResume() {
-                    connection.cancel()
-                    continuation.resume(returning: outcome)
+                    transport.cancel()
+                    continuation.resume(returning: ())
                 }
             }
 
             func fail(_ error: Error) {
                 if resumptionGuard.tryResume() {
-                    connection.cancel()
+                    transport.cancel()
                     continuation.resume(throwing: error)
                 }
             }
 
             func receiveData() {
-                connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, isComplete, error in
+                transport.receive { data, isComplete, error in
                     if error != nil {
                         fail(SMTPError.connectionFailed)
                         return
@@ -215,7 +565,7 @@ class SMTPService: @unchecked Sendable {
                                 state: &state,
                                 advertisesSTARTTLS: &ehloAdvertisesSTARTTLS,
                                 needsSTARTTLSUpgrade: needsSTARTTLSUpgrade,
-                                connection: connection,
+                                transport: transport,
                                 settings: settings,
                                 mode: mode,
                                 hostName: settings.host,
@@ -227,10 +577,21 @@ class SMTPService: @unchecked Sendable {
                             case .stayOpen:
                                 break
                             case .completedSession:
-                                finish(.completed)
+                                finish()
                                 return
-                            case .upgradedToTLS:
-                                finish(.upgradedToTLS)
+                            case .startTLS:
+                                transport.startTLS(peerName: settings.host) { result in
+                                    guard !resumptionGuard.hasResumed else { return }
+                                    switch result {
+                                    case .success:
+                                        needsSTARTTLSUpgrade = false
+                                        self.sendCommand("EHLO localhost\r\n", transport: transport)
+                                        state = .ehloSent
+                                        receiveData()
+                                    case .failure:
+                                        fail(SMTPError.starttlsFailed)
+                                    }
+                                }
                                 return
                             }
                         } catch {
@@ -245,34 +606,26 @@ class SMTPService: @unchecked Sendable {
                 }
             }
 
-            connection.stateUpdateHandler = { connectionState in
-                switch connectionState {
-                case .ready:
-                    receiveData()
-                case .failed(_):
-                    fail(SMTPError.connectionFailed)
-                case .cancelled:
-                    break
-                default:
-                    break
-                }
-            }
-
-            // Overall session timeout: an unreachable or unresponsive server (or a
-            // silently failed send) must not leave the caller suspended forever.
-            // `fail` is a no-op if the session already finished.
             DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
                 fail(SMTPError.timedOut)
             }
 
-            connection.start(queue: .global())
+            transport.start(
+                onReady: {
+                    guard !resumptionGuard.hasResumed else { return }
+                    receiveData()
+                },
+                onFailure: { error in
+                    fail(error)
+                }
+            )
         }
     }
 
     private enum ResponseOutcome {
         case stayOpen
         case completedSession
-        case upgradedToTLS
+        case startTLS
     }
 
     /// Processes the next complete SMTP response (one or more `XYZ-…` continuation
@@ -282,7 +635,7 @@ class SMTPService: @unchecked Sendable {
         state: inout SMTPState,
         advertisesSTARTTLS: inout Bool,
         needsSTARTTLSUpgrade: Bool,
-        connection: NWConnection,
+        transport: SMTPTransport,
         settings: SMTPSettings,
         mode: SessionMode,
         hostName: String,
@@ -308,7 +661,7 @@ class SMTPService: @unchecked Sendable {
         switch state {
         case .initial:
             guard statusCode == 220 else { throw SMTPError.connectionFailed }
-            sendCommand("EHLO localhost\r\n", connection: connection)
+            sendCommand("EHLO localhost\r\n", transport: transport)
             state = .ehloSent
             return .stayOpen
 
@@ -327,33 +680,32 @@ class SMTPService: @unchecked Sendable {
                 guard advertisesSTARTTLS else {
                     throw SMTPError.starttlsUnsupported(host: hostName, port: port)
                 }
-                sendCommand("STARTTLS\r\n", connection: connection)
+                sendCommand("STARTTLS\r\n", transport: transport)
                 state = .starttlsSent
                 return .stayOpen
             }
 
             // Already secure (implicit TLS, post-STARTTLS upgrade) or `.none`.
-            sendCommand("AUTH LOGIN\r\n", connection: connection)
+            sendCommand("AUTH LOGIN\r\n", transport: transport)
             state = .authLoginSent
             return .stayOpen
 
         case .starttlsSent:
             guard statusCode == 220 else { throw SMTPError.starttlsFailed }
-            // The current connection's protocol is finished. Signal the outer
-            // driver to reconnect with TLS and run a fresh EHLO + AUTH session.
-            return .upgradedToTLS
+            // Upgrade TLS on this same connection, then EHLO again (RFC 3207).
+            return .startTLS
 
         case .authLoginSent:
             guard statusCode == 334 else { throw SMTPError.authenticationFailed }
             let usernameB64 = Data(settings.username.utf8).base64EncodedString()
-            sendCommand("\(usernameB64)\r\n", connection: connection)
+            sendCommand("\(usernameB64)\r\n", transport: transport)
             state = .authUsernameSent
             return .stayOpen
 
         case .authUsernameSent:
             guard statusCode == 334 else { throw SMTPError.authenticationFailed }
             let passwordB64 = Data(settings.password.utf8).base64EncodedString()
-            sendCommand("\(passwordB64)\r\n", connection: connection)
+            sendCommand("\(passwordB64)\r\n", transport: transport)
             state = .authPasswordSent
             return .stayOpen
 
@@ -361,11 +713,11 @@ class SMTPService: @unchecked Sendable {
             guard statusCode == 235 else { throw SMTPError.authenticationFailed }
             switch mode {
             case .test:
-                sendCommand("QUIT\r\n", connection: connection)
+                sendCommand("QUIT\r\n", transport: transport)
                 state = .quitSent
                 return .completedSession
             case .send(_, let from, _):
-                sendCommand("MAIL FROM:<\(from)>\r\n", connection: connection)
+                sendCommand("MAIL FROM:<\(from)>\r\n", transport: transport)
                 state = .mailFromSent
                 return .stayOpen
             }
@@ -374,7 +726,7 @@ class SMTPService: @unchecked Sendable {
             guard statusCode == 250 else { throw SMTPError.sendFailed }
             switch mode {
             case .send(_, _, let to):
-                sendCommand("RCPT TO:<\(to)>\r\n", connection: connection)
+                sendCommand("RCPT TO:<\(to)>\r\n", transport: transport)
                 state = .rcptToSent
                 return .stayOpen
             case .test:
@@ -383,7 +735,7 @@ class SMTPService: @unchecked Sendable {
 
         case .rcptToSent:
             guard statusCode == 250 else { throw SMTPError.sendFailed }
-            sendCommand("DATA\r\n", connection: connection)
+            sendCommand("DATA\r\n", transport: transport)
             state = .dataStarted
             return .stayOpen
 
@@ -391,7 +743,7 @@ class SMTPService: @unchecked Sendable {
             guard statusCode == 354 else { throw SMTPError.sendFailed }
             switch mode {
             case .send(let message, _, _):
-                sendCommand(prepareDATAPayload(message), connection: connection)
+                sendCommand(prepareDATAPayload(message), transport: transport)
                 state = .messageSent
                 return .stayOpen
             case .test:
@@ -400,7 +752,7 @@ class SMTPService: @unchecked Sendable {
 
         case .messageSent:
             guard statusCode == 250 else { throw SMTPError.sendFailed }
-            sendCommand("QUIT\r\n", connection: connection)
+            sendCommand("QUIT\r\n", transport: transport)
             state = .quitSent
             return .completedSession
 
@@ -409,15 +761,9 @@ class SMTPService: @unchecked Sendable {
         }
     }
 
-    private func sendCommand(_ command: String, connection: NWConnection) {
+    private func sendCommand(_ command: String, transport: SMTPTransport) {
         let data = command.data(using: .utf8)!
-        connection.send(content: data, completion: .contentProcessed { error in
-            #if DEBUG
-            if let error = error {
-                print("Error sending SMTP command: \(error)")
-            }
-            #endif
-        })
+        transport.send(data)
     }
 
     private func createEmailMessage(from: String, to: String, subject: String, body: String) -> String {
