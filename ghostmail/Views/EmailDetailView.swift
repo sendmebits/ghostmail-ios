@@ -24,7 +24,7 @@ struct EmailDetailView: View {
     @State private var tempIsEnabled: Bool
     @State private var tempForwardTo: String
     @State private var tempUsername: String = ""
-    @State private var tempIsForwarding: Bool  // true = forward, false = drop
+    @State private var tempActionType: EmailRuleActionType
     @State private var availableForwardingAddresses: [String] = []
     
     @State private var showDeleteConfirmation = false
@@ -42,7 +42,7 @@ struct EmailDetailView: View {
         _tempNotes = State(initialValue: email.notes)
         _tempIsEnabled = State(initialValue: email.isEnabled)
         _tempForwardTo = State(initialValue: email.forwardTo)
-        _tempIsForwarding = State(initialValue: email.actionType == .forward)
+        _tempActionType = State(initialValue: email.actionType)
         
         
         // Extract username from email address
@@ -86,6 +86,14 @@ struct EmailDetailView: View {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: created)
+    }
+    
+    private func actionTypeLabel(for actionType: EmailRuleActionType) -> String {
+        switch actionType {
+        case .forward: return "Forward"
+        case .drop: return "Drop"
+        case .reject: return "Reject"
+        }
     }
     
     private func showToastWithTimer(_ text: String) {
@@ -342,7 +350,7 @@ struct EmailDetailView: View {
                     VStack(spacing: 16) {
                         // Destination section - always show, but display DROP/REJECT for non-forward actions
                         DetailSection(title: "Destination") {
-                            if isEditing {
+                            if isEditing && tempActionType == .forward {
                                 if !availableForwardingAddresses.isEmpty {
                                     Picker("Forward to", selection: $tempForwardTo) {
                                         ForEach(availableForwardingAddresses, id: \.self) { address in
@@ -369,8 +377,8 @@ struct EmailDetailView: View {
                                         .foregroundStyle(.secondary)
                                 }
                             } else {
-                                // Read-only mode: show forwarding address or DROP/REJECT
-                                switch email.actionType {
+                                // Show forwarding address or DROP/REJECT
+                                switch isEditing ? tempActionType : email.actionType {
                                 case .forward:
                                     Text(email.forwardTo.isEmpty ? "Not specified" : email.forwardTo)
                                         .foregroundStyle(.secondary)
@@ -482,8 +490,12 @@ struct EmailDetailView: View {
                                 Toggle("Enabled", isOn: $tempIsEnabled)
                                     .tint(.accentColor)
                                 
-                                Toggle("Forward email", isOn: $tempIsForwarding)
-                                    .tint(.accentColor)
+                                Picker("Action", selection: $tempActionType) {
+                                    Text("Forward").tag(EmailRuleActionType.forward)
+                                    Text("Drop").tag(EmailRuleActionType.drop)
+                                    Text("Reject").tag(EmailRuleActionType.reject)
+                                }
+                                .pickerStyle(.menu)
                             } else {
                                 HStack {
                                     Text("Enabled")
@@ -495,12 +507,11 @@ struct EmailDetailView: View {
                                 }
                                 
                                 HStack {
-                                    Text("Forward email")
+                                    Text("Action")
                                         .foregroundStyle(.secondary)
                                     Spacer()
-                                    Toggle("", isOn: .constant(email.actionType == .forward))
-                                        .disabled(true)
-                                        .tint(.accentColor)
+                                    Text(actionTypeLabel(for: email.actionType))
+                                        .foregroundStyle(.secondary)
                                 }
                             }
                         }
@@ -773,12 +784,11 @@ struct EmailDetailView: View {
             debugLog("Website: '\(tempWebsite)' -> '\(email.website)'")
             debugLog("Notes: '\(tempNotes)' -> '\(email.notes)'")
             
-            // Determine the action type based on the Forward toggle
-            let newActionType: EmailRuleActionType = tempIsForwarding ? .forward : .drop
+            let newActionType = tempActionType
             
             // Validate BEFORE touching the model or calling the API, so a failure
             // leaves both local data and the user's entered values untouched
-            if tempIsForwarding {
+            if newActionType == .forward {
                 guard !tempForwardTo.isEmpty else {
                     throw CloudflareClient.CloudflareError(message: "Please choose a forwarding address.")
                 }
@@ -822,7 +832,7 @@ struct EmailDetailView: View {
             email.website = tempWebsite
             email.notes = tempNotes
             email.isEnabled = tempIsEnabled
-            email.forwardTo = tempIsForwarding ? tempForwardTo : ""  // Clear forward address if dropping
+            email.forwardTo = newActionType == .forward ? tempForwardTo : ""
             email.actionType = newActionType
             
             // Ensure user identifier is set for CloudKit sync
@@ -861,7 +871,7 @@ struct EmailDetailView: View {
         tempNotes = email.notes
         tempIsEnabled = email.isEnabled
         tempForwardTo = email.forwardTo
-        tempIsForwarding = email.actionType == .forward
+        tempActionType = email.actionType
         isEditing = true
 
         // Load zone-specific forwarding addresses for the edit session
