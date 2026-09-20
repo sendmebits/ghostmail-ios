@@ -55,47 +55,46 @@ struct EmailTrendChartView: View {
             HStack(alignment: .bottom, spacing: 8) {
                 ForEach(Array(dailyCounts.enumerated()), id: \.offset) { index, item in
                     VStack(spacing: 4) {
-                        // Bar
-                        Button {
-                            if item.count > 0, let onDayTapped = onDayTapped {
-                                onDayTapped(item.date)
-                            }
-                        } label: {
-                            ZStack(alignment: .bottom) {
-                                // Background bar
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.accentColor.opacity(0.1))
-                                    .frame(height: 120)
+                        ZStack(alignment: .bottom) {
+                            // Background track stays visible even on days with no email
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.accentColor.opacity(0.1))
+                                .frame(height: 120)
+                            
+                            if item.count > 0 {
+                                let filledBar = RoundedRectangle(cornerRadius: 6)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                Color.accentColor,
+                                                Color.accentColor.opacity(0.7)
+                                            ],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                                    .frame(height: max(20, CGFloat(item.count) / CGFloat(maxCount) * 120))
+                                    .overlay(
+                                        Text("\(item.count)")
+                                            .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                            .foregroundStyle(.white)
+                                            .padding(.bottom, 4)
+                                        , alignment: .bottom
+                                    )
                                 
-                                // Actual value bar with gradient
-                                if item.count > 0 {
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(
-                                            LinearGradient(
-                                                colors: [
-                                                    Color.accentColor,
-                                                    Color.accentColor.opacity(0.7)
-                                                ],
-                                                startPoint: .top,
-                                                endPoint: .bottom
-                                            )
-                                        )
-                                        .frame(height: max(20, CGFloat(item.count) / CGFloat(maxCount) * 120))
-                                        .overlay(
-                                            // Count label on bar
-                                            Text("\(item.count)")
-                                                .font(.system(.caption2, design: .rounded, weight: .semibold))
-                                                .foregroundStyle(.white)
-                                                .padding(.bottom, 4)
-                                            , alignment: .bottom
-                                        )
+                                if let onDayTapped {
+                                    Button {
+                                        onDayTapped(item.date)
+                                    } label: {
+                                        filledBar
+                                    }
+                                    .buttonStyle(.plain)
+                                } else {
+                                    filledBar
                                 }
                             }
                         }
-                        .buttonStyle(.plain)
-                        .disabled(item.count == 0 || onDayTapped == nil)
                         
-                        // Day label
                         Text(dayLabel(for: item.date))
                             .font(.system(.caption2, design: .rounded))
                             .foregroundStyle(.secondary)
