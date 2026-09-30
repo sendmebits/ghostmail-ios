@@ -2025,6 +2025,15 @@ class CloudflareClient: ObservableObject {
             debugLog("Pre-sync deduplication error: \(error)")
         }
         
+        // Capture deletion candidates before the network request yields. A create,
+        // import, or iCloud delivery can insert an alias while the request is in
+        // flight, and that alias may be absent from this older server snapshot.
+        // Copy values rather than retaining models whose properties can change.
+        let aliasesBeforeFetch = try modelContext.fetch(FetchDescriptor<EmailAlias>())
+        let deletionCandidates = Dictionary(uniqueKeysWithValues: aliasesBeforeFetch.map {
+            ($0.persistentModelID, (emailAddress: $0.emailAddress, zoneId: $0.zoneId, cloudflareTag: $0.cloudflareTag))
+        })
+
         let fetchResult = try await getEmailRulesAllZonesDetailed()
         var cloudflareRules = fetchResult.rules
         
@@ -2081,6 +2090,12 @@ class CloudflareClient: ObservableObject {
         let descriptor = FetchDescriptor<EmailAlias>()
         if let allAliases = try? modelContext.fetch(descriptor) {
             for alias in allAliases {
+                // Delete only records that existed before fetching and still refer
+                // to the same rule. New or renamed aliases await the next refresh.
+                guard let original = deletionCandidates[alias.persistentModelID],
+                      original.emailAddress == alias.emailAddress,
+                      original.zoneId == alias.zoneId,
+                      original.cloudflareTag == alias.cloudflareTag else { continue }
                 // Only consider deleting if alias has a zoneId and that zone was successfully fetched
                 guard !alias.zoneId.isEmpty, fetchedZoneIds.contains(alias.zoneId) else { continue }
                 // If no matching rule exists for that email in the aggregated set, delete
