@@ -14,6 +14,7 @@ struct ghostmailApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @Environment(\.scenePhase) private var scenePhase
     let modelContainer: ModelContainer
+    private let cloudKitSyncActive: Bool
     @StateObject private var cloudflareClient = CloudflareClient(accountId: "", zoneId: "", apiToken: "")
     @StateObject private var deepLinkRouter = DeepLinkRouter()
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
@@ -89,6 +90,7 @@ struct ghostmailApp: App {
             fatalError("Could not initialize ModelContainer with any configuration")
         }
         modelContainer = resolvedContainer
+        cloudKitSyncActive = cloudKitActive
         
         // Set up observers only when CloudKit mirroring is actually active
         if cloudKitActive {
@@ -218,6 +220,7 @@ struct ghostmailApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(\.cloudKitSyncActive, cloudKitSyncActive)
                 .environmentObject(cloudflareClient)
                 .environmentObject(deepLinkRouter)
                 .onReceive(NotificationCenter.default.publisher(for: .requestCloudKitMetadataPull)) { _ in
@@ -612,3 +615,15 @@ func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws 
 }
 
 struct TimeoutError: Error {}
+
+private struct CloudKitSyncActiveKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// The running container's state; changing the preference requires a restart.
+    var cloudKitSyncActive: Bool {
+        get { self[CloudKitSyncActiveKey.self] }
+        set { self[CloudKitSyncActiveKey.self] = newValue }
+    }
+}

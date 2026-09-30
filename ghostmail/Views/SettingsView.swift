@@ -7,6 +7,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var cloudflareClient: CloudflareClient
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.cloudKitSyncActive) private var cloudKitSyncActive
     @Query(sort: \EmailAlias.emailAddress) private var emailAliases: [EmailAlias]
     @State private var selectedDefaultAddress: String = ""
     @AppStorage("showWebsitesInList") private var showWebsites: Bool = true
@@ -22,8 +23,12 @@ struct SettingsView: View {
     @State private var pendingImportURL: URL?
     @State private var isLoading = false
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
-    @State private var showDisableSyncConfirmation = false
     @State private var showDeleteICloudDataConfirmation = false
+    @State private var isDeletingICloudData = false
+    @State private var iCloudDeletionError: Error?
+    @State private var showICloudDeletionError = false
+    @State private var iCloudDeletionMessage = ""
+    @State private var showICloudDeletionSuccess = false
     @State private var showRestartAlert = false
     @State private var skippedDomains: [String] = []
     @State private var showSkippedAlert = false
@@ -461,135 +466,36 @@ struct SettingsView: View {
         exit(0)
     }
     
-    private func disableICloudSync() {
-        // Update app storage setting
-        iCloudSyncEnabled = false
-        
-        // Update UI to show loading state
-        isLoading = true
-        
-        Task {
-            // Delete CloudKit data for the current Zone ID only
-            let container = CKContainer.default()
-            let database = container.privateCloudDatabase
+    private func deleteICloudData() {
+        guard !isDeletingICloudData, !iCloudSyncEnabled else { return }
+        // The preference can be off while the running store still mirrors iCloud.
+        // Restart first to preserve this device's local copies during deletion.
+        guard !cloudKitSyncActive else {
+            showRestartAlert = true
+            return
+        }
 
+        let targetZoneID = primaryZoneId
+        isDeletingICloudData = true
+        UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+
+        Task { @MainActor in
+            defer { isDeletingICloudData = false }
             do {
-                // First, mark all local data as not syncing to prevent re-upload
-                try modelContext.save()
-
-                // Ensure we have a zoneId to target; we must not delete zones for other accounts
-                let targetZoneFragment = cloudflareClient.zoneId.trimmingCharacters(in: .whitespacesAndNewlines)
-                if targetZoneFragment.isEmpty {
-                    debugLog("No Cloudflare zoneId available – skipping iCloud zone deletion to avoid accidental data loss")
-                    await MainActor.run { isLoading = false }
-                    return
-                }
-
-                // Fetch all zones but only attempt to delete those that appear to belong to the current Cloudflare zone
-                var allZones: [CKRecordZone] = []
-
-                // Retry zone fetching up to 3 times with exponential backoff
-                for attempt in 1...3 {
-                    do {
-                        allZones = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[CKRecordZone], Error>) in
-                            container.privateCloudDatabase.fetchAllRecordZones { zones, error in
-                                if let error = error {
-                                    continuation.resume(throwing: error)
-                                } else if let zones = zones {
-                                    continuation.resume(returning: zones)
-                                } else {
-                                    continuation.resume(throwing: NSError(domain: "CloudKit", code: 0, userInfo: [NSLocalizedDescriptionKey: "No zones returned and no error"]))
-                                }
-                            }
-                        }
-                        break
-                    } catch {
-                        if attempt == 3 { throw error }
-                        try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt)) * 500_000_000))
-                        debugLog("Retrying zone fetch, attempt \(attempt + 1)...")
-                    }
-                }
-
-                // Filter zones to only those that likely belong to the current Cloudflare zoneId.
-                // We deliberately avoid deleting the _defaultZone and we only proceed if a zone's name
-                // contains the Cloudflare zoneId fragment. This is a conservative heuristic to avoid
-                // accidentally removing unrelated users' data.
-                let candidateZones = allZones.filter { zone in
-                    let name = zone.zoneID.zoneName
-                    return name != "_defaultZone" && name.contains(targetZoneFragment)
-                }
-
-                if candidateZones.isEmpty {
-                    debugLog("No matching iCloud record zones found for zoneId '\(targetZoneFragment)'. Skipping deletion.")
-                    await MainActor.run { isLoading = false }
-                    return
-                }
-
-                var hadDeletionFailures = false
-                var zoneDeletionErrors: [Error] = []
-
-                for zone in candidateZones {
-                    let zoneID = zone.zoneID
-                    var zoneDeleted = false
-                    for attempt in 1...3 {
-                        do {
-                            try await database.deleteRecordZone(withID: zoneID)
-                            zoneDeleted = true
-                            debugLog("Successfully deleted zone: \(zoneID.zoneName)")
-                            break
-                        } catch let zoneError as NSError {
-                            if zoneError.code == CKError.unknownItem.rawValue {
-                                debugLog("Zone \(zoneID.zoneName) doesn't exist or was already deleted")
-                                zoneDeleted = true
-                                break
-                            }
-
-                            if zoneError.code == CKError.serviceUnavailable.rawValue ||
-                               zoneError.code == CKError.networkFailure.rawValue ||
-                               zoneError.code == CKError.networkUnavailable.rawValue ||
-                               zoneError.code == CKError.requestRateLimited.rawValue {
-                                if attempt < 3 {
-                                    let delay = UInt64(pow(2.0, Double(attempt)) * 1_000_000_000)
-                                    try await Task.sleep(nanoseconds: delay)
-                                    debugLog("Retrying zone deletion, attempt \(attempt + 1)...")
-                                    continue
-                                }
-                            }
-
-                            if attempt == 3 {
-                                hadDeletionFailures = true
-                                zoneDeletionErrors.append(zoneError)
-                                debugLog("Failed to delete zone \(zoneID.zoneName) after 3 attempts: \(zoneError.localizedDescription)")
-                            }
-                        }
-                    }
-
-                    if !zoneDeleted { hadDeletionFailures = true }
-                }
-
-                await MainActor.run {
-                    if hadDeletionFailures {
-                        debugLog("⚠️ iCloud sync disabled, but some data couldn't be deleted from iCloud for zoneId: \(targetZoneFragment).")
-                        if let firstError = zoneDeletionErrors.first {
-                            debugLog("Error detail: \(firstError.localizedDescription)")
-                        }
-                    } else {
-                        debugLog("✅ iCloud sync disabled. Selected zone data successfully removed from iCloud for zoneId: \(targetZoneFragment).")
-                    }
-
-                    isLoading = false
-                }
+                let database = PrivateCloudKitAliasDatabase(database: CKContainer.default().privateCloudDatabase)
+                let count = try await CloudKitAliasDeletionService(database: database)
+                    .deleteAliases(for: targetZoneID)
+                iCloudDeletionMessage = count == 0
+                    ? "No saved alias data was found in iCloud for this domain."
+                    : "Removed \(count) alias record\(count == 1 ? "" : "s") from iCloud. Your aliases on this device and your Cloudflare routing rules are kept."
+                showICloudDeletionSuccess = true
             } catch {
-                debugLog("Error managing iCloud data: \(error.localizedDescription)")
-                await MainActor.run {
-                    iCloudSyncEnabled = false
-                    isLoading = false
-                }
+                iCloudDeletionError = error
+                showICloudDeletionError = true
             }
         }
     }
-    
-    
+
     // Isolate the complex List subtree to help the type-checker
     private var listContent: AnyView {
         AnyView(
@@ -604,7 +510,7 @@ struct SettingsView: View {
             showWebsiteLogo: $showWebsiteLogo,
             iCloudSyncEnabled: $iCloudSyncEnabled,
             showAnalytics: $showAnalytics,
-            isLoading: isLoading,
+            isLoading: isLoading || isDeletingICloudData,
             showDeleteICloudDataConfirmation: $showDeleteICloudDataConfirmation,
             sortedForwardingAddresses: sortedForwardingAddresses,
             toggleICloudSync: { (enabled: Bool) -> Void in toggleICloudSync(enabled) },
@@ -613,7 +519,7 @@ struct SettingsView: View {
             logout: { () -> Void in showLogoutAlert = true },
             removeZone: { (zone: CloudflareClient.CloudflareZone) -> Void in removeZone(zone) },
             entryCount: { (zoneId: String) -> Int in entryCount(for: zoneId) }
-        ))
+        ).disabled(isDeletingICloudData))
     }
     
     private var themeColorScheme: ColorScheme? {
@@ -633,6 +539,14 @@ struct SettingsView: View {
             v4
         }
         .preferredColorScheme(themeColorScheme)
+        .interactiveDismissDisabled(isDeletingICloudData)
+        .overlay {
+            if isDeletingICloudData {
+                ProgressView("Deleting iCloud Data…")
+                    .padding()
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
     }
 
     // MARK: - Type-erased modifier steps to ease type checking
@@ -650,6 +564,7 @@ struct SettingsView: View {
                                 .fontWeight(.medium)
                         }
                         .tint(.primary)
+                        .disabled(isDeletingICloudData)
                     }
                 }
         )
@@ -723,17 +638,21 @@ struct SettingsView: View {
                 ) { _ in
                     cleanupExportFile()
                 }
-                .alert("Disable iCloud Sync?", isPresented: $showDisableSyncConfirmation) {
-                    Button("Cancel", role: .cancel) { iCloudSyncEnabled = true }
-                    Button("Disable", role: .destructive) { disableICloudSync() }
-                } message: {
-                    Text("This will stop syncing data to iCloud and remove all existing Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId).")
-                }
                 .alert("Delete iCloud Data?", isPresented: $showDeleteICloudDataConfirmation) {
                     Button("Cancel", role: .cancel) { }
-                    Button("Delete", role: .destructive) { disableICloudSync() }
+                    Button("Delete", role: .destructive) { deleteICloudData() }
                 } message: {
-                    Text("This will permanently delete all Ghostmail data from your iCloud account for zone \(cloudflareClient.zoneId). This action cannot be undone.")
+                    Text("This will permanently delete the saved alias data in iCloud for zone \(cloudflareClient.zoneId). Other devices with iCloud sync enabled will receive these deletions. Your aliases on this device and your Cloudflare routing rules are kept.")
+                }
+                .alert("iCloud Deletion Failed", isPresented: $showICloudDeletionError, presenting: iCloudDeletionError) { _ in
+                    Button("OK", role: .cancel) { }
+                } message: { error in
+                    Text("Some iCloud data may remain. \(error.localizedDescription)")
+                }
+                .alert("iCloud Deletion Complete", isPresented: $showICloudDeletionSuccess) {
+                    Button("OK", role: .cancel) { }
+                } message: {
+                    Text(iCloudDeletionMessage)
                 }
                 .alert("Restart Required", isPresented: $showRestartAlert) {
                     Button("Restart Now") { restartApp() }
@@ -1428,6 +1347,7 @@ private struct SettingsSectionView: View {
                 } label: {
                     Label("Delete iCloud Data", systemImage: "trash")
                 }
+                .disabled(isLoading)
             }
         } header: {
             Text("Settings")
