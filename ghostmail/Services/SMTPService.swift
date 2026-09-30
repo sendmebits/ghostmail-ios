@@ -642,6 +642,10 @@ class SMTPService: @unchecked Sendable {
         port: Int,
         bufferConsumed: () -> Void
     ) throws -> ResponseOutcome {
+        // TCP reads may stop anywhere, including immediately after a status code
+        // or between CR and LF. Keep buffering until the last line is complete.
+        guard response.hasSuffix("\r\n") else { return .stayOpen }
+
         let allLines = response.components(separatedBy: "\r\n").filter { !$0.isEmpty }
         guard let lastLine = allLines.last else { return .stayOpen }
 
