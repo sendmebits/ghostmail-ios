@@ -68,10 +68,20 @@ struct ghostmailApp: App {
         
         if container == nil {
             do {
-                container = try ModelContainer(for: EmailAlias.self, configurations: ModelConfiguration(isStoredInMemoryOnly: false))
+                // SwiftData defaults to automatic CloudKit discovery, so local
+                // fallbacks must explicitly opt out even with iCloud entitlements.
+                let config = ModelConfiguration(
+                    isStoredInMemoryOnly: false,
+                    cloudKitDatabase: .none
+                )
+                container = try ModelContainer(for: EmailAlias.self, configurations: config)
             } catch {
                 debugLog("Failed to initialize local ModelContainer, falling back to in-memory store: \(error)")
-                container = try? ModelContainer(for: EmailAlias.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+                let config = ModelConfiguration(
+                    isStoredInMemoryOnly: true,
+                    cloudKitDatabase: .none
+                )
+                container = try? ModelContainer(for: EmailAlias.self, configurations: config)
             }
         }
         
